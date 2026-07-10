@@ -1,0 +1,56 @@
+# Dossiês de providers
+
+Antes de implementar qualquer adapter, escreva o dossiê do provider aqui seguindo o template
+abaixo. O dossiê é a fonte de verdade do adapter; os payloads capturados viram fixtures em
+`src/adapters/<nome>/fixtures/`.
+
+## Providers-alvo
+
+| Provider | Docs | Hospedagem | Status |
+| --- | --- | --- | --- |
+| WAHA | <https://waha.devlike.pro/swagger/> | self-hosted (Docker) | F1 — planejado |
+| Evolution GO | <https://docs.evolutionfoundation.com.br/evolution-go> | self-hosted | F1 — planejado |
+| uazapi | <https://docs.uazapi.com/> | SaaS/self | F2 |
+| Z-API | <https://developer.z-api.io/api-reference/introduction> | SaaS | F2 |
+| Wuzapi | <https://github.com/asternic/wuzapi/blob/main/API.md> | self-hosted | F2 |
+| Whapi | <https://whapi.readme.io/> | SaaS | F3 |
+| Zapo | <https://zapo.to/en/introduction> | SaaS | F3 |
+| QuePasa | <https://docs.quepasa.ai/reference> | self-hosted | F3 |
+
+## Template do dossiê (`<nome>.md`)
+
+```markdown
+# Dossiê: <Provider>
+
+- Docs oficiais: <url>
+- Versão testada: <versão/data>
+- Hospedagem: SaaS | self-hosted (imagem Docker: ...)
+
+## Autenticação
+
+Como o token é enviado (header? qual? na URL? bearer?). Existe token global vs por instância?
+
+## Modelo de instância/sessão
+
+Como criar, conectar (QR/pairing), consultar status e desconectar. Nome que o provider usa
+("instance", "session", "channel").
+
+## Operações core
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| instance.connect | ... | |
+| instance.status | ... | |
+| instance.logout | ... | |
+| messages.sendText | ... | formato do destinatário (E.164? JID?) |
+| messages.sendMedia | ... | url? base64? multipart? |
+
+## Webhooks
+
+Como configurar. Nomes dos eventos. **Payloads reais capturados** (mensagem recebida, ack,
+conexão) — colar aqui e salvar como fixtures.
+
+## Limites e particularidades
+
+Rate limits, formatos de telefone, peculiaridades de grupos/LID, capabilities não suportadas.
+```
