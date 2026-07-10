@@ -48,6 +48,26 @@
         "default": "./dist/testing/index.cjs"
       }
     },
+    "./waha": {
+      "import": {
+        "types": "./dist/adapters/waha/index.d.ts",
+        "default": "./dist/adapters/waha/index.js"
+      },
+      "require": {
+        "types": "./dist/adapters/waha/index.d.cts",
+        "default": "./dist/adapters/waha/index.cjs"
+      }
+    },
+    "./evolution": {
+      "import": {
+        "types": "./dist/adapters/evolution/index.d.ts",
+        "default": "./dist/adapters/evolution/index.js"
+      },
+      "require": {
+        "types": "./dist/adapters/evolution/index.d.cts",
+        "default": "./dist/adapters/evolution/index.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.cjs",
