@@ -78,19 +78,24 @@ em memória.
 | Wuzapi | F2 (planejado) | | QuePasa | F3 (planejado) |
 
 Roadmap completo e arquitetura em [docs/CONTEXT.md](docs/CONTEXT.md); decisões registradas em
-[docs/adr/](docs/adr/). Quer contribuir com um adapter? Comece pelo dossiê:
+[docs/adr/](docs/adr/). Quer contribuir com um adapter? Veja
+[CONTRIBUTING.md](CONTRIBUTING.md) e comece pelo dossiê:
 [docs/providers/README.md](docs/providers/README.md).
 
 ## Desenvolvimento
 
 ```bash
 npm install
-npm test            # vitest (unit + suite de contrato)
-npm run typecheck   # tsc --noEmit
-npm run lint        # biome
-npm run build       # tsup → dist/ (ESM + CJS + tipos)
-npm run smoke       # valida o pacote empacotado (exports ESM/CJS + fluxo completo)
+npm test              # vitest (unit + suite de contrato)
+npm run test:coverage # idem, com relatório e thresholds de cobertura
+npm run typecheck     # tsc --noEmit
+npm run lint          # biome
+npm run build         # tsup → dist/ (ESM + CJS + tipos)
+npm run smoke         # valida o pacote empacotado (exports ESM/CJS + fluxo completo)
 ```
+
+Guia completo de contribuição (convenções, checklist de QA, como propor um adapter novo) em
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 Releases via [changesets](https://github.com/changesets/changesets): `npx changeset` no PR;
 o merge em `main` abre o PR de versão e publica no npm com provenance (requer secret

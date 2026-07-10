@@ -1,0 +1,46 @@
+name: Novo adapter de provider
+description: Propor ou pedir suporte a uma nova API não-oficial de WhatsApp.
+labels: ["new-adapter"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Antes de abrir: dê uma olhada em [docs/providers/README.md](../../docs/providers/README.md)
+        para ver a metodologia (dossiê → fixtures → adapter → suite de contrato) e a lista de
+        providers já planejados por fase. Se você mesmo pretende implementar, isso já ajuda muito
+        a começar pelo dossiê.
+  - type: input
+    id: provider-name
+    attributes:
+      label: Nome do provider
+    validations:
+      required: true
+  - type: input
+    id: docs-url
+    attributes:
+      label: URL da documentação oficial
+    validations:
+      required: true
+  - type: dropdown
+    id: hosting
+    attributes:
+      label: Hospedagem
+      options:
+        - Self-hosted (Docker)
+        - SaaS
+        - Ambos
+        - Não sei
+    validations:
+      required: true
+  - type: textarea
+    id: auth
+    attributes:
+      label: Autenticação (se já souber)
+      description: Nome do header/query param, token global vs. por instância, etc.
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Disposição para contribuir
+      options:
+        - label: Pretendo implementar este adapter eu mesmo (seguindo CONTRIBUTING.md)
+        - label: Só estou sugerindo — não vou implementar
