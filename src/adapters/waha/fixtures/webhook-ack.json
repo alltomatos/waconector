@@ -1,0 +1,13 @@
+{
+  "event": "message.ack",
+  "session": "default",
+  "engine": "WEBJS",
+  "payload": {
+    "id": "true_11111111111@c.us_4CC5EDD64BC22EBA6D639F2AF571346C",
+    "from": "11111111111@c.us",
+    "participant": null,
+    "fromMe": true,
+    "ack": 3,
+    "ackName": "READ"
+  }
+}

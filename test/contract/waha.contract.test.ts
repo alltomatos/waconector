@@ -1,0 +1,231 @@
+import { describe, expect, it } from 'vitest';
+import { createConnector, isWaConnectorError, type SentMessage } from '../../src';
+import { type WahaOptions, waha } from '../../src/adapters/waha';
+import ackFixture from '../../src/adapters/waha/fixtures/webhook-ack.json';
+import connectionUpdateFixture from '../../src/adapters/waha/fixtures/webhook-connection-update.json';
+import messageReceivedFixture from '../../src/adapters/waha/fixtures/webhook-message-received.json';
+import { describeAdapterContract } from './adapter-contract';
+
+const BASE_URL = 'https://waha.example.com';
+const API_KEY = 'test-api-key-should-be-redacted';
+const SESSION = 'default';
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/**
+ * Stub de `fetch` sem rede real: responde com payloads fixos equivalentes aos reais (baseados no
+ * dossiê docs/providers/waha.md) para os endpoints usados por esta fase do adapter.
+ */
+function createFetchStub(): typeof globalThis.fetch {
+  return async (input, init) => {
+    const url = new URL(String(input));
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const pathname = url.pathname;
+
+    if (method === 'POST' && pathname === `/api/sessions/${SESSION}/start`) {
+      return jsonResponse(201, { name: SESSION, status: 'STARTING' });
+    }
+
+    if (method === 'GET' && pathname === `/api/${SESSION}/auth/qr`) {
+      expect(url.searchParams.get('format')).toBe('raw');
+      return jsonResponse(200, { value: 'mock-qr-code-raw-string' });
+    }
+
+    if (method === 'GET' && pathname === `/api/sessions/${SESSION}`) {
+      return jsonResponse(200, {
+        name: SESSION,
+        status: 'WORKING',
+        me: { id: '71111111111@c.us', pushName: 'Bot' },
+      });
+    }
+
+    if (method === 'POST' && pathname === `/api/sessions/${SESSION}/logout`) {
+      return new Response(null, { status: 204 });
+    }
+
+    if (method === 'POST' && pathname === '/api/sendText') {
+      return jsonResponse(201, {
+        id: 'true_5585999999999@c.us_MOCKSENDTEXT000000000000001',
+        timestamp: 1700000010,
+        from: '71111111111@c.us',
+        to: '5585999999999@c.us',
+        fromMe: true,
+        body: 'contrato: ping',
+        ack: 0,
+      });
+    }
+
+    if (method === 'POST' && pathname === '/api/sendImage') {
+      return jsonResponse(201, {
+        id: 'true_5585999999999@c.us_MOCKSENDIMAGE00000000000001',
+        timestamp: 1700000020,
+        from: '71111111111@c.us',
+        to: '5585999999999@c.us',
+        fromMe: true,
+        hasMedia: true,
+        ack: 0,
+      });
+    }
+
+    throw new Error(`fetchStub: rota não configurada — ${method} ${pathname}`);
+  };
+}
+
+function buildAdapterOptions(overrides: Partial<WahaOptions> = {}): WahaOptions {
+  return {
+    baseUrl: BASE_URL,
+    apiKey: API_KEY,
+    session: SESSION,
+    fetch: createFetchStub(),
+    ...overrides,
+  };
+}
+
+describeAdapterContract({
+  name: 'WAHA (waha.devlike.pro)',
+  create() {
+    const adapter = waha(buildAdapterOptions());
+    return {
+      adapter,
+      // O adapter WAHA não guarda estado local de conexão: cada chamada bate direto no
+      // provider, que é quem garante (ou nega) que a sessão está pronta para enviar.
+      ready: async () => {},
+      webhooks: {
+        messageReceived: { body: messageReceivedFixture },
+      },
+      recipient: '5585999999999',
+    };
+  },
+});
+
+describe('WAHA adapter: comportamento específico do provider', () => {
+  it('instance.connect inicia a sessão e devolve o QR cru em ConnectResult.qr', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const result = await adapter.instance.connect();
+    expect(result.qr).toBe('mock-qr-code-raw-string');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('instance.status mapeia "WORKING" para InstanceState "connected"', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const status = await adapter.instance.status();
+    expect(status.state).toBe('connected');
+    expect(status).toHaveProperty('raw');
+  });
+
+  it('instance.logout chama POST /api/sessions/{session}/logout sem lançar', async () => {
+    const adapter = waha(buildAdapterOptions());
+    await expect(adapter.instance.logout()).resolves.toBeUndefined();
+  });
+
+  it('messages.sendText converte telefone canônico para chatId "@c.us"', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent: SentMessage = await wa.messages.sendText({
+      to: '5585999999999',
+      text: 'contrato: ping',
+    });
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.path).toBe('/api/sendText');
+    expect((call?.body as Record<string, unknown> | undefined)?.chatId).toBe('5585999999999@c.us');
+    expect(sent.id).toContain('MOCKSENDTEXT');
+    expect(sent.timestamp).toBe(1700000010 * 1000);
+  });
+
+  it('messages.sendMedia usa o endpoint por tipo de mídia (image -> /api/sendImage)', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendMedia({
+      to: '5585999999999',
+      media: { kind: 'image', url: 'https://picsum.photos/200', mimeType: 'image/jpeg' },
+      caption: 'foto de teste',
+    });
+
+    expect(sent.id).toContain('MOCKSENDIMAGE');
+    expect(sent.chatId).toBe('5585999999999@c.us');
+  });
+
+  it('parseWebhook normaliza "message.ack" do dossiê para MessageAckEvent', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: ackFixture });
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('message.ack');
+    if (event?.type === 'message.ack') {
+      expect(event.ack).toBe('read');
+      expect(event.messageId).toBe('true_11111111111@c.us_4CC5EDD64BC22EBA6D639F2AF571346C');
+    }
+  });
+
+  it('parseWebhook normaliza "session.status" do dossiê para ConnectionUpdateEvent', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: connectionUpdateFixture });
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('connection.update');
+    if (event?.type === 'connection.update') {
+      expect(event.state).toBe('connected');
+    }
+  });
+
+  it('parseWebhook nunca lança para payload desconhecido (vira "unknown")', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: { event: 'group.join', payload: {} } });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('unknown');
+
+    const eventsNonObject = adapter.parseWebhook({ body: 'não é json' });
+    expect(eventsNonObject).toHaveLength(1);
+    expect(eventsNonObject[0]?.type).toBe('unknown');
+  });
+
+  it('redige a apiKey de mensagens de erro (HttpClient secrets)', async () => {
+    const adapter = waha(
+      buildAdapterOptions({
+        apiKey: 'super-secret-key',
+        fetch: async () => jsonResponse(401, { error: 'bad key super-secret-key' }),
+      }),
+    );
+
+    const failure = await adapter.instance.status().catch((error: unknown) => error);
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.message).not.toContain('super-secret-key');
+      expect(failure.message).toContain('***');
+    }
+  });
+
+  it('envia o header X-Api-Key configurado em toda chamada', async () => {
+    const calls: Headers[] = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          calls.push(new Headers(init?.headers));
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+
+    await adapter.instance.status();
+    expect(calls[0]?.get('X-Api-Key')).toBe(API_KEY);
+  });
+});
