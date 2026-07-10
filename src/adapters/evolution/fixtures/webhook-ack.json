@@ -1,0 +1,13 @@
+{
+  "event": "Receipt",
+  "state": "Read",
+  "data": {
+    "Chat": "557499879409@s.whatsapp.net",
+    "Sender": "5511918798714:5@s.whatsapp.net",
+    "MessageIDs": ["3EB0C05FF2D3A0068B2A2D"],
+    "Timestamp": "2024-10-10T17:18:00-03:00",
+    "Type": "read"
+  },
+  "instanceId": "249aad2e-68f9-464f-bc84-aca560c38f0e",
+  "instanceToken": "2ef79c34-b6e1-4969-9e37-12b3d3a9d1062"
+}

@@ -1,0 +1,10 @@
+{
+  "event": "Connected",
+  "data": {
+    "status": "open",
+    "jid": "5511918798714:5@s.whatsapp.net",
+    "pushName": "Davidson Gomes"
+  },
+  "instanceId": "249aad2e-68f9-464f-bc84-aca560c38f0e",
+  "instanceToken": "2ef79c34-b6e1-4969-9e37-12b3d3a9d1062"
+}

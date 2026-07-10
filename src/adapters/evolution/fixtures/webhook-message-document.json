@@ -1,0 +1,35 @@
+{
+  "event": "Message",
+  "data": {
+    "Info": {
+      "Chat": "557499879409@s.whatsapp.net",
+      "Sender": "557499879409:38@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "ID": "3EB0C05FF2D3A0068B2A2F",
+      "Type": "media",
+      "PushName": "Davidson Gomes",
+      "Timestamp": "2024-10-10T17:21:00-03:00"
+    },
+    "Message": {
+      "documentMessage": {
+        "URL": "https://mmg.whatsapp.net/v/t62.7119-24/10000001_987654321_n.enc",
+        "mimetype": "application/pdf",
+        "title": "contrato.pdf",
+        "fileSHA256": "ZmFrZS1zaGEyNTY=",
+        "fileLength": "102400",
+        "fileName": "contrato.pdf",
+        "mediaKey": "ZmFrZS1tZWRpYS1rZXk=",
+        "fileEncSHA256": "ZmFrZS1lbmMtc2hhMjU2",
+        "directPath": "/v/t62.7119-24/10000001_987654321_n.enc",
+        "mediaKeyTimestamp": "1728588060",
+        "pageCount": 3
+      }
+    },
+    "IsEphemeral": false,
+    "IsViewOnce": false,
+    "IsEdit": false
+  },
+  "instanceId": "249aad2e-68f9-464f-bc84-aca560c38f0e",
+  "instanceToken": "2ef79c34-b6e1-4969-9e37-12b3d3a9d1062"
+}
