@@ -1,0 +1,22 @@
+{
+  "id": "evt_group_participants_join_01",
+  "timestamp": 1700000100000,
+  "event": "group.v2.participants",
+  "session": "default",
+  "engine": "GOWS",
+  "environment": {
+    "version": "2024.1.1",
+    "engine": "GOWS",
+    "tier": "CORE"
+  },
+  "payload": {
+    "type": "join",
+    "timestamp": 1700000100000,
+    "group": { "id": "120363043140393908@g.us" },
+    "participants": [
+      { "id": "5585999999999@c.us" },
+      { "id": "ANONYMIZEDLIDPLACEHOLDER@lid", "pn": "5585888888888@c.us" }
+    ],
+    "_data": {}
+  }
+}

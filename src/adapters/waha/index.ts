@@ -9,7 +9,12 @@ import type {
 import type { CapabilitySet } from '../../core/capabilities';
 import { normalizeInviteLink } from '../../core/chat-id';
 import { WaConnectorError } from '../../core/errors';
-import type { CanonicalEvent, ConnectionUpdateEvent, UnknownEvent } from '../../core/events';
+import type {
+  CanonicalEvent,
+  ConnectionUpdateEvent,
+  GroupUpdateEvent,
+  UnknownEvent,
+} from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
   ConnectResult,
@@ -523,6 +528,40 @@ function mapGroupParticipants(value: unknown): GroupParticipant[] | undefined {
 }
 
 /**
+ * Mapeia o campo `type` do webhook `group.v2.participants` para a convenção de `action` de
+ * `GroupUpdateEvent` (ver core/events.ts). `type` não reconhecido devolve `undefined` — o chamador
+ * trata como evento não mapeável (cai em `unknown`); nunca inventamos uma `action` genérica para
+ * um `type` desconhecido.
+ */
+function mapGroupParticipantsAction(type: string | undefined): string | undefined {
+  switch (type) {
+    case 'join':
+      return 'participants.add';
+    case 'leave':
+      return 'participants.remove';
+    case 'promote':
+      return 'participants.promote';
+    case 'demote':
+      return 'participants.demote';
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Extrai os IDs dos participantes afetados do webhook `group.v2.participants`, no MESMO formato
+ * (preferência `pn` sobre `id`) já usado por `mapGroupParticipant`/`mapGroupParticipants`
+ * (`groups.getInfo`/`groups.list`) — reaproveitado aqui em vez de duplicar a lógica de preferência.
+ * Devolve `undefined` (não `[]`) quando não há nenhum participante mapeável, para que
+ * `GroupUpdateEvent.participants` fique ausente em vez de um array vazio sem sentido.
+ */
+function mapGroupUpdateParticipantIds(value: unknown): string[] | undefined {
+  const participants = mapGroupParticipants(value);
+  if (!participants || participants.length === 0) return undefined;
+  return participants.map((participant) => participant.id);
+}
+
+/**
  * Entrada usada só quando o corpo da resposta não traz o campo correspondente — comum em
  * `createGroup` (a doc do WAHA não declara schema de resposta para esse endpoint). Mesmo padrão de
  * fallback de `mapSentMessage` (`chatId ?? requestedNumber`): cai nos valores já conhecidos da
@@ -695,8 +734,10 @@ function mapWahaMessage(payload: Record<string, unknown>): WaMessage {
 }
 
 /**
- * Traduz um webhook WAHA para eventos canônicos. Nunca lança: eventos não mapeados nesta fase
- * (F1: `message`, `message.ack`, `session.status`) viram `unknown`. Ver docs/providers/waha.md.
+ * Traduz um webhook WAHA para eventos canônicos. Nunca lança: eventos não mapeados
+ * (`message`, `message.ack`, `session.status`, `group.v2.participants`, `group.v2.update`,
+ * `group.v2.join`, `group.v2.leave` — ver docs/providers/waha.md#webhooks-de-grupo para os 4
+ * últimos, retrofit ADR-0009) viram `unknown`.
  *
  * Quando `webhookHmacKey` é fornecida, a assinatura é verificada ANTES de qualquer mapeamento —
  * payload com assinatura ausente/inválida, ou sem `rawBody` disponível para verificar, nunca chega
@@ -772,6 +813,135 @@ function parseWahaWebhook(
     return [connectionUpdate];
   }
 
+  // group.v2.participants: evento PRINCIPAL de mudança de participante (join/leave/promote/demote),
+  // confirmado no openapi.json e em waha.devlike.pro/docs/how-to/groups/. `participants` no payload
+  // já vem só com os afetados (não a lista completa do grupo). Nota documentada: este evento PODE
+  // duplicar group.v2.join/leave para o ID da própria sessão — esperado, não deduplicado aqui (ver
+  // docs/providers/waha.md#webhooks-de-grupo).
+  if (eventName === 'group.v2.participants') {
+    if (!payload) {
+      return [unknownEvent(body, 'Evento "group.v2.participants" do WAHA sem "payload".')];
+    }
+    const group = asRecord(payload.group);
+    const groupId = group ? asString(group.id) : undefined;
+    const action = mapGroupParticipantsAction(asString(payload.type));
+    if (groupId === undefined || action === undefined) {
+      return [
+        unknownEvent(
+          body,
+          `Evento "group.v2.participants" do WAHA sem "group.id" ou "type" reconhecido ("${asString(payload.type) ?? '(ausente)'}").`,
+        ),
+      ];
+    }
+    const groupUpdate: GroupUpdateEvent = {
+      type: 'group.update',
+      provider: PROVIDER,
+      instanceId: session,
+      groupId,
+      action,
+      participants: mapGroupUpdateParticipantIds(payload.participants),
+      raw: body,
+    };
+    return [groupUpdate];
+  }
+
+  // group.v2.update: `group` no payload pode ser PARCIAL (ex.: só {id, subject} quando só o
+  // assunto mudou, ou {id, description} quando só a descrição mudou). Quando ambos aparecem juntos
+  // (mudança simultânea, comum em providers baseados em whatsmeow), emitimos UM GroupUpdateEvent
+  // POR mudança identificada — daí o array de eventos abaixo poder ter 2 entradas para 1 payload.
+  if (eventName === 'group.v2.update') {
+    if (!payload) {
+      return [unknownEvent(body, 'Evento "group.v2.update" do WAHA sem "payload".')];
+    }
+    const group = asRecord(payload.group);
+    const groupId = group ? asString(group.id) : undefined;
+    if (groupId === undefined) {
+      return [unknownEvent(body, 'Evento "group.v2.update" do WAHA sem "group.id".')];
+    }
+    const groupUpdates: GroupUpdateEvent[] = [];
+    const subject = group ? asString(group.subject) : undefined;
+    if (subject !== undefined) {
+      groupUpdates.push({
+        type: 'group.update',
+        provider: PROVIDER,
+        instanceId: session,
+        groupId,
+        action: 'subject',
+        raw: body,
+      });
+    }
+    // `description` vazia (`''`) é um valor válido (limpa a descrição) — mesma convenção de
+    // `groups.updateDescription`; `asString('')` devolve `''`, que é `!== undefined`.
+    const description = group ? asString(group.description) : undefined;
+    if (description !== undefined) {
+      groupUpdates.push({
+        type: 'group.update',
+        provider: PROVIDER,
+        instanceId: session,
+        groupId,
+        action: 'description',
+        raw: body,
+      });
+    }
+    if (groupUpdates.length === 0) {
+      return [
+        unknownEvent(
+          body,
+          'Evento "group.v2.update" do WAHA sem "subject"/"description" reconhecíveis em "group".',
+        ),
+      ];
+    }
+    return groupUpdates;
+  }
+
+  // group.v2.join: dispara quando a PRÓPRIA sessão entra/é adicionada a um grupo. O payload traz o
+  // GroupInfo completo em `group`, mas não isola claramente qual participante foi adicionado sendo
+  // "a própria sessão" vs a lista completa — por isso `participants` fica de fora (não inventamos
+  // esse dado), diferente de `group.v2.participants`.
+  if (eventName === 'group.v2.join') {
+    if (!payload) {
+      return [unknownEvent(body, 'Evento "group.v2.join" do WAHA sem "payload".')];
+    }
+    const group = asRecord(payload.group);
+    const groupId = group ? asString(group.id) : undefined;
+    if (groupId === undefined) {
+      return [unknownEvent(body, 'Evento "group.v2.join" do WAHA sem "group.id".')];
+    }
+    const groupUpdate: GroupUpdateEvent = {
+      type: 'group.update',
+      provider: PROVIDER,
+      instanceId: session,
+      groupId,
+      action: 'participants.add',
+      raw: body,
+    };
+    return [groupUpdate];
+  }
+
+  // group.v2.leave: payload traz só `{ id }` em `group`, sem mais nada.
+  if (eventName === 'group.v2.leave') {
+    if (!payload) {
+      return [unknownEvent(body, 'Evento "group.v2.leave" do WAHA sem "payload".')];
+    }
+    const group = asRecord(payload.group);
+    const groupId = group ? asString(group.id) : undefined;
+    if (groupId === undefined) {
+      return [unknownEvent(body, 'Evento "group.v2.leave" do WAHA sem "group.id".')];
+    }
+    const groupUpdate: GroupUpdateEvent = {
+      type: 'group.update',
+      provider: PROVIDER,
+      instanceId: session,
+      groupId,
+      action: 'participants.remove',
+      raw: body,
+    };
+    return [groupUpdate];
+  }
+
+  // "group.join"/"group.leave" (legado, sem versão "v2", marcados deprecated:true no openapi.json,
+  // payload não documentado/genérico) caem propositalmente no fallback abaixo — confiança baixa
+  // demais para implementar parsing estruturado (ver docs/providers/waha.md#webhooks-de-grupo).
   return [
     unknownEvent(
       body,

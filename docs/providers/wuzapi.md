@@ -406,6 +406,70 @@ empírica contra uma instância real.
   > `attachRootMedia` para mídia recebida (`base64`/`mimeType`/`fileName` também no nível raiz,
   > confirmado em `media.go`, func `processMedia`). Ver `fixtures/webhook-qr.json`.
 
+### Webhooks de grupo (`GroupInfo`/`JoinedGroup`) — RECONSTRUÍDO, confiança MÉDIA-ALTA
+
+> ⚠️ Diferente dos webhooks de mensagem/conexão acima (que ao menos têm um dossiê de pesquisa
+> dedicado por analogia com o Evolution GO), estes dois casos foram reconstruídos **diretamente do
+> código-fonte da lib `tulir/whatsmeow`** (via `wmiau.go`/`constants.go`) **sem nenhum exemplo real
+> capturado** para o Wuzapi. Tratar como plausível — a estrutura externa (`{type, event}`, nomes de
+> campo) tem confiança média-alta por vir do código-fonte da própria lib; o comportamento exato
+> ainda não foi validado contra uma instância real. Sessão precisa se inscrever explicitamente em
+> `"GroupInfo"`/`"JoinedGroup"` (ou usar o valor especial `"All"`) no array `Subscribe` de
+> `POST /session/connect` — sem isso, esses eventos não chegam (ver seção "Modelo de
+> instância/sessão" acima).
+
+- **`GroupInfo`** — serialização (assumida verbatim) do struct `whatsmeow/types/events.GroupInfo`:
+  `{JID, Notify, Sender, SenderPN, Timestamp, Name, Topic, Locked, Announce, Ephemeral,
+  MembershipApprovalMode, Delete, Link, Unlink, NewInviteLink, PrevParticipantVersionID,
+  ParticipantVersionID, JoinReason, Join, Leave, Promote, Demote, Suspended, Unsuspended,
+  UnknownChanges}`. Um único evento pode carregar **múltiplas mudanças simultâneas** (comum em
+  providers baseados em whatsmeow) — o adapter (`mapGroupInfoEvent`) emite **um `GroupUpdateEvent`
+  por mudança identificada** (natural porque `parseWebhook` já retorna `CanonicalEvent[]`):
+  - **Implementado** (`action` populado):
+    - `Join` (array) não-vazio → `action: 'participants.add'`, `participants` = os JIDs do array.
+    - `Leave` (array) não-vazio → `action: 'participants.remove'`, idem.
+    - `Promote` (array) não-vazio → `action: 'participants.promote'`, idem.
+    - `Demote` (array) não-vazio → `action: 'participants.demote'`, idem.
+    - `Name` populado (objeto `{Name, NameSetAt, NameSetBy, ...}` presente) → `action: 'subject'`,
+      **sem** `participants` — o "novo nome" em si **não é extraído** (não confirmado que
+      `Name.Name` é sempre o valor correto/completo; quem precisar do valor atual deve chamar
+      `groups.getInfo`).
+    - `Topic` populado (objeto `{Topic, TopicID, ...}` presente) → `action: 'description'`, mesma
+      lógica/limitação do item acima (sem extrair o texto da nova descrição).
+  - **Não implementado (cai em `unknown`, nunca lança, nunca inventa)**: `Locked`, `Announce`,
+    `Ephemeral`, `MembershipApprovalMode`, `Delete`, `Link`/`Unlink`/`NewInviteLink`,
+    `Suspended`/`Unsuspended`, `UnknownChanges` — nenhum desses tem shape ou exemplo confirmado na
+    pesquisa original; mapeá-los exigiria inventar uma convenção de `action`/valor sem base real
+    (ADR-0002/ADR-0003). Se um evento `GroupInfo` só contiver mudanças desta lista (nenhuma das
+    reconhecidas acima), o evento inteiro cai em `unknown` com `reason` explicando o motivo — não é
+    uma regressão, é a postura correta diante de campos não confirmados.
+  - **Assunção de formato não confirmada**: os itens de `Join`/`Leave`/`Promote`/`Demote` são
+    tratados como **strings** de JID (`"<dígitos>@<server>"`), pela mesma convenção já usada em
+    `info.Chat`/`info.Sender` (`mapMessageEvent`) e em `Participants[].JID`
+    (`mapGroupParticipants`) — mas **não há confirmação específica** de que a lib serializa
+    `types.JID` como string (em vez de um objeto `{User,Server,...}`) exatamente nestes 4 campos.
+    Itens que não forem string são silenciosamente descartados do array (via `asStringArray`,
+    nunca lança) — na prática, se a assunção estiver errada, o array resultante fica vazio e a
+    mudança correspondente simplesmente não gera evento (comportamento seguro, não inventa dado).
+  - `groupId` (`event.JID`) é tratado como string com a mesma confiança do `JID` usado em todas as
+    outras respostas de `groups.*` deste adapter.
+- **`JoinedGroup`** — disparado quando a própria sessão é adicionada a/entra num grupo. Serialização
+  assumida: `{Reason, Type, CreateKey, Sender, SenderPN, Notify}` + `types.GroupInfo` embutido no
+  mesmo nível (`JID`, `Name`, `Participants`, ...). **Implementado**: `groupId` = `event.JID` →
+  `GroupUpdateEvent { action: 'participants.add' }`, **sem** `participants` — `event.Participants`
+  aqui é a lista **completa** de membros do grupo (não quem entrou), então usá-la como
+  `participants` inventaria uma semântica que o campo não tem. `Reason`/`Type`/`CreateKey`/
+  `Notify` não são mapeados (sem campo canônico equivalente e sem necessidade confirmada).
+- **Fixtures** (`src/adapters/wuzapi/fixtures/`, todas marcadas como reconstruídas nesta seção):
+  `webhook-group-participants.json` (Join+Leave+Promote+Demote simultâneos → 4 eventos),
+  `webhook-group-metadata.json` (Name+Topic simultâneos → 2 eventos, `subject`+`description`),
+  `webhook-group-unknown-change.json` (só `Locked` → 1 evento `unknown`),
+  `webhook-joined-group.json` (`JoinedGroup` → 1 evento `participants.add`).
+- **O que falta para validar**: capturar payloads reais de uma instância Wuzapi com `Subscribe`
+  incluindo `"GroupInfo"`/`"JoinedGroup"` (ou `"All"`) para confirmar (a) se `Join`/`Leave`/
+  `Promote`/`Demote` de fato serializam como array de string, (b) o shape exato de `Name`/`Topic`
+  quando populados, e (c) se `Locked`/`Announce`/etc. justificam mapeamento futuro.
+
 ## Limites e particularidades
 
 - Não há rate limiting embutido no servidor (busca por `RateLimit`/`Limiter` no código-fonte

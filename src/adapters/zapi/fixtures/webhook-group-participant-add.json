@@ -1,0 +1,14 @@
+{
+  "isGroup": true,
+  "isNewsletter": false,
+  "instanceId": "A20DA9C0183A2D35A260F53F5D2B9244",
+  "messageId": "3EB0C767D26A7EF01F5C",
+  "phone": "5544999999999-group",
+  "connectedPhone": "554499999999",
+  "fromMe": false,
+  "momment": 1700000000000,
+  "status": "RECEIVED",
+  "type": "ReceivedCallback",
+  "notification": "GROUP_PARTICIPANT_ADD",
+  "notificationParameters": ["5511999999999", "5511988887777"]
+}

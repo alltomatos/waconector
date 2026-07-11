@@ -86,6 +86,14 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       resta só popular os webhooks de atualização de grupo (`GroupUpdateEvent`), tratado como
       incremento à parte pela confiança desigual dos payloads pesquisados por provider. Mergeado
       via [PR #19](https://github.com/alltomatos/waconector/pull/19).
+- [x] Capability `groups.*` — webhooks (`GroupUpdateEvent`) populados em 4/5 adapters, por nível de
+      confiança: WAHA completo (`group.v2.participants/update/join/leave`), Evolution GO/Wuzapi
+      reconstruído do código-fonte whatsmeow (evento de diff `GroupInfo` pode gerar múltiplos
+      `GroupUpdateEvent` — um por mudança identificada — e `JoinedGroup`), Z-API só as 5
+      notificações de participante (não as de subject/description/ícone/criação, sem exemplo de
+      payload). **uazapi deliberadamente sem parsing estruturado** — nenhum exemplo de payload de
+      grupo existe na doc oficial; eventos continuam caindo em `unknown` (comportamento seguro por
+      design, ADR-0002/ADR-0003). **Fecha o ADR-0009 por completo.**
 - [ ] Capability `contacts.*` (escopo grande, ainda não iniciado)
 
 ## Marcos de release (v0.x)

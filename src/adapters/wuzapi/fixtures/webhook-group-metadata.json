@@ -1,0 +1,21 @@
+{
+  "type": "GroupInfo",
+  "userID": "1",
+  "instanceName": "minha-sessao",
+  "event": {
+    "JID": "120363000000000000@g.us",
+    "Sender": "5511999999999@s.whatsapp.net",
+    "Timestamp": "2026-07-11T10:06:00Z",
+    "Name": {
+      "Name": "Novo nome do grupo",
+      "NameSetAt": "2026-07-11T10:06:00Z",
+      "NameSetBy": "5511999999999@s.whatsapp.net"
+    },
+    "Topic": {
+      "Topic": "Nova descrição do grupo",
+      "TopicID": "TPC123",
+      "TopicSetAt": "2026-07-11T10:06:00Z",
+      "TopicSetBy": "5511999999999@s.whatsapp.net"
+    }
+  }
+}

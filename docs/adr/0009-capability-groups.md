@@ -1,8 +1,9 @@
 # ADR-0009: Capability `groups.*` — contrato de gestão de grupo
 
-- Status: aceito e implementado (todas as 14 operações — núcleo, participantes, configurações,
-  convites/saída — nos 5 adapters existentes). Webhooks de grupo (`GroupUpdateEvent`) seguem
-  como incremento separado — ver "Consequências".
+- Status: aceito e implementado — todas as 14 operações (núcleo, participantes, configurações,
+  convites/saída) nos 5 adapters existentes, mais webhooks de atualização de grupo
+  (`GroupUpdateEvent`) em 4/5 adapters (uazapi deliberadamente sem parsing estruturado, por falta
+  de qualquer payload de exemplo — ver "Consequências").
 - Data: 2026-07-11
 
 ## Contexto
@@ -110,9 +111,24 @@ existência de eventos de webhook de atualização de grupo (o tipo `GroupUpdate
      casing diferente conforme o endpoint (`invite_link` snake_case em `/group/info`, `InviteLink`
      PascalCase em `/group/resetInviteCode`) — mesmo provider, mesma informação, nomes diferentes;
      documentado no dossiê para não ser confundido com erro de digitação.
-  4. **Webhooks de grupo (pendente, incremento à parte)**: popular `GroupUpdateEvent` — confiança
-     desigual por provider (WAHA alta, Evolution GO/Wuzapi reconstruída, uazapi e 8/10 tipos da
-     Z-API baixa) exige validação contra instância real antes de travar parsers em produção.
+  4. **Webhooks de grupo (implementado em 4/5 adapters)**: `GroupUpdateEvent` populado a partir do
+     nível de confiança real de cada provider. `GroupUpdateEvent` ganhou o campo `participants?:
+     string[]`; quando um payload reporta múltiplas mudanças simultâneas (comum em providers
+     whatsmeow), `parseWebhook` emite um `GroupUpdateEvent` por mudança identificada (o array de
+     retorno já suporta isso).
+     - **WAHA** (alta): `group.v2.participants/update/join/leave` implementados completos.
+     - **Evolution GO / Wuzapi** (média-alta, reconstruído do código-fonte whatsmeow, sem payload
+       real capturado): eventos `GroupInfo` (diff — Join/Leave/Promote/Demote/Name/Topic) e
+       `JoinedGroup` implementados; campos sem confirmação de formato (Locked/Announce/Ephemeral/
+       ...) ficam fora do escopo, caem em `unknown`.
+     - **Z-API** (parcial): só as 5 notificações de participante (`GROUP_PARTICIPANT_ADD/REMOVE/
+       LEAVE/PROMOTE/DEMOTE`) implementadas — estrutura confirmada por analogia forte ao envelope
+       já exemplificado para outras notificações. `GROUP_CREATE`/`GROUP_CHANGE_SUBJECT`/
+       `GROUP_CHANGE_DESCRIPTION`/`GROUP_CHANGE_ICON`/`GROUP_PARTICIPANT_INVITE` deliberadamente
+       NÃO implementados (zero exemplo de payload) — seguem para o dispatch de mensagem comum.
+     - **uazapi** (baixa): NENHUM parsing estruturado implementado — nenhum exemplo de payload de
+       grupo existe em lugar nenhum da doc oficial; eventos `group`/`groups` continuam caindo em
+       `unknown` (comportamento seguro por design, não uma lacuna a "corrigir" sem validação real).
 - Segue o padrão já estabelecido: capability opcional no adapter, sempre presente no `Connector*Api`
   correspondente, guard-rail `PROVIDER_ERROR` (ADR-0008) — reaproveitado, não uma decisão nova.
 - Qualquer adapter futuro (F3+) que não suporte uma operação de grupo simplesmente não a declara em

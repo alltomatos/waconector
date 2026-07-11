@@ -11,6 +11,7 @@ import { WaConnectorError } from '../../core/errors';
 import type {
   CanonicalEvent,
   ConnectionUpdateEvent,
+  GroupUpdateEvent,
   MessageAckEvent,
   UnknownEvent,
 } from '../../core/events';
@@ -762,6 +763,10 @@ function parseWebhookUnsafe(input: WebhookInput): CanonicalEvent[] {
       // Suposição: o código confirma que o valor existe, mas não detalha a semântica exata —
       // tratado como "parou de esperar o scan" (ver docs/providers/wuzapi.md).
       return [connectionEvent(instanceId, 'disconnected', undefined, body)];
+    case 'GroupInfo':
+      return mapGroupInfoEvent(instanceId, data, body);
+    case 'JoinedGroup':
+      return [mapJoinedGroupEvent(instanceId, data, body)];
     default:
       return [unknownEvent(body, `Evento Wuzapi não reconhecido: "${type}".`, instanceId)];
   }
@@ -963,6 +968,122 @@ function connectionEvent(
 
 function unknownEvent(raw: unknown, reason: string, instanceId?: string): UnknownEvent {
   return { type: 'unknown', provider: PROVIDER, instanceId, raw, reason };
+}
+
+/**
+ * `event` = whatsmeow `events.GroupInfo` serializado **verbatim** (RECONSTRUÍDO a partir do
+ * código-fonte da lib `whatsmeow` via `wmiau.go`/`constants.go` — sem exemplo real capturado para
+ * o Wuzapi especificamente; mesma metodologia "reconstruído" já usada no resto deste dossiê, por
+ * analogia com o Evolution GO, que usa a mesma lib subjacente). O struct completo carrega TODAS as
+ * mudanças possíveis de um grupo num único evento (`JID`, `Notify`, `Sender`, `SenderPN`,
+ * `Timestamp`, `Name`, `Topic`, `Locked`, `Announce`, `Ephemeral`, `MembershipApprovalMode`,
+ * `Delete`, `Link`, `Unlink`, `NewInviteLink`, `PrevParticipantVersionID`, `ParticipantVersionID`,
+ * `JoinReason`, `Join`, `Leave`, `Promote`, `Demote`, `Suspended`, `Unsuspended`,
+ * `UnknownChanges`) — este adapter só reconhece com confiança as mudanças de participante
+ * (`Join`/`Leave`/`Promote`/`Demote`) e de metadado (`Name`/`Topic`), emitindo um
+ * `GroupUpdateEvent` por mudança identificada (parseWebhook já retorna um array; várias mudanças
+ * no MESMO payload de entrada viram várias entradas nesse array). Ver
+ * docs/providers/wuzapi.md, seção "Webhooks de grupo", para o que ficou de fora e por quê.
+ *
+ * `Join`/`Leave`/`Promote`/`Demote` são tratados como arrays de JID em formato STRING
+ * (`"<dígitos>@<server>"`), pela mesma convenção já usada em `info.Chat`/`info.Sender`
+ * (`mapMessageEvent`) e em `Participants[].JID` (`mapGroupParticipants`) — **não há confirmação
+ * específica** de que a lib serializa `types.JID` como string (em vez de um objeto
+ * `{User,Server,...}`) exatamente nestes 4 campos; itens que não forem string são silenciosamente
+ * descartados do array via `asStringArray` (nunca lança). Campos não reconhecidos
+ * (`Locked`/`Announce`/`Ephemeral`/`MembershipApprovalMode`/etc.) não têm shape/exemplo confirmado
+ * e não são mapeados nesta fase — se um evento só contiver mudanças não reconhecidas, cai em
+ * `unknown` (nunca inventa um `action`/valor para elas).
+ */
+function mapGroupInfoEvent(
+  instanceId: string | undefined,
+  data: Record<string, unknown> | undefined,
+  rawBody: unknown,
+): CanonicalEvent[] {
+  if (!data) {
+    return [unknownEvent(rawBody, 'Evento "GroupInfo" sem campo "event".', instanceId)];
+  }
+  const groupId = asString(data.JID);
+  if (!groupId) {
+    return [unknownEvent(rawBody, 'Evento "GroupInfo" sem "event.JID".', instanceId)];
+  }
+
+  const events: GroupUpdateEvent[] = [];
+  const pushParticipantChange = (action: string, value: unknown): void => {
+    const participants = asStringArray(value);
+    if (participants.length > 0) {
+      events.push(groupUpdateEvent(instanceId, groupId, action, participants, rawBody));
+    }
+  };
+
+  pushParticipantChange('participants.add', data.Join);
+  pushParticipantChange('participants.remove', data.Leave);
+  pushParticipantChange('participants.promote', data.Promote);
+  pushParticipantChange('participants.demote', data.Demote);
+
+  // Name/Topic são structs aninhados (`{Name,NameSetAt,...}`/`{Topic,TopicID,...}`) presentes só
+  // quando aquele metadado específico mudou neste evento — a mera PRESENÇA do objeto (não seu
+  // conteúdo, que não é usado aqui) indica a mudança. Nenhum "novo valor" é extraído/inventado:
+  // quem consome o evento busca o valor atual via `groups.getInfo`, se precisar.
+  if (asRecord(data.Name)) {
+    events.push(groupUpdateEvent(instanceId, groupId, 'subject', undefined, rawBody));
+  }
+  if (asRecord(data.Topic)) {
+    events.push(groupUpdateEvent(instanceId, groupId, 'description', undefined, rawBody));
+  }
+
+  if (events.length === 0) {
+    return [
+      unknownEvent(
+        rawBody,
+        'Evento "GroupInfo" sem mudança reconhecida (Join/Leave/Promote/Demote/Name/Topic ausentes ou não populados).',
+        instanceId,
+      ),
+    ];
+  }
+  return events;
+}
+
+/**
+ * `event` = `{Reason, Type, CreateKey, Sender, SenderPN, Notify}` + `types.GroupInfo` embutido
+ * (`JID`, `Name`, `Participants`, ...) — RECONSTRUÍDO, mesma ressalva de `mapGroupInfoEvent`
+ * (evento disparado quando a própria sessão é adicionada/entra num grupo). Só `event.JID` é usado
+ * com confiança; `event.Participants` aqui é a lista **completa** do grupo (todos os membros, não
+ * só quem entrou) — não é usada como `participants` do `GroupUpdateEvent` para não inventar "quem
+ * entrou" a partir de um campo que não representa isso. `action: 'participants.add'` sozinho, sem
+ * `participants`, é o que a pesquisa confirma com segurança.
+ */
+function mapJoinedGroupEvent(
+  instanceId: string | undefined,
+  data: Record<string, unknown> | undefined,
+  rawBody: unknown,
+): CanonicalEvent {
+  if (!data) {
+    return unknownEvent(rawBody, 'Evento "JoinedGroup" sem campo "event".', instanceId);
+  }
+  const groupId = asString(data.JID);
+  if (!groupId) {
+    return unknownEvent(rawBody, 'Evento "JoinedGroup" sem "event.JID".', instanceId);
+  }
+  return groupUpdateEvent(instanceId, groupId, 'participants.add', undefined, rawBody);
+}
+
+function groupUpdateEvent(
+  instanceId: string | undefined,
+  groupId: string,
+  action: string,
+  participants: string[] | undefined,
+  rawBody: unknown,
+): GroupUpdateEvent {
+  return {
+    type: 'group.update',
+    provider: PROVIDER,
+    instanceId,
+    groupId,
+    action,
+    participants,
+    raw: rawBody,
+  };
 }
 
 // ---------------------------------------------------------------------------

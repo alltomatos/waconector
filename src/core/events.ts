@@ -37,10 +37,21 @@ export interface ConnectionUpdateEvent extends BaseEvent {
   qr?: string;
 }
 
+/**
+ * `action` é livre (não um union estrito) porque a granularidade de mudança varia por provider —
+ * mas segue, por convenção, um destes valores quando identificável univocamente:
+ * `'participants.add'|'participants.remove'|'participants.promote'|'participants.demote'|
+ * 'subject'|'description'`. Ausente quando o provider reporta múltiplas mudanças simultâneas num
+ * único payload (comum em providers baseados em whatsmeow) — nesse caso, `parseWebhook` emite um
+ * `GroupUpdateEvent` por mudança identificada (mesma mensagem pode gerar vários eventos no array
+ * retornado), e `raw` sempre carrega o payload original completo para o que não for coberto aqui.
+ */
 export interface GroupUpdateEvent extends BaseEvent {
   type: 'group.update';
   groupId: string;
   action?: string;
+  /** Participantes afetados — presente quando `action` for uma mudança de participante. */
+  participants?: string[];
 }
 
 export interface UnknownEvent extends BaseEvent {

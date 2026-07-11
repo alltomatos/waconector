@@ -807,6 +807,12 @@ function parseWebhookUnsafe(input: WebhookInput): CanonicalEvent[] {
 
   switch (type) {
     case 'ReceivedCallback': {
+      // Notificações de grupo NÃO têm webhook dedicado — chegam pelo MESMO "type" de mensagem,
+      // discriminadas pelo campo adicional `record.notification`. Checagem ANTES do dispatch de
+      // mensagem normal: ver `mapGroupNotification` para o que é/não é reconhecido.
+      const groupEvents = mapGroupNotification(record, body, instanceId);
+      if (groupEvents) return groupEvents;
+
       const message = mapZapiMessage(record, body);
       return [
         {
@@ -882,6 +888,79 @@ function parseWebhookUnsafe(input: WebhookInput): CanonicalEvent[] {
 
     default:
       return [unknownEvent(body, `Evento Z-API não mapeado nesta fase: "${type}".`, instanceId)];
+  }
+}
+
+/**
+ * Notificações de grupo (entrada/saída/promoção/demoção de participante) chegam pelo MESMO `type`
+ * "ReceivedCallback" das mensagens — não há webhook de configuração dedicado para elas. São
+ * discriminadas pelo campo adicional `record.notification` (string, enum), presente no mesmo
+ * envelope de sempre. Payload confirmado (schema comum a TODAS as notificações, exemplificado
+ * literalmente para `MEMBERSHIP_APPROVAL_REQUEST`/`REVOKED_MEMBERSHIP_REQUESTS`): `{ isGroup: true,
+ * ..., phone: string (= groupId), notification: string, notificationParameters: string[] }`.
+ *
+ * A doc confirma POR NOME um enum de 10 valores `GROUP_*`, mas só os 2 exemplos acima (adjacentes,
+ * porém DIFERENTES dos 10) têm payload literal — nenhum valor `GROUP_*` tem exemplo próprio
+ * capturado na pesquisa. Por isso, só as 5 variantes de PARTICIPANTE são reconhecidas aqui
+ * (confiança razoável, por analogia estrutural forte com o envelope confirmado — mesmo formato de
+ * `phone`/`notificationParameters`):
+ *
+ * - `GROUP_PARTICIPANT_ADD` → `action: 'participants.add'`
+ * - `GROUP_PARTICIPANT_REMOVE` → `action: 'participants.remove'`
+ * - `GROUP_PARTICIPANT_LEAVE` → `action: 'participants.remove'` (MESMA action de REMOVE: do ponto
+ *   de vista canônico, ambos resultam em "não é mais participante do grupo", e
+ *   `GroupUpdateEvent.action` não distingue "saiu por conta própria" de "foi removido" — decisão
+ *   documentada em docs/providers/zapi.md)
+ * - `GROUP_PARTICIPANT_PROMOTE` → `action: 'participants.promote'`
+ * - `GROUP_PARTICIPANT_DEMOTE` → `action: 'participants.demote'`
+ *
+ * Deliberadamente FORA desta fase (zero exemplo de payload — implementar seria adivinhar o formato
+ * do "novo valor"): `GROUP_CREATE`, `GROUP_CHANGE_SUBJECT`, `GROUP_CHANGE_DESCRIPTION`,
+ * `GROUP_CHANGE_ICON`, `GROUP_PARTICIPANT_INVITE`. Para esses (e qualquer `notification`
+ * desconhecido), retorna `undefined` — o record segue para `mapZapiMessage`, que trata como
+ * mensagem comum (cai em `MessageKind: 'unknown'` se não bater com nenhuma chave de conteúdo
+ * reconhecida). Nunca lança, nunca inventa campo (ADR-0002/ADR-0003).
+ *
+ * `groupId` reaproveita a mesma convenção de fallback de `mapZapiMessage.chatId` (`'unknown'` se
+ * `phone` ausente, nunca lança). Devolve sempre array de 1 evento nesta fase (nenhum exemplo real de
+ * múltiplas mudanças simultâneas neste provider) — a assinatura já retorna array por consistência
+ * com o restante de `parseWebhookUnsafe`.
+ */
+function mapGroupNotification(
+  record: Record<string, unknown>,
+  rawBody: unknown,
+  instanceId: string | undefined,
+): CanonicalEvent[] | undefined {
+  const action = mapGroupNotificationAction(asString(record.notification));
+  if (!action) return undefined;
+
+  return [
+    {
+      type: 'group.update',
+      provider: PROVIDER,
+      instanceId,
+      groupId: asString(record.phone) ?? 'unknown',
+      action,
+      participants: asStringArray(record.notificationParameters),
+      raw: rawBody,
+    },
+  ];
+}
+
+/** Ver `mapGroupNotification` para a fonte/confiança de cada mapeamento. */
+function mapGroupNotificationAction(notification: string | undefined): string | undefined {
+  switch (notification) {
+    case 'GROUP_PARTICIPANT_ADD':
+      return 'participants.add';
+    case 'GROUP_PARTICIPANT_REMOVE':
+    case 'GROUP_PARTICIPANT_LEAVE':
+      return 'participants.remove';
+    case 'GROUP_PARTICIPANT_PROMOTE':
+      return 'participants.promote';
+    case 'GROUP_PARTICIPANT_DEMOTE':
+      return 'participants.demote';
+    default:
+      return undefined;
   }
 }
 

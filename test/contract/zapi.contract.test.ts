@@ -5,6 +5,7 @@ import ackFixture from '../../src/adapters/zapi/fixtures/webhook-ack.json';
 import connectionUpdateFixture from '../../src/adapters/zapi/fixtures/webhook-connection-update.json';
 import deliveryFixture from '../../src/adapters/zapi/fixtures/webhook-delivery.json';
 import disconnectedFixture from '../../src/adapters/zapi/fixtures/webhook-disconnected.json';
+import groupParticipantAddFixture from '../../src/adapters/zapi/fixtures/webhook-group-participant-add.json';
 import messageReceivedFixture from '../../src/adapters/zapi/fixtures/webhook-message-received.json';
 import { describeAdapterContract } from './adapter-contract';
 
@@ -656,6 +657,110 @@ describe('zapi adapter: comportamento específico do provider', () => {
     expect(event?.type).toBe('connection.update');
     if (event?.type === 'connection.update') {
       expect(event.state).toBe('disconnected');
+    }
+  });
+
+  it('parseWebhook normaliza notificação "GROUP_PARTICIPANT_ADD" (dentro de "ReceivedCallback") para group.update', () => {
+    const adapter = zapi(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: groupParticipantAddFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.provider).toBe('zapi');
+      expect(event.instanceId).toBe('A20DA9C0183A2D35A260F53F5D2B9244');
+      expect(event.groupId).toBe('5544999999999-group');
+      expect(event.action).toBe('participants.add');
+      expect(event.participants).toEqual(['5511999999999', '5511988887777']);
+    }
+  });
+
+  it('parseWebhook normaliza notificação "GROUP_PARTICIPANT_REMOVE" para group.update com action "participants.remove"', () => {
+    const adapter = zapi(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: {
+        ...groupParticipantAddFixture,
+        notification: 'GROUP_PARTICIPANT_REMOVE',
+        notificationParameters: ['5511999999999'],
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.action).toBe('participants.remove');
+      expect(event.participants).toEqual(['5511999999999']);
+    }
+  });
+
+  it('parseWebhook normaliza notificação "GROUP_PARTICIPANT_LEAVE" para group.update com a MESMA action de REMOVE ("participants.remove")', () => {
+    const adapter = zapi(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: {
+        ...groupParticipantAddFixture,
+        notification: 'GROUP_PARTICIPANT_LEAVE',
+        notificationParameters: ['5511999999999'],
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.action).toBe('participants.remove');
+    }
+  });
+
+  it('parseWebhook normaliza notificação "GROUP_PARTICIPANT_PROMOTE" para group.update com action "participants.promote"', () => {
+    const adapter = zapi(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: { ...groupParticipantAddFixture, notification: 'GROUP_PARTICIPANT_PROMOTE' },
+    });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    if (event?.type === 'group.update') {
+      expect(event.action).toBe('participants.promote');
+      expect(event.participants).toEqual(['5511999999999', '5511988887777']);
+    } else {
+      expect.fail('esperava group.update');
+    }
+  });
+
+  it('parseWebhook normaliza notificação "GROUP_PARTICIPANT_DEMOTE" para group.update com action "participants.demote"', () => {
+    const adapter = zapi(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: { ...groupParticipantAddFixture, notification: 'GROUP_PARTICIPANT_DEMOTE' },
+    });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    if (event?.type === 'group.update') {
+      expect(event.action).toBe('participants.demote');
+      expect(event.participants).toEqual(['5511999999999', '5511988887777']);
+    } else {
+      expect.fail('esperava group.update');
+    }
+  });
+
+  it('parseWebhook NÃO reconhece notificações sem exemplo de payload confirmado (GROUP_CREATE, GROUP_CHANGE_SUBJECT, GROUP_CHANGE_DESCRIPTION, GROUP_CHANGE_ICON, GROUP_PARTICIPANT_INVITE) como group.update — seguem para o dispatch de mensagem comum', () => {
+    const adapter = zapi(buildAdapterOptions());
+    const naoImplementados = [
+      'GROUP_CREATE',
+      'GROUP_CHANGE_SUBJECT',
+      'GROUP_CHANGE_DESCRIPTION',
+      'GROUP_CHANGE_ICON',
+      'GROUP_PARTICIPANT_INVITE',
+    ];
+
+    for (const notification of naoImplementados) {
+      const events = adapter.parseWebhook({
+        body: { ...groupParticipantAddFixture, notification },
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.type).not.toBe('group.update');
     }
   });
 
