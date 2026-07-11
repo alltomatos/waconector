@@ -1,8 +1,8 @@
 /**
  * Smoke test do pacote EMPACOTADO (dist/): valida o mapa de exports em ESM e
  * CJS — incluindo os subpath exports de adapter (`./waha`, `./evolution`,
- * `./uazapi`) — e exercita o fluxo completo com o MockAdapter. Roda após
- * `npm run build`. Ao adicionar um adapter novo, estenda ADAPTER_SUBPATHS
+ * `./uazapi`, `./zapi`) — e exercita o fluxo completo com o MockAdapter. Roda
+ * após `npm run build`. Ao adicionar um adapter novo, estenda ADAPTER_SUBPATHS
  * abaixo em vez de duplicar o bloco de asserções.
  */
 import assert from 'node:assert/strict';
@@ -19,6 +19,11 @@ const ADAPTER_SUBPATHS = [
     options: { baseUrl: 'http://localhost:1', apiKey: 'x' },
   },
   { name: 'uazapi', factory: 'uazapi', options: { baseUrl: 'http://localhost:1', token: 'x' } },
+  {
+    name: 'zapi',
+    factory: 'zapi',
+    options: { baseUrl: 'http://localhost:1', instanceId: 'x', token: 'x' },
+  },
 ];
 
 const require = createRequire(import.meta.url);

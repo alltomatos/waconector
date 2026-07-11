@@ -7,6 +7,7 @@ export default defineConfig({
     'adapters/waha/index': 'src/adapters/waha/index.ts',
     'adapters/evolution/index': 'src/adapters/evolution/index.ts',
     'adapters/uazapi/index': 'src/adapters/uazapi/index.ts',
+    'adapters/zapi/index': 'src/adapters/zapi/index.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,

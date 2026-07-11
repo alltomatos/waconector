@@ -1,0 +1,7 @@
+{
+  "momment": 1580163342,
+  "error": "Device has been disconnected",
+  "disconnected": true,
+  "type": "DisconnectedCallback",
+  "instanceId": "instance.id"
+}
