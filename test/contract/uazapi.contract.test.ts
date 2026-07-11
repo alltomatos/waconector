@@ -79,6 +79,16 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'POST' && pathname === '/message/react') {
+      return jsonResponse(200, {
+        id: 'r-fake-reaction',
+        messageid: '3EB0FAKE0000000000REACT',
+        messageTimestamp: 1751000002000,
+        messageType: 'reaction',
+        status: 'Pending',
+      });
+    }
+
     throw new Error(`fetchStub (uazapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -362,6 +372,57 @@ describe('uazapi adapter: comportamento específico do provider', () => {
     });
 
     expect(capturedBody?.file).toBe('ZmFrZS1pbWFnZW0=');
+  });
+
+  it('messages.sendReaction envia "number", "text" (emoji) e "id" (messageId) para POST /message/react', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/message/react') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendReaction({
+      to: '5511999999999',
+      messageId: '3EB0538DA65A59F6D8A251',
+      emoji: '👍',
+    });
+
+    expect(capturedBody?.number).toBe('5511999999999');
+    expect(capturedBody?.text).toBe('👍');
+    expect(capturedBody?.id).toBe('3EB0538DA65A59F6D8A251');
+    expect(sent.id).toBe('3EB0FAKE0000000000REACT');
+    expect(sent.chatId).toBe('5511999999999');
+    expect(sent.timestamp).toBe(1751000002000);
+  });
+
+  it('messages.sendReaction envia "text" vazio para remover uma reação já enviada', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/message/react') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendReaction({
+      to: '5511999999999',
+      messageId: '3EB0538DA65A59F6D8A251',
+      emoji: '',
+    });
+
+    expect(capturedBody?.text).toBe('');
   });
 
   it('sendMedia sem media.url nem media.base64 lança INVALID_INPUT', async () => {

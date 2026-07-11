@@ -12,6 +12,7 @@ import type {
   MessageAck,
   MessageKind,
   SendMediaInput,
+  SendReactionInput,
   SendTextInput,
   SentMessage,
   WaMessage,
@@ -59,6 +60,7 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'instance.logout',
   'messages.sendText',
   'messages.sendMedia',
+  'messages.sendReaction',
   'webhooks.parse',
 ];
 
@@ -84,6 +86,7 @@ export function uazapi(options: UazapiOptions): WaAdapter {
   const messages: MessagesApi = {
     sendText: (input) => sendText(http, input),
     sendMedia: (input) => sendMedia(http, input),
+    sendReaction: (input) => sendReaction(http, input),
   };
 
   return {
@@ -249,9 +252,32 @@ async function sendMedia(http: HttpClient, input: SendMediaInput): Promise<SentM
 }
 
 /**
+ * `POST /message/react`: body `{ number, text, id }`, todos obrigatórios — `text` é o emoji
+ * Unicode da reação (string vazia remove uma reação já enviada, convenção do próprio WhatsApp,
+ * ver ADR-0008/`SendReactionInput.emoji`), `id` é o ID da mensagem-alvo. Sem `idempotent: true`
+ * (mesma regra de `sendText`/`sendMedia` — ver ADR-0007): reenviar após NETWORK_ERROR poderia
+ * duplicar/alternar a reação.
+ *
+ * Limitações documentadas pelo provider (não impostas pelo adapter, apenas registradas aqui):
+ * só é possível reagir a mensagens de outros usuários (não às enviadas pela própria instância),
+ * não a mensagens com mais de 7 dias, e um único usuário só tem uma reação ativa por mensagem.
+ * Ver docs/providers/uazapi.md#operações-core.
+ */
+async function sendReaction(http: HttpClient, input: SendReactionInput): Promise<SentMessage> {
+  const number = toUazapiNumber(input.to);
+  const body: Record<string, unknown> = { number, text: input.emoji, id: input.messageId };
+  const response = await http.request<unknown>({ method: 'POST', path: '/message/react', body });
+  return mapSentMessage(response, number);
+}
+
+/**
  * A doc não mostra um exemplo JSON literal do corpo de resposta de `POST /send/text` /
  * `POST /send/media` — assumido como (ou contendo, no nível raiz) o shape do schema `Message`
  * documentado. Ver docs/providers/uazapi.md#formato-de-resposta-de-envio-assunção.
+ *
+ * Reaproveitada por `sendReaction` (`POST /message/react`): o schema de resposta 200 documentado
+ * para esse endpoint segue o mesmo padrão genérico (`id`, `messageid`, `messageTimestamp`, ...),
+ * sem um campo `chatid` — daqui vem o fallback para `requestedNumber` também nesse caso.
  */
 function mapSentMessage(body: unknown, requestedNumber: string): SentMessage {
   const record = asRecord(body);

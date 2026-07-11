@@ -73,6 +73,11 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'PUT' && pathname === '/api/reaction') {
+      // Resposta real documentada como `object` genérico/vazio no openapi.json — sem campos.
+      return jsonResponse(200, {});
+    }
+
     throw new Error(`fetchStub: rota não configurada — ${method} ${pathname}`);
   };
 }
@@ -163,6 +168,63 @@ describe('WAHA adapter: comportamento específico do provider', () => {
 
     expect(sent.id).toContain('MOCKSENDIMAGE');
     expect(sent.chatId).toBe('5585999999999@c.us');
+  });
+
+  it('messages.sendReaction chama PUT /api/reaction com { session, messageId, reaction }', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent: SentMessage = await wa.messages.sendReaction({
+      to: '5585999999999',
+      messageId: 'false_5585999999999@c.us_AAAAAAAAAAAAAAAAAAAA',
+      emoji: '👍',
+    });
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.method).toBe('PUT');
+    expect(call?.path).toBe('/api/reaction');
+    expect(call?.body).toEqual({
+      session: SESSION,
+      messageId: 'false_5585999999999@c.us_AAAAAAAAAAAAAAAAAAAA',
+      reaction: '👍',
+    });
+    // Resposta stub não ecoa id/chatId (objeto genérico/vazio) -> mapSentMessage cai no fallback.
+    expect(sent.id).toContain('waha-');
+    expect(sent.chatId).toBe('5585999999999@c.us');
+  });
+
+  it('messages.sendReaction com emoji vazio envia "reaction": "" (remove reação, ADR-0008)', async () => {
+    const calls: Array<{ body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          calls.push({ body: init?.body ? JSON.parse(String(init.body)) : undefined });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendReaction({
+      to: '5585999999999',
+      messageId: 'false_5585999999999@c.us_AAAAAAAAAAAAAAAAAAAA',
+      emoji: '',
+    });
+
+    expect(calls).toHaveLength(1);
+    expect((calls[0]?.body as Record<string, unknown> | undefined)?.reaction).toBe('');
   });
 
   it('parseWebhook normaliza "message.ack" do dossiê para MessageAckEvent', () => {

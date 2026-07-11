@@ -53,14 +53,20 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
 - [x] Adapter Wuzapi (self-hosted, whatsmeow) — dossiê pesquisado direto no código-fonte Go;
       auditoria adversarial achou e corrigiu 1 bug real e sutil (QR code nunca extraído do webhook
       porque o teste original mascarava o bug com um fixture que não refletia o payload real) —
-      PR pendente de abertura. **Fecha a lista original de 3 providers da F2** (uazapi/Z-API/Wuzapi).
-- [ ] Capabilities novas: grupos, contatos, reply/quote, reactions (ainda não iniciado)
+      [PR #13](https://github.com/alltomatos/waconector/pull/13). **Fecha a lista original de 3
+      providers da F2** (uazapi/Z-API/Wuzapi).
+- [x] Capability `messages.sendReaction` — núcleo (ADR-0008) + retrofit adversarial nos 5
+      adapters existentes (uazapi, Evolution GO, WAHA, Z-API, Wuzapi), cada um traduzindo a
+      convenção canônica de "emoji vazio remove" para a particularidade real do provider
+      (sentinel `"remove"` no Evolution GO/Wuzapi, endpoint dedicado `/send-remove-reaction` na
+      Z-API). `reply/quote` já estava coberto via `quotedId` (nenhuma mudança necessária).
+- [ ] Capabilities novas: grupos, contatos (escopo grande, ainda não iniciado)
 
 ## Marcos de release (v0.x)
 
 - [x] **v0.1.0** publicado no npm (2026-07-10/11) — F1 completa (WAHA + Evolution GO)
-- [ ] **v0.2.0** — uazapi + Z-API + Wuzapi (3 changesets pendentes, aguardando decisão de quando
-      publicar)
+- [x] **v0.2.0** publicado no npm (2026-07-11) — uazapi + Z-API + Wuzapi (F2) —
+      [PR #14](https://github.com/alltomatos/waconector/pull/14)
 
 ## Epic 4 — F3 do produto: profundidade e DX
 

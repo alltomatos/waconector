@@ -107,7 +107,7 @@ dessa identidade.
 ## Capabilities implementadas nesta fase (F2)
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
-`messages.sendMedia`, `webhooks.parse`.
+`messages.sendMedia`, `messages.sendReaction`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada (ver justificativa acima).
 
@@ -120,6 +120,7 @@ dessa identidade.
 | `instance.logout` | `POST /session/logout` | Hard logout — exige novo QR/pairing na próxima conexão. `POST /session/disconnect` (soft) não é usado (semântica diferente, fora do escopo de `logout`). |
 | `messages.sendText` | `POST /chat/send/text` | Body `{Phone, Body, Id?, LinkPreview?, ContextInfo?}`. `Phone` recebe o chatId canônico sem transformação (ver seção de mapeamento abaixo). `Id`/`LinkPreview` não são expostos por `SendTextInput` — não enviados (servidor usa os próprios defaults: gera um ID, não busca preview). `SendTextInput.mentions` **não tem campo confirmado** em `/chat/send/text` na pesquisa original — segue silenciosamente ignorado (mesmo padrão já adotado no adapter Z-API para o mesmo caso). |
 | `messages.sendMedia` | `POST /chat/send/image` \| `/audio` \| `/video` \| `/document` \| `/sticker` | Um endpoint por `MediaKind`, mesma forma de corpo, trocando o nome do campo de mídia (`Image`/`Audio`/`Video`/`Document`/`Sticker`) — `document` exige também `FileName`. Ver seção dedicada abaixo. |
+| `messages.sendReaction` | `POST /chat/react` | Body `{Phone, Body, Id}`. Ver seção dedicada abaixo. |
 
 ### `ContextInfo` (reply) — suposição documentada
 
@@ -153,6 +154,39 @@ Body: `{Phone, <Campo>: <data URI ou URL http(s)>, Caption?, Id?, MimeType?, Con
 - Proteção SSRF client-side: o servidor rejeita IPs privados/loopback ao buscar mídia de URLs
   remotas (`main.go`, transport customizado) — não é responsabilidade deste adapter, apenas
   registrado aqui para contexto.
+
+### `messages.sendReaction` — corpo, remoção e limitações
+
+Confirmado em três lugares independentes: `API.md` (`POST /chat/react`), `routes.go` (registro da
+rota) e `handlers.go` (func `React`, que monta um `waE2E.Message{ReactionMessage:{...}}` e chama
+`SendMessage` do whatsmeow — é envio real, não só parsing de webhook).
+
+Body: `{Phone, Body, Id, Participant?}`. `Phone` = destinatário (mesmo mapeamento de
+`sendText`/`sendMedia`, sem transformação). `Body` = emoji da reação (**obrigatório** — o servidor
+rejeita string vazia com 400 `"missing Body in Payload"`). `Id` = id da mensagem-alvo.
+
+- **Remover uma reação**: a convenção canônica do waconector usa `emoji === ''` (ver
+  `SendReactionInput`/ADR-0008), mas o Wuzapi **não** aceita `Body` vazio para isso — em vez disso,
+  usa o literal especial `Body: "remove"` (`handlers.go`: `if reaction == "remove" { reaction = ""
+  }`, que então monta o `ReactionMessage` com texto vazio internamente — a convenção real do
+  protocolo WhatsApp/whatsmeow para desfazer uma reação). Este adapter traduz `emoji === ''` para
+  `Body: "remove"` na fronteira, para que o consumidor do waconector não precise conhecer esse
+  detalhe do provider.
+- **Reagir à própria mensagem enviada**: o Wuzapi espera o prefixo `"me:"` em `Id` nesse caso
+  (`ID[, Participant]` — o prefixo é removido antes de usar, e ativa `FromMe: true` na chave da
+  mensagem). `SendReactionInput` não carrega essa distinção (não há campo "esta mensagem é minha?")
+  — **não implementado**: `Id` é sempre enviado sem prefixo. Reagir à própria mensagem pode
+  portanto não funcionar corretamente via este adapter; reagir a mensagens recebidas (o caso comum)
+  funciona.
+- `Participant` só é usado pelo servidor quando `FromMe` é falso (reação num grupo, a uma mensagem
+  de um participante diferente do "chat"). `SendReactionInput` não tem um campo equivalente ao
+  "remetente da mensagem-alvo" — **não enviado**, mesma limitação, em espírito, já documentada para
+  `ContextInfo.Participant` em `sendText`/`sendMedia`.
+- Resposta em sucesso (dentro de `data`): `{"Details":"Sent","Timestamp":<unix seconds>,"Id":"<id
+  da mensagem reagida>"}` — **atenção**: aqui `Id` é o id da mensagem-ALVO (a que recebeu a
+  reação), não um novo id de "mensagem de reação" (confirmado em prosa no próprio `API.md`).
+  Mapeado com a mesma `mapSentMessage` de `sendText`/`sendMedia` — `SentMessage.id` reflete esse
+  eco do `Id` requisitado, não um novo identificador.
 
 ### Formato de resposta de envio
 

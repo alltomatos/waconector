@@ -17,6 +17,7 @@ import type {
   MessageAck,
   MessageKind,
   SendMediaInput,
+  SendReactionInput,
   SendTextInput,
   SentMessage,
   WaMessage,
@@ -62,6 +63,7 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'instance.logout',
   'messages.sendText',
   'messages.sendMedia',
+  'messages.sendReaction',
   'webhooks.parse',
 ];
 
@@ -86,6 +88,7 @@ export function evolution(options: EvolutionOptions): WaAdapter {
   const messages: MessagesApi = {
     sendText: (input) => sendText(http, input),
     sendMedia: (input) => sendMedia(http, input),
+    sendReaction: (input) => sendReaction(http, input),
   };
 
   return {
@@ -250,6 +253,34 @@ async function sendMedia(http: HttpClient, input: SendMediaInput): Promise<SentM
   const response = await http.request<EvolutionEnvelope>({
     method: 'POST',
     path: '/send/media',
+    body,
+  });
+  return toSentMessage(input.to, response);
+}
+
+/**
+ * `POST /message/react` (`pkg/message/service/message_service.go`, `ReactStruct`) — endpoint
+ * separado de `/send/*` (não fica em `pkg/sendMessage/*`). Corpo: `{number, reaction, id, fromMe,
+ * participant?}`. Ver docs/providers/evolution.md ("Reações").
+ */
+async function sendReaction(http: HttpClient, input: SendReactionInput): Promise<SentMessage> {
+  const body: Record<string, unknown> = {
+    number: toProviderNumber(input.to),
+    // O provider rejeita `reaction: ""` com 400 ("message reaction is required") — a remoção usa o
+    // sentinel literal "remove" (que o serviço traduz internamente para texto vazio no protocolo
+    // whatsmeow). O modelo canônico usa `emoji: ''` para remoção (ADR-0008); traduzimos aqui.
+    reaction: input.emoji === '' ? 'remove' : input.emoji,
+    id: input.messageId,
+    // `SendReactionInput` (contrato canônico) não carrega se a mensagem-alvo foi enviada pela
+    // própria instância nem o `participant` (autor, em grupos) — mesma limitação já documentada
+    // para `quotedId` em sendText/sendMedia. `false` é o valor seguro para o caso mais comum
+    // (reagir a uma mensagem recebida); ver "Limites e particularidades" no dossiê.
+    fromMe: false,
+  };
+
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'POST',
+    path: '/message/react',
     body,
   });
   return toSentMessage(input.to, response);

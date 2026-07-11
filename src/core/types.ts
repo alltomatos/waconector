@@ -58,6 +58,14 @@ export interface MediaRef {
   filename?: string;
 }
 
+/** Detalhe de uma reação (presente em `WaMessage` quando `kind === 'reaction'`). */
+export interface ReactionInfo {
+  /** Emoji da reação (ex.: `'👍'`). String vazia representa remoção de uma reação anterior. */
+  emoji: string;
+  /** ID da mensagem original que recebeu a reação. */
+  targetMessageId: string;
+}
+
 /** Mensagem normalizada (recebida ou ecoada via webhook). */
 export interface WaMessage {
   id: string;
@@ -70,6 +78,8 @@ export interface WaMessage {
   text?: string;
   media?: MediaRef;
   quotedId?: string;
+  /** Presente quando `kind === 'reaction'`. Ver ADR-0008. */
+  reaction?: ReactionInfo;
   raw: unknown;
 }
 
@@ -95,4 +105,12 @@ export interface SendMediaInput {
   media: MediaRef;
   caption?: string;
   quotedId?: string;
+}
+
+export interface SendReactionInput {
+  to: string;
+  /** ID da mensagem a reagir. */
+  messageId: string;
+  /** Emoji da reação (ex.: `'👍'`). String vazia remove uma reação já enviada. */
+  emoji: string;
 }

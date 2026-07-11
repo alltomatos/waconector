@@ -90,6 +90,22 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'POST' && pathname === `${PREFIX}/send-reaction`) {
+      return jsonResponse(200, {
+        zaapId: 'zaap-fake-reaction',
+        messageId: '3EB0FAKE0000000000RCT',
+        id: '3EB0FAKE0000000000RCT',
+      });
+    }
+
+    if (method === 'POST' && pathname === `${PREFIX}/send-remove-reaction`) {
+      return jsonResponse(200, {
+        zaapId: 'zaap-fake-remove-reaction',
+        messageId: '3EB0FAKE0000000000RCT',
+        id: '3EB0FAKE0000000000RCT',
+      });
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -390,6 +406,65 @@ describe('zapi adapter: comportamento específico do provider', () => {
     expect(capturedBody?.caption).toBeUndefined();
     expect(capturedBody?.messageId).toBe('3EB0ORIGINAL');
     expect(sent.id).toBe('3EB0FAKE0000000000STK');
+  });
+
+  it('messages.sendReaction envia {phone, reaction, messageId} para POST /send-reaction', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    let requestedPath: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/send-reaction`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendReaction({
+      to: '5511999999999',
+      messageId: '3EB0ORIGINAL',
+      emoji: '❤️',
+    });
+
+    expect(requestedPath).toBe(`${PREFIX}/send-reaction`);
+    expect(capturedBody?.phone).toBe('5511999999999');
+    expect(capturedBody?.reaction).toBe('❤️');
+    expect(capturedBody?.messageId).toBe('3EB0ORIGINAL');
+    expect(sent.id).toBe('3EB0FAKE0000000000RCT');
+    expect(sent.chatId).toBe('5511999999999');
+  });
+
+  it('messages.sendReaction com emoji vazio remove a reação via POST /send-remove-reaction (sem campo "reaction")', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    let requestedPath: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/send-remove-reaction`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendReaction({
+      to: '5511999999999',
+      messageId: '3EB0ORIGINAL',
+      emoji: '',
+    });
+
+    expect(requestedPath).toBe(`${PREFIX}/send-remove-reaction`);
+    expect(capturedBody?.phone).toBe('5511999999999');
+    expect(capturedBody?.messageId).toBe('3EB0ORIGINAL');
+    expect(capturedBody).not.toHaveProperty('reaction');
+    expect(sent.id).toBe('3EB0FAKE0000000000RCT');
   });
 
   it('sendMedia sem media.url nem media.base64 lança INVALID_INPUT', async () => {

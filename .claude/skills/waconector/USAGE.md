@@ -43,6 +43,12 @@ await wa.messages.sendMedia({
   media: { kind: 'image', url: 'https://...' },
   caption: 'legenda',
 });
+
+// Opcional (ADR-0008) — confira wa.supports('messages.sendReaction') antes: nem todo provider
+// implementa. Emoji vazio ('') remove uma reação enviada antes.
+if (wa.supports('messages.sendReaction')) {
+  await wa.messages.sendReaction({ to: '5585999999999', messageId: 'ABC123', emoji: '👍' });
+}
 ```
 
 **3. Receber, em qualquer framework HTTP**

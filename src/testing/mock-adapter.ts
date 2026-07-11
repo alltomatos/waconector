@@ -8,6 +8,7 @@ import {
   MESSAGE_ACKS,
   type MessageAck,
   type SendMediaInput,
+  type SendReactionInput,
   type SendTextInput,
   type SentMessage,
 } from '../core/types';
@@ -19,7 +20,7 @@ export interface MockAdapterOptions {
 }
 
 export interface MockOutboxEntry {
-  input: SendTextInput | SendMediaInput;
+  input: SendTextInput | SendMediaInput | SendReactionInput;
   message: SentMessage;
 }
 
@@ -58,6 +59,7 @@ export class MockAdapter implements WaAdapter {
     this.messages = {
       sendText: async (input) => this.deliver(input),
       sendMedia: async (input) => this.deliver(input),
+      sendReaction: async (input) => this.deliver(input),
     };
   }
 
@@ -88,6 +90,32 @@ export class MockAdapter implements WaAdapter {
         timestamp: asNumber(record.timestamp) ?? Date.now(),
         kind: 'text' as const,
         text: asString(record.text),
+        raw: body,
+      };
+      return [
+        {
+          type: fromMe ? 'message.sent' : 'message.received',
+          provider: this.provider,
+          message,
+          raw: body,
+        },
+      ];
+    }
+
+    if (event === 'reaction') {
+      const from = asString(record.from);
+      const fromMe = asBoolean(record.fromMe) ?? false;
+      const message = {
+        id: asString(record.id) ?? `mock-in-${++this.seq}`,
+        chatId: asString(record.chatId) ?? from ?? 'unknown',
+        from,
+        fromMe,
+        timestamp: asNumber(record.timestamp) ?? Date.now(),
+        kind: 'reaction' as const,
+        reaction: {
+          emoji: asString(record.emoji) ?? '',
+          targetMessageId: asString(record.targetMessageId) ?? 'unknown',
+        },
         raw: body,
       };
       return [
@@ -137,11 +165,18 @@ export class MockAdapter implements WaAdapter {
     return { body: { event: 'ack', messageId, ack } };
   }
 
+  /** Webhook sintético de reação recebida, no formato que `parseWebhook` entende. */
+  buildReaction(from: string, targetMessageId: string, emoji: string): WebhookInput {
+    return {
+      body: { event: 'reaction', from, chatId: from, targetMessageId, emoji, fromMe: false },
+    };
+  }
+
   buildConnectionUpdate(state: InstanceState, qr?: string): WebhookInput {
     return { body: { event: 'connection', state, qr } };
   }
 
-  private deliver(input: SendTextInput | SendMediaInput): SentMessage {
+  private deliver(input: SendTextInput | SendMediaInput | SendReactionInput): SentMessage {
     if (this.state !== 'connected') {
       throw new WaConnectorError(
         'INSTANCE_DISCONNECTED',

@@ -77,6 +77,40 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 | `instance.logout` | `DELETE /instance/logout` | Corpo vazio; resposta `{"message":"success"}`. |
 | `messages.sendText` | `POST /send/text` | Campo `number` aceita dígitos crus (`"5511999999999"`, sem `+`/`@`) OU JID completo (`...@s.whatsapp.net`, `...@g.us`) já formado — **compatível 1:1 com o `chatId` canônico do waconector** (`normalizeChatId`), então o adapter repassa sem transformação. `formatJid` (default `true`) normaliza dígitos crus no servidor. |
 | `messages.sendMedia` | `POST /send/media` | Duas variantes no mesmo endpoint, escolhidas pelo `Content-Type`: JSON (`{number, type, url, caption?, filename?, ...}`) ou `multipart/form-data` (campo binário `file`). **Este adapter implementa a variante JSON** — o `HttpClient` compartilhado sempre serializa o corpo como JSON, não há suporte a `multipart/form-data` nele. O campo `url` da variante JSON é overloaded pelo servidor (`pkg/sendMessage/handler/send_handler.go`): quando o valor não começa com `http://`/`https://`, é tratado como base64 e decodificado (`base64.StdEncoding.DecodeString`) antes do envio — então o adapter envia `media.base64` no mesmo campo `url` quando `media.url` está ausente. Lança `WaConnectorError('INVALID_INPUT', ...)` apenas quando nem `url` nem `base64` são informados. |
+| `messages.sendReaction` | `POST /message/react` | Ver seção "Reações" abaixo. |
+
+## Reações
+
+- Endpoint: `POST /message/react` (`pkg/message/service/message_service.go`, `ReactStruct` +
+  `pkg/message/handler/message_handler.go`) — **fica em um pacote separado** de `/send/*`
+  (`pkg/message/*`, não `pkg/sendMessage/*`); não confundir os dois ao portar lógica ou procurar o
+  handler no código-fonte.
+- Corpo: `{number: string, reaction: string, id: string, fromMe: bool, participant?: string}`.
+  - `number`: mesmo formato do campo `number` de `/send/text`/`/send/media` (dígitos crus ou JID
+    completo) — o adapter repassa via `toProviderNumber`, sem transformação.
+  - `id`: o ID da mensagem-alvo da reação. **Atenção de nomenclatura**: este campo se chama `id`,
+    **não** `messageId` (diferente de `EditMessage`/`DeleteMessageEveryone`, no mesmo arquivo, que
+    usam `messageId`).
+  - `reaction`: o emoji (ex.: `"👍"`). O servidor rejeita `reaction: ""` com `400` ("message
+    reaction is required") — para remover uma reação já enviada, o sentinel literal
+    `"reaction": "remove"` deve ser usado (o serviço traduz isso internamente para texto vazio no
+    protocolo whatsmeow, que é o que de fato sinaliza remoção ao WhatsApp). O modelo canônico do
+    waconector usa `emoji: ''` para remoção (ADR-0008) — **o adapter traduz** `''` → `"remove"`
+    antes de enviar.
+  - `fromMe` (obrigatório pelo shape do provider): indica se a mensagem-alvo foi originalmente
+    enviada pela própria instância. `SendReactionInput` (contrato canônico) não carrega essa
+    informação nem `participant` (autor, necessário em grupos quando `fromMe=false`) — mesma
+    limitação já documentada para `quotedId` em `sendText`/`sendMedia`. Este adapter sempre envia
+    `fromMe: false`, o valor seguro para o caso mais comum (reagir a uma mensagem recebida);
+    reagir a uma mensagem **enviada pela própria instância** é uma limitação conhecida deste
+    adapter em F2 (pode não localizar a mensagem corretamente no protocolo WhatsApp).
+- Resposta 200: `{"message": "success", "data": <MessageSendStruct>}` — mesmo formato de
+  `/send/text`/`/send/media` (`data.Info.ID`/`ServerID`/`Timestamp`), reaproveitado por
+  `toSentMessage`. Erros: `400` (número/reaction ausentes) ou `500` (sem sessão ativa, número
+  inválido, `id` ausente, falha de envio), ambos `{"error": "..."}`.
+- Funciona tanto para reagir a mensagens recebidas quanto enviadas pela própria instância (via
+  `fromMe`), em chats individuais e em grupos (via `participant`) — nenhuma limitação direcional
+  documentada pelo provider em si; as limitações acima são do adapter, não da API.
 
 ## Webhooks
 
@@ -172,6 +206,10 @@ sem garantia de cobertura completa (ver `openQuestions` abaixo).
   (`quotedId`) não carrega `participant`, então o adapter só envia `messageId`. Se o provider
   exigir `participant` para citar corretamente uma mensagem de grupo, isso é uma limitação
   conhecida deste adapter em F1.
+- `messages.sendReaction` (`POST /message/react`) sempre envia `fromMe: false` e nunca envia
+  `participant` — o contrato canônico (`SendReactionInput`) não carrega nenhum dos dois. Reagir a
+  uma mensagem enviada pela própria instância, ou a uma mensagem de grupo onde `participant` seria
+  necessário, é uma limitação conhecida deste adapter. Ver seção "Reações" acima.
 - **Suposição** (estado `Connected=false, LoggedIn=true`): mapeado para `connecting` em vez de
   `disconnected`, por representar uma sessão válida em processo de recuperação (o provider mesmo
   recomenda `/instance/reconnect`). Não verificado com o provider real; revisar se a suposição se
