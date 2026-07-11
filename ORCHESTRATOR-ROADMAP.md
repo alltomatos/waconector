@@ -84,7 +84,8 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       `/group/info`, `InviteLink` em `/group/resetInviteCode`) — mesmo provider, não é erro de
       digitação. **Fecha as 14 operações originalmente escopadas para `groups.*` (ADR-0009)** —
       resta só popular os webhooks de atualização de grupo (`GroupUpdateEvent`), tratado como
-      incremento à parte pela confiança desigual dos payloads pesquisados por provider.
+      incremento à parte pela confiança desigual dos payloads pesquisados por provider. Mergeado
+      via [PR #19](https://github.com/alltomatos/waconector/pull/19).
 - [ ] Capability `contacts.*` (escopo grande, ainda não iniciado)
 
 ## Marcos de release (v0.x)
