@@ -108,7 +108,8 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       `privacy/get-disallowed-contacts`, uma blacklist de privacidade diferente). `block`/`unblock`
       implementados nos 5. **Fecha as 8 operações request-response escopadas para `contacts.*`
       (ADR-0010).** `getPresence` fica fora do escopo (estruturalmente assíncrono/webhook para 4
-      dos 5 providers, incremento futuro à parte, mesma lógica dos webhooks de grupo).
+      dos 5 providers, incremento futuro à parte, mesma lógica dos webhooks de grupo). Mergeado
+      via [PR #22](https://github.com/alltomatos/waconector/pull/22).
 
 ## Marcos de release (v0.x)
 
