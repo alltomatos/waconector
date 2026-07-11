@@ -1,0 +1,9 @@
+{
+  "libraries": [
+    { "name": "typescript", "context7Id": "/microsoft/typescript" },
+    { "name": "vitest", "context7Id": "/vitest-dev/vitest" },
+    { "name": "tsup", "context7Id": "/egoist/tsup" },
+    { "name": "biome", "context7Id": "/biomejs/biome" },
+    { "name": "changesets", "context7Id": "/changesets/changesets" }
+  ]
+}

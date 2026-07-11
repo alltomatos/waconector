@@ -39,3 +39,16 @@ npm run smoke       # exercita o dist/ (rodar após build)
 4. Registrar na suite de contrato (`test/contract/`) — precisa passar 100%.
 5. Adicionar subpath export em `package.json` + entrada no `tsup.config.ts`.
 6. `npx changeset` descrevendo a mudança.
+
+## Agent skills
+
+- **Domain skill**: `.claude/skills/waconector/` — SKILL.md roteia para
+  `CONTRIBUTING-WORKFLOW.md` (contribuidores) ou `USAGE.md` (consumidores do pacote).
+- **Governança de docs/tracker**: `docs/agents/issue-tracker.md`, `docs/agents/triage-labels.md`,
+  `docs/agents/domain.md` (single-context; ver `docs/agents/domain.md`).
+- **Modelo de branches**: `main` protegido, `develop` de integração — ver
+  [CONTRIBUTING.md#modelo-de-branches](../CONTRIBUTING.md) e o job `guard-main-source` em
+  `.github/workflows/ci.yml`.
+- **Roadmap operacional do orchestrator**: `ORCHESTRATOR-ROADMAP.md` (raiz) — estado tático de
+  Epics/tarefas; `docs/CONTEXT.md` continua sendo a fonte da verdade do domínio e do roadmap de
+  produto (F0/F1/F2/F3).
