@@ -48,6 +48,26 @@
         "default": "./dist/testing/index.cjs"
       }
     },
+    "./waha": {
+      "import": {
+        "types": "./dist/adapters/waha/index.d.ts",
+        "default": "./dist/adapters/waha/index.js"
+      },
+      "require": {
+        "types": "./dist/adapters/waha/index.d.cts",
+        "default": "./dist/adapters/waha/index.cjs"
+      }
+    },
+    "./evolution": {
+      "import": {
+        "types": "./dist/adapters/evolution/index.d.ts",
+        "default": "./dist/adapters/evolution/index.js"
+      },
+      "require": {
+        "types": "./dist/adapters/evolution/index.d.cts",
+        "default": "./dist/adapters/evolution/index.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.cjs",
@@ -65,6 +85,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "smoke": "node scripts/smoke.mjs",
@@ -76,6 +97,7 @@
     "@biomejs/biome": "2.5.3",
     "@changesets/cli": "2.31.0",
     "@types/node": "22.20.1",
+    "@vitest/coverage-v8": "4.1.10",
     "tsup": "8.5.1",
     "typescript": "5.9.3",
     "vitest": "4.1.10"

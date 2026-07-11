@@ -1,0 +1,21 @@
+{
+  "event": "Message",
+  "data": {
+    "Info": {
+      "Chat": "557499879409@s.whatsapp.net",
+      "Sender": "557499879409:38@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "ID": "3EB0C05FF2D3A0068B2A2D",
+      "Type": "text",
+      "PushName": "Davidson Gomes",
+      "Timestamp": "2024-10-10T17:17:44-03:00"
+    },
+    "Message": { "conversation": "oi" },
+    "IsEphemeral": false,
+    "IsViewOnce": false,
+    "IsEdit": false
+  },
+  "instanceId": "249aad2e-68f9-464f-bc84-aca560c38f0e",
+  "instanceToken": "2ef79c34-b6e1-4969-9e37-12b3d3a9d1062"
+}

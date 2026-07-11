@@ -2,10 +2,29 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
 
+# Least privilege: nenhum job aqui precisa escrever no repositório (só ler código e publicar
+# artifact, que não exige permissão própria) — CodeQL sinaliza workflows sem "permissions"
+# explícito porque o GITHUB_TOKEN default varia de repo pra repo.
+permissions:
+  contents: read
+
 jobs:
+  guard-main-source:
+    # main só recebe merge vindo de develop (ver CONTRIBUTING.md e a skill waconector).
+    # O GitHub não tem uma regra de proteção nativa para "só aceitar PR de um branch
+    # específico" — este job é a aplicação técnica dessa regra.
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: PRs para main devem vir de develop
+        if: github.head_ref != 'develop'
+        run: |
+          echo "PRs para main só são aceitos a partir de develop (branch atual: ${{ github.head_ref }})." >&2
+          exit 1
+
   ci:
     runs-on: ubuntu-latest
     strategy:
@@ -20,6 +39,29 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      - run: npm run test:coverage
       - run: npm run build
       - run: npm run smoke
+      - name: Publicar relatório de cobertura
+        if: matrix.node-version == 22
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+  ci-required:
+    # Jobs com matrix nunca reportam um check chamado exatamente "ci" — o GitHub sempre sufixa
+    # com o valor da matrix ("ci (20)", "ci (22)"). Como a branch ruleset exige um check chamado
+    # "ci", este job-portão agrega o resultado de toda a matrix sob esse nome exato.
+    name: ci
+    needs: ci
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Falhar se algum job da matrix não passou
+        run: |
+          if [ "${{ needs.ci.result }}" != "success" ]; then
+            echo "ci (matrix Node 20/22) não passou: ${{ needs.ci.result }}" >&2
+            exit 1
+          fi

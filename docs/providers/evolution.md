@@ -1,0 +1,193 @@
+# Dossiê: Evolution GO
+
+- Docs oficiais: <https://docs.evolutionfoundation.com.br/evolution-go>
+- Versão testada: documentação consultada em 2026-07-10
+- Hospedagem: self-hosted (imagem Docker; requer ativação de licença via Manager UI antes do uso)
+
+> **Atenção de nomenclatura**: "Evolution GO" (este dossiê) é um projeto **distinto** do mais
+> conhecido "Evolution API" (Node/Baileys), da mesma fundação. Apesar da marca semelhante, o
+> wire-format (casing de campos, forma dos webhooks) é diferente entre os dois. Não reaproveitar
+> adapter/fixtures de um para o outro.
+
+## Autenticação
+
+Um único header HTTP custom, `apikey` (não é `Authorization`, não é Bearer, não é query string),
+carrega um de dois tipos de segredo:
+
+1. **GLOBAL_API_KEY** (env var do servidor) — exigido nas rotas **admin** (criar/listar/consultar/
+   deletar instância). Comparação literal contra o valor configurado no servidor.
+2. **token da instância** (escolhido pelo chamador ao criar a instância) — exigido nas rotas
+   **operacionais**: connect, status, qr, pair, disconnect, reconnect, logout e todas as rotas
+   `/send/*`, `/message/*`, `/user/*`, `/group/*`, `/chat/*`, `/label/*`, `/newsletter/*`,
+   `/community/*`. O servidor resolve a instância dona do token a partir do próprio header — **não
+   existe** `instanceId` separado no header/rota nessas chamadas: o token já identifica a
+   instância.
+
+Ambos os tipos de segredo compartilham o mesmo nome de header; a diferença é puramente qual valor
+vai nele e qual família de rotas está sendo chamada. Algumas rotas admin adicionais também levam
+`:instanceId` como parâmetro de path (ex.: `GET /instance/info/:instanceId`,
+`DELETE /instance/delete/:instanceId`) mantendo `apikey=GLOBAL_API_KEY` no header.
+
+Este adapter (F1) só implementa capabilities que usam rotas **operacionais** — portanto
+`EvolutionOptions.apiKey` deve ser o **token da instância**, não o `GLOBAL_API_KEY`.
+
+## Modelo de instância/sessão
+
+Terminologia do provider: **"instance"** (documentação em português usa "instância"). Não usa
+"session"/"channel".
+
+- `POST /instance/create` (header `apikey=GLOBAL_API_KEY`) — cria a instância, define `name` e
+  `token`. Fora do escopo deste adapter em F1 (rota admin).
+- `POST /instance/connect` (header `apikey=<token da instância>`) — inicia o client whatsmeow e
+  começa a geração do QR. Corpo aceita `webhookUrl`, `subscribe` (categorias de evento ou `ALL`),
+  `immediate`, `phone`, `rabbitmqEnable`/`websocketEnable`/`natsEnable`. Resposta:
+  `{"message":"success","data":{"jid":"","webhookUrl":"...","eventString":"..."}}` — **não**
+  inclui o QR code em si.
+- `GET /instance/qr` (header `apikey=<token da instância>`) — busca o QR gerado
+  separadamente. `data`: `{"qrcode":"data:image/png;base64,...","code":"2@AbCdEf..."}` (campos
+  minúsculos, confirmados via struct/json tags). Pode retornar `passkeyStage`/`passkeyOpenUrl`/
+  `passkeyCode` quando a conta exige cerimônia de passkey em vez de QR escaneável.
+- `POST /instance/pair` — suporta pairing code (`data.PairingCode`, sem json tag — serializa
+  capitalizado). **Confirmado como suportado pelo provider**, porém fora do escopo declarado desta
+  fase (F1 não lista `instance.pairingCode`); não implementado neste adapter.
+- `GET /instance/status` (header `apikey=<token>`) — `data` é um struct Go **sem** json tags,
+  serializa capitalizado: `{"Connected": bool, "LoggedIn": bool, "Name": string}`.
+- `DELETE /instance/logout` (header `apikey=<token>`, corpo vazio) — logout completo, apaga a
+  sessão; exige novo QR/pairing depois. Distinto de `POST /instance/disconnect` (soft disconnect,
+  mantém sessão, retomável via `POST /instance/reconnect`) e de
+  `DELETE /instance/delete/{instanceId}` (admin, `GLOBAL_API_KEY`, apaga a instância
+  permanentemente — irreversível). Somente `logout` está no escopo F1.
+
+### Mapeamento de estado (`GET /instance/status` → `InstanceState` canônico)
+
+| `Connected` | `LoggedIn` | Significado do provider | `InstanceState` canônico |
+| --- | --- | --- | --- |
+| `false` | `false` | nunca conectada / deslogada | `disconnected` |
+| `true` | `false` | socket aberto, aguardando escanear QR/pairing | `qr` |
+| `true` | `true` | conectada e autenticada (sessão ativa) | `connected` |
+| `false` | `true` | credenciais existem, socket caiu temporariamente (precisa de `/instance/reconnect`) | `connecting` *(suposição — ver "Limites e particularidades")* |
+| qualquer valor não-booleano/ausente | — | formato inesperado | `unknown` (nunca lança) |
+
+## Operações core
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `instance.connect` | `POST /instance/connect` + `GET /instance/qr` | O adapter encadeia as duas chamadas: `connect` inicia a geração do QR no servidor, mas quem devolve o QR é `GET /instance/qr`. A segunda chamada é best-effort (se falhar ou o QR ainda não estiver pronto, `ConnectResult.qr` fica `undefined`, sem lançar). |
+| `instance.status` | `GET /instance/status` | Ver tabela de mapeamento acima. |
+| `instance.logout` | `DELETE /instance/logout` | Corpo vazio; resposta `{"message":"success"}`. |
+| `messages.sendText` | `POST /send/text` | Campo `number` aceita dígitos crus (`"5511999999999"`, sem `+`/`@`) OU JID completo (`...@s.whatsapp.net`, `...@g.us`) já formado — **compatível 1:1 com o `chatId` canônico do waconector** (`normalizeChatId`), então o adapter repassa sem transformação. `formatJid` (default `true`) normaliza dígitos crus no servidor. |
+| `messages.sendMedia` | `POST /send/media` | Duas variantes no mesmo endpoint, escolhidas pelo `Content-Type`: JSON (`{number, type, url, caption?, filename?, ...}`) ou `multipart/form-data` (campo binário `file`). **Este adapter implementa a variante JSON** — o `HttpClient` compartilhado sempre serializa o corpo como JSON, não há suporte a `multipart/form-data` nele. O campo `url` da variante JSON é overloaded pelo servidor (`pkg/sendMessage/handler/send_handler.go`): quando o valor não começa com `http://`/`https://`, é tratado como base64 e decodificado (`base64.StdEncoding.DecodeString`) antes do envio — então o adapter envia `media.base64` no mesmo campo `url` quando `media.url` está ausente. Lança `WaConnectorError('INVALID_INPUT', ...)` apenas quando nem `url` nem `base64` são informados. |
+
+## Webhooks
+
+Duas camadas independentes e simultâneas: (a) global via env `WEBHOOK_URL` do servidor (todas as
+instâncias); (b) por instância via `webhookUrl` no corpo de `POST /instance/connect` (só aquela
+instância). Filtragem de eventos via array `subscribe` (mesma chamada): categorias `MESSAGE`,
+`SEND_MESSAGE`, `READ_RECEIPT`, `PRESENCE`, `HISTORY_SYNC`, `CHAT_PRESENCE`, `CALL`, `CONNECTION`,
+`LABEL`, `CONTACT`, `GROUP`, `NEWSLETTER`, `QRCODE`, `BUTTON_CLICK`, `PICTURE`, `USER_ABOUT`, ou
+`ALL`. Entrega via `HTTP POST`, `Content-Type: application/json`, retentado até 5x a cada 30s até
+2xx. **Importante**: o valor pedido em `subscribe` é a categoria (maiúscula); o `event` recebido no
+payload é o nome individual do evento em PascalCase (ex.: `subscribe:['CALL']` recebe
+`CallOffer`/`CallAccept`/`CallTerminate`, não `"CALL"` literal).
+
+O envelope de webhook expõe os campos do struct Go/whatsmeow **verbatim** (capitalizados: `Info`,
+`Message`, `Chat`, `Sender`, `IsFromMe`, `PushName`, `ID`, `Timestamp`, `MessageIDs`, `Type`) — isso
+é estruturalmente diferente do envelope estilo Baileys (`key`/`message`/`messageTimestamp`
+minúsculos) do projeto "Evolution API" (não confundir os dois ao portar lógica).
+
+**Qualidade da documentação**: os arquivos `docs/wiki/*.md` do próprio repositório terminam com
+"Documentação gerada para Evolution GO v1.0" (auto-gerados) e **divergem** do código-fonte real em
+pontos verificáveis (ex.: mostram `GET /instance/status` e `POST /instance/pair` com chaves JSON
+minúsculas, e um payload de mensagem estilo Baileys — nenhum dos dois bate com os structs
+reais/swagger.json). O site `docs.evolutionfoundation.com.br` concordou com o código-fonte em todos
+os pontos checados nesta pesquisa. Este dossiê segue o site + código-fonte, não o wiki do repo.
+
+### Payloads de webhook (fixtures em `src/adapters/evolution/fixtures/`)
+
+- `webhook-message-received.json` — **copiado literalmente** do site de docs
+  (`docs.evolutionfoundation.com.br`), cruzado com `pkg/whatsmeow/service/whatsmeow.go`.
+- `webhook-ack.json` — **copiado literalmente** do site de docs, cruzado com o mesmo arquivo-fonte
+  (evento `Receipt`, `state` ∈ `Read`/`Delivered`/`ReadSelf`).
+- `webhook-connection-update.json` — **copiado literalmente** do site de docs (evento `Connected`,
+  `data.status="open"`).
+- `webhook-message-image.json` / `webhook-message-document.json` — **RECONSTRUÍDOS** (não
+  capturados "ao vivo"; nenhuma doc/fixture de mensagem de mídia foi encontrada na pesquisa
+  original). Montados a partir dos structs gerados do whatsmeow
+  (`waE2E/WAWebProtobufsE2E.pb.go` — `ImageMessage`/`DocumentMessage`), com especial atenção ao
+  campo de URL: os structs tagueiam esse campo como `json:"URL,omitempty"` (**maiúsculo**),
+  diferente de `mimetype`/`caption`/`fileName` (minúsculo/camelCase). Isso foi confirmado
+  diretamente no `.pb.go`, não em prosa de doc de terceiros — um bug anterior deste adapter lia
+  `record.url` (minúsculo) e por isso nunca populava `WaMessage.media` para nenhuma mensagem de
+  mídia recebida. `buildMediaRef` agora lê `record.URL` (com fallback defensivo para `record.url`).
+
+Evento adicional documentado no dossiê de pesquisa mas **RECONSTRUÍDO** (extraído diretamente do
+código-fonte `handleQRCodes`, não copiado de prosa de nenhuma doc) — não incluído como fixture
+própria porque não foi capturado de uma fonte "ao vivo", apenas citado aqui para referência:
+
+```json
+{
+  "event": "QRCode",
+  "data": { "qrcode": "data:image/png;base64,....", "code": "2@AbCdEf...", "count": 1, "maxCount": 0 },
+  "instanceToken": "...", "instanceId": "...", "instanceName": "..."
+}
+```
+
+O adapter trata `QRCode` como `connection.update` com `state:"qr"` e `qr` = `data.qrcode` (fallback
+`data.code`), mas isso não foi exercitado com um payload "ao vivo" — tratar com confiança média.
+
+Outros eventos da categoria CONNECTION mapeados como `connection.update` (mesma lógica dos
+exemplos acima, não fixturados individualmente): `Disconnected` → `disconnected`, `LoggedOut` →
+`disconnected`, `ConnectFailure` → `disconnected`, `PairSuccess` → `connected`, `TemporaryBan` →
+`disconnected` *(suposições — ver "Limites e particularidades")*.
+
+Forma exata do campo `Message` para tipos não-texto (`imageMessage`, `videoMessage`,
+`documentMessage`/`documentWithCaptionMessage`, `stickerMessage`, ...) **não foi enumerada** na
+pesquisa original — é passthrough do encoding protobuf→JSON do whatsmeow. O adapter detecta o tipo
+pela chave presente e extrai `url`/`mimetype`/`fileName`/`caption` quando existirem nesse nível,
+sem garantia de cobertura completa (ver `openQuestions` abaixo).
+
+## Limites e particularidades
+
+- **Gate de licença**: servidor recém-implantado devolve HTTP 503 em endpoints de API até ativação
+  via Manager UI (`http://host:port/manager/login` com `GLOBAL_API_KEY`) — relevante para
+  bootstrap/health check, não tratado por este adapter (apenas surge como `PROVIDER_ERROR` comum).
+- Auth é 100% via header, sem query string nem Bearer em nenhum lugar do código-fonte.
+- Sem rate limiting implementado ou configurável no código/`.env` — apenas recomendação informal de
+  ~50 req/s por instância.
+- `/send/button` e `/send/list` são documentados como não-funcionais fora de contas WhatsApp
+  Business API (restrição da plataforma, não bug do Evolution GO); `/send/poll` é o substituto
+  sugerido. Nenhum dos dois está no escopo deste adapter.
+- Áudio enviado via `/send/media` é sempre transcodificado para Opus/PTT no servidor; imagens fora
+  de jpg/png são convertidas; vídeo é documentado como MP4-only. Nenhuma dessas conversões é feita
+  pelo adapter — é comportamento do servidor.
+- `mentionedJid` é **array** de strings (alguns docs de terceiros mostram como string única — está
+  errado conforme o struct real `TextStruct`). Diferente do campo `number` (normalizado
+  server-side via `utils.CreateJID` independente do formato), `pkg/sendMessage/service/send_service.go`
+  copia `data.MentionedJID` **verbatim** para `ContextInfo.MentionedJID` no protobuf de saída —
+  sem nenhuma normalização/`CreateJID` no caminho de menções. Por isso o adapter **não** reusa a
+  função de mapeamento de `to`: `SendTextInput.mentions` passa por `toMentionJid`, que anexa
+  `@s.whatsapp.net` a dígitos crus e repassa JIDs explícitos intactos. Sem isso, uma menção com
+  dígitos crus é enviada sem erro mas não destaca o participante (menção muda).
+- `quoted` no envio de texto/mídia aceita `{messageId, participant}`; o modelo canônico
+  (`quotedId`) não carrega `participant`, então o adapter só envia `messageId`. Se o provider
+  exigir `participant` para citar corretamente uma mensagem de grupo, isso é uma limitação
+  conhecida deste adapter em F1.
+- **Suposição** (estado `Connected=false, LoggedIn=true`): mapeado para `connecting` em vez de
+  `disconnected`, por representar uma sessão válida em processo de recuperação (o provider mesmo
+  recomenda `/instance/reconnect`). Não verificado com o provider real; revisar se a suposição se
+  mostrar inadequada em uso real.
+- **Suposição** (`PairSuccess` → `connected`, `TemporaryBan`/demais falhas → `disconnected`): o
+  dossiê de pesquisa não define esses mapeamentos explicitamente para o modelo canônico do
+  waconector; escolhidos por serem os estados canônicos mais próximos semanticamente.
+- Envio de mídia via `base64` **é suportado neste adapter**, apesar do dossiê original e da doc
+  oficial (`docs.evolutionfoundation.com.br`) afirmarem o contrário: `pkg/sendMessage/handler/
+  send_handler.go` mostra que a variante JSON de `POST /send/media` decodifica `data.Url` como
+  base64 quando o valor não começa com `http://`/`https://`. O adapter envia `media.base64` nesse
+  mesmo campo `url` quando `media.url` está ausente. Só lança `WaConnectorError('INVALID_INPUT')`
+  quando nem `url` nem `base64` são informados (`multipart/form-data` com campo binário `file`
+  continua fora do escopo, pois o `HttpClient` compartilhado sempre serializa o corpo como JSON).
+- Timeout do cliente HTTP de webhook do próprio servidor Evolution GO não está explicitamente
+  configurado no código-fonte (`&http.Client{}` puro) — não afeta este adapter (que só recebe
+  webhooks, não os envia), citado apenas para contexto.
+- `instance.pairingCode` **não implementado** nesta fase apesar de confirmado no provider —
+  fora do escopo declarado para F1 deste adapter.

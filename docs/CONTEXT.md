@@ -38,10 +38,13 @@ significar trocar apenas a configuração.
 ## Detalhes Técnicos
 
 - **Linguagem/runtime:** TypeScript 5.9 strict, Node ≥ 20 (fetch nativo), ESM + CJS.
-- **Build:** tsup (entradas `index` e `testing/index`; ESM + CJS + `.d.ts`/`.d.cts`).
+- **Build:** tsup (entradas `index`, `testing/index`, `adapters/<provider>/index`; ESM + CJS + `.d.ts`/`.d.cts`).
 - **Testes:** vitest (unit + suite de contrato) + smoke test do pacote empacotado (`scripts/smoke.mjs`).
+- **QA/cobertura:** `npm run test:coverage` (`@vitest/coverage-v8`). Thresholds em `vitest.config.ts` são um piso calibrado contra o baseline real (não uma meta aspiracional) — travam regressão, não medem "qualidade" por si só. CI roda a versão com cobertura e publica o relatório como artifact.
 - **Lint/format:** Biome.
 - **Versionamento/publicação:** changesets + GitHub Actions (`release.yml`, requer secret `NPM_TOKEN`; publica com provenance). Pré-1.0: breaking changes em minors, documentadas.
+- **Contribuição:** [CONTRIBUTING.md](../CONTRIBUTING.md), templates de issue (bug/feature/novo adapter) e template de PR com checklist de QA em `.github/`. Dependabot para deps (npm + GitHub Actions), semanal.
+- **Branches:** `main` protegido (sem push/merge direto); `develop` é o branch de integração. PRs para `main` só são aceitos vindos de `develop` — aplicado pelo job `guard-main-source` em `ci.yml` (o GitHub não tem regra de proteção nativa para restringir a origem de um PR). A configuração de branch protection em si é feita pelo dono do repo no GitHub, não por um agente.
 - **Estrutura:**
   - `src/core/` — tipos, erros, capabilities, http client, eventos, conector.
   - `src/adapters/<provider>/` — (F1+) um diretório por adapter, com `fixtures/`.
@@ -60,7 +63,7 @@ significar trocar apenas a configuração.
 ## Roadmap
 
 - **F0 — Fundação** ✅ (2026-07-10): scaffold, core completo, MockAdapter, suite de contrato, CI/release.
-- **F1 — Prova da abstração**: adapters WAHA + Evolution GO (conectar/QR/status, sendText, sendMedia, webhook de mensagem + ack). Publicar v0.1.0.
+- **F1 — Prova da abstração** ✅ (2026-07-10): adapters WAHA + Evolution GO (`instance.connect/status/logout`, `messages.sendText/sendMedia`, `webhooks.parse`), dossiês em `docs/providers/`, fixtures e testes de contrato próprios, auditados adversarialmente contra a documentação/código-fonte oficial de cada provider. `instance.pairingCode` deliberadamente fora do escopo (contrato `InstanceApi.connect()` não recebe telefone). Pendente: publicar v0.1.0.
 - **F2 — Largura**: uazapi, Z-API, Wuzapi; grupos, contatos, reply/quote, reactions.
 - **F3 — Profundidade e DX**: Whapi, Zapo, QuePasa; docs site com matriz de capabilities gerada do código; exemplos; `npx waconector doctor`.
 - **v1.0**: 3+ adapters passando 100% da suite e API pública estável.

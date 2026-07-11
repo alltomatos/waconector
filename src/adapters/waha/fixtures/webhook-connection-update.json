@@ -1,0 +1,22 @@
+{
+  "event": "session.status",
+  "session": "default",
+  "me": {
+    "id": "7911111@c.us",
+    "pushName": "~"
+  },
+  "payload": {
+    "status": "WORKING",
+    "statuses": [
+      { "status": "STOPPED", "timestamp": 1700000001000 },
+      { "status": "STARTING", "timestamp": 1700000002000 },
+      { "status": "WORKING", "timestamp": 1700000003000 }
+    ]
+  },
+  "engine": "WEBJS",
+  "environment": {
+    "version": "2023.10.12",
+    "engine": "WEBJS",
+    "tier": "CORE"
+  }
+}

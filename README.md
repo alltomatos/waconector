@@ -8,9 +8,9 @@
 [![CI](https://github.com/alltomatos/waconector/actions/workflows/ci.yml/badge.svg)](https://github.com/alltomatos/waconector/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/waconector)](https://www.npmjs.com/package/waconector)
 
-**Status: em desenvolvimento (v0.x).** A fundação (core de contratos, conector, eventos canônicos,
-`MockAdapter` e suite de contrato) está pronta; os adapters de providers reais chegam na F1
-(WAHA e Evolution GO primeiro). A API pública pode mudar entre minors até a v1.0.
+**Status: em desenvolvimento (v0.x).** Core de contratos, conector, eventos canônicos, `MockAdapter`
+e suite de contrato prontos; adapters **WAHA** e **Evolution GO** implementados e verificados
+(F1). A API pública pode mudar entre minors até a v1.0.
 
 ## O problema
 
@@ -23,11 +23,11 @@ também.
 
 ```ts
 import { createConnector } from 'waconector';
-// F1+: import { waha } from 'waconector/waha';
-// F1+: import { evolution } from 'waconector/evolution';
-import { MockAdapter } from 'waconector/testing';
+import { waha } from 'waconector/waha';
+// ou: import { evolution } from 'waconector/evolution';
+// ou, para testar sem provider real: import { MockAdapter } from 'waconector/testing';
 
-const adapter = new MockAdapter(); // hoje: adapter de referência em memória
+const adapter = waha({ baseUrl: 'http://localhost:3000', apiKey: process.env.WAHA_API_KEY! });
 const wa = createConnector(adapter);
 
 // Instância: conectar e ler QR
@@ -68,29 +68,34 @@ await wa.webhooks.dispatch(adapter.buildIncomingText('5585988887777', 'oi'));
 sintéticos (`buildIncomingText`, `buildAck`, `buildConnectionUpdate`). Seu bot inteiro é testável
 em memória.
 
-## Providers planejados
+## Providers
 
-| Provider | Fase | | Provider | Fase |
+| Provider | Status | | Provider | Status |
 | --- | --- | --- | --- | --- |
-| WAHA | F1 | | Z-API | F2 |
-| Evolution GO | F1 | | Whapi | F3 |
-| uazapi | F2 | | Zapo | F3 |
-| Wuzapi | F2 | | QuePasa | F3 |
+| WAHA | ✅ F1 | | Z-API | F2 (planejado) |
+| Evolution GO | ✅ F1 | | Whapi | F3 (planejado) |
+| uazapi | F2 (planejado) | | Zapo | F3 (planejado) |
+| Wuzapi | F2 (planejado) | | QuePasa | F3 (planejado) |
 
 Roadmap completo e arquitetura em [docs/CONTEXT.md](docs/CONTEXT.md); decisões registradas em
-[docs/adr/](docs/adr/). Quer contribuir com um adapter? Comece pelo dossiê:
+[docs/adr/](docs/adr/). Quer contribuir com um adapter? Veja
+[CONTRIBUTING.md](CONTRIBUTING.md) e comece pelo dossiê:
 [docs/providers/README.md](docs/providers/README.md).
 
 ## Desenvolvimento
 
 ```bash
 npm install
-npm test            # vitest (unit + suite de contrato)
-npm run typecheck   # tsc --noEmit
-npm run lint        # biome
-npm run build       # tsup → dist/ (ESM + CJS + tipos)
-npm run smoke       # valida o pacote empacotado (exports ESM/CJS + fluxo completo)
+npm test              # vitest (unit + suite de contrato)
+npm run test:coverage # idem, com relatório e thresholds de cobertura
+npm run typecheck     # tsc --noEmit
+npm run lint          # biome
+npm run build         # tsup → dist/ (ESM + CJS + tipos)
+npm run smoke         # valida o pacote empacotado (exports ESM/CJS + fluxo completo)
 ```
+
+Guia completo de contribuição (convenções, checklist de QA, como propor um adapter novo) em
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 Releases via [changesets](https://github.com/changesets/changesets): `npx changeset` no PR;
 o merge em `main` abre o PR de versão e publica no npm com provenance (requer secret

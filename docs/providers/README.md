@@ -8,8 +8,8 @@ abaixo. O dossiê é a fonte de verdade do adapter; os payloads capturados viram
 
 | Provider | Docs | Hospedagem | Status |
 | --- | --- | --- | --- |
-| WAHA | <https://waha.devlike.pro/swagger/> | self-hosted (Docker) | F1 — planejado |
-| Evolution GO | <https://docs.evolutionfoundation.com.br/evolution-go> | self-hosted | F1 — planejado |
+| WAHA | <https://waha.devlike.pro/swagger/> | self-hosted (Docker) | F1 — feito, ver [waha.md](waha.md) |
+| Evolution GO | <https://docs.evolutionfoundation.com.br/evolution-go> | self-hosted | F1 — feito, ver [evolution.md](evolution.md) |
 | uazapi | <https://docs.uazapi.com/> | SaaS/self | F2 |
 | Z-API | <https://developer.z-api.io/api-reference/introduction> | SaaS | F2 |
 | Wuzapi | <https://github.com/asternic/wuzapi/blob/main/API.md> | self-hosted | F2 |

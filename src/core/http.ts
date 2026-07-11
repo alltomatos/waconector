@@ -1,5 +1,18 @@
 import { redactSecrets, statusToErrorCode, WaConnectorError } from './errors';
 
+/**
+ * Remove barras finais sem regex. `/\/+$/` seria O(n²) em entradas com muitas barras repetidas
+ * (CodeQL: "polynomial regular expression") — um loop simples é O(n) e evita o problema por
+ * completo.
+ */
+function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47 /* '/' */) {
+    end--;
+  }
+  return value.slice(0, end);
+}
+
 export interface HttpClientOptions {
   baseUrl: string;
   headers?: Record<string, string>;
@@ -40,7 +53,7 @@ export class HttpClient {
   private readonly fetchImpl: typeof globalThis.fetch;
 
   constructor(options: HttpClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.baseUrl = stripTrailingSlashes(options.baseUrl);
     this.headers = options.headers ?? {};
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.retries = options.retries ?? 2;

@@ -1,0 +1,45 @@
+name: Bug report
+description: Algo no core, num adapter ou na suite de contrato não está funcionando como deveria.
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área afetada
+      options:
+        - Core (createConnector, HttpClient, eventos, tipos)
+        - Adapter WAHA
+        - Adapter Evolution GO
+        - MockAdapter / waconector/testing
+        - Build/publicação do pacote
+        - Outro (descreva abaixo)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versão do waconector
+      placeholder: "ex.: 0.1.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: O que aconteceu
+      description: Comportamento observado vs. esperado.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Como reproduzir
+      description: Trecho de código mínimo. Se envolver um provider real, prefira reproduzir com o `MockAdapter` ou anexar o payload de webhook relevante (redija tokens/números reais antes de colar).
+      render: ts
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Erros/logs relevantes
+      description: Se for um `WaConnectorError`, inclua `code`, `provider` e a mensagem. NUNCA cole tokens/apikeys reais — eles devem aparecer redigidos (`***`) se vazarem de um erro; se não aparecerem redigidos, isso já é o bug.
+      render: text

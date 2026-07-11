@@ -1,0 +1,31 @@
+name: Feature request
+description: Sugerir uma capability, um tipo de evento canônico ou uma melhoria no core.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema
+      description: Que necessidade real isso resolve? (não "seria legal ter", e sim o caso de uso concreto)
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposta
+      description: Como isso se encaixaria no contrato existente (`WaAdapter`, `CanonicalEvent`, `CAPABILITIES`)? Veja docs/CONTEXT.md e docs/adr/ antes de propor uma mudança de contrato.
+    validations:
+      required: true
+  - type: checkboxes
+    id: providers
+    attributes:
+      label: Providers que já suportam isso (se souber)
+      options:
+        - label: WAHA
+        - label: Evolution GO
+        - label: uazapi / Z-API / Wuzapi / Whapi / Zapo / QuePasa (especifique qual, abaixo)
+        - label: Não sei / não se aplica
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas

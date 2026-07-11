@@ -1,0 +1,209 @@
+# Dossiê: WAHA
+
+- Docs oficiais: <https://waha.devlike.pro/> (Swagger: <https://waha.devlike.pro/swagger/openapi.json>)
+- Versão testada: documentação consultada em 2026-07-10
+- Hospedagem: self-hosted (imagem Docker; sem SaaS multi-tenant — o `servers` do OpenAPI é o
+  template `{protocol}://{host}:{port}/{baseUrl}`, padrão `http://localhost:3000`)
+
+## Autenticação
+
+- Mecanismo: `apiKey` via header customizado, **não** `Authorization: Bearer`.
+- Header: **`X-Api-Key: <chave>`** (confirmado em `components.securitySchemes` do OpenAPI real:
+  `{"api_key": {"type": "apiKey", "in": "header", "name": "X-Api-Key"}}`; toda operação documentada
+  declara `"security": [{"api_key": []}]`).
+- Alternativa apenas para contextos sem controle de headers (ex.: `<img src>`): query param
+  minúsculo `?x-api-key=<chave>` — documentação recomenda usá-la só com chaves restritas
+  (escopo por sessão), nunca com a chave admin (vaza em logs/Referer).
+- Chave global: variável de ambiente `WAHA_API_KEY` no servidor (gerada aleatoriamente no boot se
+  omitida — checar logs do container). Pode ser desabilitada com `WAHA_API_KEY=` +
+  `WAHA_NO_API_KEY=true` (não recomendado).
+- **Token global vs por sessão**: existe um único par chave-servidor (admin, `isAdmin:true`,
+  acesso total) e uma Keys API (`POST/GET/PUT/DELETE /api/keys`) para emitir chaves adicionais
+  escopadas a uma sessão específica (`isAdmin:false`, `session:'<nome>'`) com permissões
+  granulares booleanas (`read`, `send`, `control`, `setting`, `app`, `delete`, todas `true` por
+  padrão se `actions` for omitido). Útil para emitir credenciais de menor privilégio a clientes de
+  um deployment multi-tenant do waconector. Fase F1 do adapter usa apenas uma chave simples
+  (`apiKey` em `WahaOptions`), seja ela a global ou uma escopada — o adapter não distingue.
+- Inconsistência observada na spec: a operação `GET /api/sessions` lista adicionalmente um esquema
+  `oauth2` em `security`, mas nenhum esquema `oauth2` é definido em `components.securitySchemes` —
+  parece artefato de geração da spec. Na prática só `X-Api-Key` é utilizável.
+
+## Modelo de instância/sessão
+
+- Termo do provider: **session** (uma sessão = um número de WhatsApp conectado nesta instância do
+  WAHA). "Instance" não é vocabulário do WAHA. Existe um recurso separado chamado "channels" no
+  WAHA, mas refere-se a WhatsApp Channels (listas de transmissão), não ao conceito de
+  instância/conta — não confundir.
+- **Criar**: `POST /api/sessions` — body `SessionCreateRequest`: `{ name?, start? (padrão true),
+  apps?, config? }`. `config` carrega webhooks, proxy, metadata, regras de ignore, configs por
+  engine (noweb/gows/webjs), nome do device, debug. Resposta é `SessionInfo` com
+  `status:'STARTING'`.
+- **(Re)iniciar** uma sessão parada: `POST /api/sessions/{session}/start` (idempotente, por doc).
+- **Atualizar**: `PUT /api/sessions/{session}` (apps/config). **Deletar**:
+  `DELETE /api/sessions/{session}`.
+- **Conectar/parear** (uma vez que `status` vira `SCAN_QR_CODE`):
+  - QR code: `GET /api/{session}/auth/qr?format=image|raw`. `format=image` devolve PNG binário;
+    `format=raw` devolve JSON — `{ value: <string do QR> }` OU `{ mimetype, data (base64) }`
+    (documentação não fecha qual das duas formas é a real; adapter trata ambas).
+  - Pareamento por código: `POST /api/{session}/auth/request-code` — body
+    `{ phoneNumber: '<intl sem +>', method?: 'sms'|'voice' (omitir = pareamento via app) }`.
+    A prosa da doc mostra resposta `{ "code": "ABCD-ABCD" }`, mas o schema OpenAPI só declara
+    `201` sem corpo — gap real entre as duas fontes oficiais. **Fora do escopo desta fase**: o
+    contrato `InstanceApi.connect()` não recebe telefone, então o fluxo de pairing code não é
+    exposto por este adapter em F1 (ver seção "Capabilities" abaixo).
+  - Docs recomendam manter o QR sempre como fallback, já que o pairing code "nem sempre está
+    disponível".
+- **Status**: `GET /api/sessions/{session}` → `SessionInfo { name, status, me, config,
+  assignedWorker, presence, timestamps }`. Também empurrado em tempo real via evento/webhook
+  `session.status`.
+- Valores de `status`: `STOPPED | STARTING | SCAN_QR_CODE | WORKING | FAILED`.
+- **Logout**: `POST /api/sessions/{session}/logout` (revoga o device vinculado; a sessão precisa
+  de novo QR/pairing code). `POST /api/sessions/{session}/stop` para/hiberna o engine sem
+  deslogar (pode reiniciar com `/start` e continua vinculado). `POST /api/sessions/{session}/restart`.
+  Existem variantes legadas sem `{session}` no path (`POST /api/sessions/start|stop|logout`, nome
+  no body) marcadas `deprecated:true` — o adapter usa sempre as rotas com `{session}` no path.
+
+## Capabilities implementadas nesta fase (F1)
+
+`instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
+`messages.sendMedia`, `webhooks.parse`.
+
+`instance.pairingCode` **não** foi declarada nesta fase: embora o WAHA suporte pareamento por
+código (`POST /api/{session}/auth/request-code`), o método `InstanceApi.connect()` do contrato
+não recebe um número de telefone como parâmetro, então não há como expor esse fluxo sem alterar o
+contrato central — fica para uma fase futura (possível extensão do contrato). `instance.connect()`
+usa exclusivamente o fluxo de QR code.
+
+## Operações core
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| instance.connect | `POST /api/sessions/{session}/start` seguido de `GET /api/{session}/auth/qr?format=raw` | Inicia/garante a sessão e devolve o QR cru em `ConnectResult.qr`. Se a sessão ainda não estiver em `SCAN_QR_CODE` (ex.: já `WORKING`), o `GET` do QR pode devolver erro do provider — propagado como `WaConnectorError` normalmente (nenhuma lógica de polling nesta fase). |
+| instance.status | `GET /api/sessions/{session}` | Mapeia `status` → `InstanceState` (tabela abaixo). |
+| instance.logout | `POST /api/sessions/{session}/logout` | Sem corpo de resposta relevante. |
+| messages.sendText | `POST /api/sendText` | Body `{ chatId, text, session, reply_to?, mentions? }`. Destinatário em `chatId` (JID), não `phone`. `mentions` (recurso real da doc oficial, "Mention contact" — ausente do schema OpenAPI de `MessageTextRequest`, gap doc-vs-schema do próprio WAHA) é enviado quando `SendTextInput.mentions` vem preenchido; cada entrada passa por `toWahaChatId`, exceto o valor especial `"all"` (mencionar todo mundo no grupo), repassado intacto. |
+| messages.sendMedia | `POST /api/sendImage` \| `/api/sendFile` \| `/api/sendVideo` \| `/api/sendVoice` (endpoint por tipo de mídia, não genérico) | Body base `{ chatId, file: {mimetype, filename?, url} \| {mimetype, filename?, data(base64)}, session, reply_to? }`. Mapeamento de `MediaKind`: `image→sendImage`, `video→sendVideo`, `audio→sendVoice`, `document→sendFile`. `sticker` não tem endpoint documentado no dossiê original — o adapter usa `sendFile` como fallback best-effort (assumido, não confirmado contra instância real). **Exceções por endpoint** (confirmadas no `openapi.json` real): `caption` é omitido (não apenas `undefined` — a chave nem é enviada) para `sendVoice`, cujo schema `MessageVoiceRequest` não declara essa propriedade; `convert: false` é enviado como default explícito para `sendVideo`/`sendVoice`, cujos schemas marcam `convert` como `required` e `SendMediaInput` não expõe essa opção ao chamador (a confirmar contra instância real se o servidor de fato exige o campo). |
+
+### Mapeamento de status → `InstanceState`
+
+| WAHA `status` | `InstanceState` |
+| --- | --- |
+| `STOPPED` | `disconnected` |
+| `STARTING` | `connecting` |
+| `SCAN_QR_CODE` | `qr` |
+| `WORKING` | `connected` |
+| `FAILED` | `disconnected` (escolha do adapter: sessão com falha é tratada como desconectada; não há um estado "erro" dedicado em `InstanceState`) |
+| qualquer outro valor não reconhecido | `unknown` (fallback seguro, nunca lança) |
+
+### Mapeamento de `chatId` canônico → WAHA
+
+O conector já normaliza o `to` recebido do usuário antes de chamar o adapter (`normalizeChatId`):
+telefone vira só-dígitos (E.164 sem `+`), JIDs explícitos passam intactos. O adapter converte:
+
+| Entrada canônica | Saída WAHA |
+| --- | --- |
+| Telefone só-dígitos, ex. `5585999999999` | `5585999999999@c.us` |
+| JID já com `@` reconhecido pelo WAHA (`@c.us`, `@g.us`, `@newsletter`, `@broadcast`) | passa intacto |
+| JID `@lid` | passa intacto (o adapter não valida/bloqueia), **mas a doc oficial do WAHA desaconselha explicitamente usar `@lid` como `chatId` de envio** — não é equivalente em segurança aos demais formatos desta tabela |
+| JID no formato interno de engine `<numero>@s.whatsapp.net` | convertido para `<numero>@c.us` (per doc: esse formato "deve ser convertido para `@c.us` antes de usar como chatId — não enviar diretamente para `@s.whatsapp.net`") |
+
+Nota: a doc recomenda usar `GET /api/checkNumberStatus` antes de enviar para números brasileiros
+(ambiguidade do 9º dígito). Essa checagem **não** está implementada nesta fase (fora do escopo de
+F1: `instance.connect/status/logout`, `messages.sendText/sendMedia`, `webhooks.parse`); o adapter
+apenas converte o formato, sem validar a existência do número.
+
+## Webhooks
+
+Duas camadas independentes de configuração:
+
+1. **Por sessão (recomendado)**: `config.webhooks` (array) em `POST /api/sessions` ou
+   `PUT /api/sessions/{session}`. Cada item: `{ url, events: string[], hmac?: {key}, retries?:
+   {policy, delaySeconds, attempts}, customHeaders? }`.
+2. **Global (env vars, todas as sessões)**: `WHATSAPP_HOOK_URL`, `WHATSAPP_HOOK_EVENTS`,
+   `WHATSAPP_HOOK_HMAC_KEY`, `WHATSAPP_HOOK_RETRIES_POLICY`,
+   `WHATSAPP_HOOK_RETRIES_DELAY_SECONDS`, `WHATSAPP_HOOK_RETRIES_ATTEMPTS`,
+   `WHATSAPP_HOOK_CUSTOM_HEADERS`. Não aparece em `GET /api/sessions`.
+
+Entrega: POST JSON com headers `X-Webhook-Request-Id`, `X-Webhook-Timestamp` e, se HMAC
+configurado, `X-Webhook-Hmac` + `X-Webhook-Hmac-Algorithm: sha512`.
+
+Envelope genérico (todo webhook): `{ id, timestamp, event, session, metadata?, me?, engine,
+environment, payload }`. Nesta fase (F1) o adapter mapeia apenas `message` (→
+`message.received`/`message.sent` conforme `payload.fromMe`), `message.ack` (→ `message.ack`) e
+`session.status` (→ `connection.update`). Qualquer outro `event` (ex.: `message.reaction`,
+`group.join`, `presence.update`, `call.received`, ...) vira evento canônico `unknown` — não é um
+erro, é escopo de fases futuras (F2/F3).
+
+### Payloads capturados / fixtures
+
+- **`fixtures/webhook-ack.json`** — **verbatim**, copiado sem alteração do exemplo oficial
+  (`waha.devlike.pro/docs/how-to/events/`).
+- **`fixtures/webhook-connection-update.json`** — **verbatim**, copiado sem alteração do exemplo
+  oficial (idêntico em `docs/how-to/events/` e `docs/how-to/sessions/`).
+- **`fixtures/webhook-message-received.json`** — **RECONSTRUÍDO, não verbatim**. O único exemplo
+  de evento `message` mostrado na documentação oficial tem `payload.fromMe: true` (é uma mensagem
+  ecoada, enviada pelo próprio número — inclusive tem o campo `source: "app"`, que a doc diz só
+  existir quando `fromMe:true`). Como o nome do arquivo e o uso no adapter exigem um exemplo de
+  mensagem **recebida** (`fromMe: false`), a fixture foi adaptada a partir do exemplo oficial:
+  trocado `fromMe` para `false`, removido o campo `source` (documentado como exclusivo de
+  `fromMe:true`), e o prefixo do `id` de `true_` para `false_` (convenção real e documentada do
+  WhatsApp: mensagens de fora usam prefixo `false_`, ecoadas usam `true_`). Todos os demais campos
+  e valores vêm do exemplo oficial. Tratar como plausível, não como payload capturado ao vivo.
+
+Mensagem respondida (reply): quando `payload.replyTo` está presente (schema `ReplyToMessage`,
+confirmado no `openapi.json` real), `payload.replyTo.id` é mapeado para `WaMessage.quotedId` no
+evento canônico.
+
+Estrutura de mídia recebida: a seção de particularidades da doc menciona que uma mensagem com
+mídia expõe `media.url` apontando de volta para a própria instância WAHA (ex.:
+`http://localhost:3000/api/files/<id>.oga`), exigindo `X-Api-Key` também para baixar. O nome exato
+dos demais campos do objeto `media` (`mimetype`, `filename`) não veio explicitado numa fixture
+oficial — o adapter assume `media.mimetype`/`media.filename` por consistência com o restante do
+schema WAHA (`RemoteFile`/`BinaryFile` usam esses mesmos nomes), mas isso é uma suposição a
+confirmar contra uma instância real.
+
+### Mapeamento de `ack` → `MessageAck`
+
+A doc confirma apenas `ackName: "READ"` ⇄ `ack: 3` via o exemplo oficial. A tabela completa não
+está publicada; o adapter assume a convenção comum do WhatsApp (a confirmar em runtime):
+
+| `ack` (num.) | `ackName` | `MessageAck` canônico |
+| --- | --- | --- |
+| `-1` | `ERROR` | `error` |
+| `0` | `PENDING` | `pending` |
+| `1` | `SERVER`/`SENT` | `sent` |
+| `2` | `DEVICE`/`DELIVERED` | `delivered` |
+| `3` | `READ` (confirmado pela doc) | `read` |
+| `4` | `PLAYED` | `played` |
+| valor não reconhecido | — | `sent` (fallback neutro, não lança) |
+
+### Normalização de timestamp
+
+Quirk observado comparando os dois exemplos oficiais: `payload.timestamp` de uma mensagem vem em
+**segundos** (`1667561485` ⇒ nov/2022), mas `payload.statuses[].timestamp` do evento
+`session.status` já vem em **milissegundos** (`1700000001000`). O adapter usa uma heurística
+defensiva: valores menores que `1_000_000_000_000` são tratados como segundos e multiplicados por
+1000; valores maiores já são tratados como milissegundos.
+
+## Limites e particularidades
+
+- Sem rate limiting HTTP documentado/imposto pelo WAHA (sem política 429 na spec). Existe um guia
+  comportamental ("How to Avoid Blocking") sobre o WhatsApp banir o número por comportamento de
+  bot — orientação de uso, não uma limitação técnica que o adapter precise implementar.
+- Múltiplas engines plugáveis (WEBJS, WPP, NOWEB, GOWS; VENOM aparece como legado) com cobertura de
+  recursos diferente por endpoint. Engine padrão: WEBJS (Chromium). NOWEB/GOWS são mais leves mas
+  precisam de "Enable Store" para expor histórico de chats/contatos/mensagens — não afeta as
+  operações desta fase (connect/status/logout/sendText/sendMedia/webhook), mas pode afetar fases
+  futuras (contatos, histórico).
+- Números brasileiros: ambiguidade do 9º dígito recomenda `GET /api/checkNumberStatus` antes de
+  enviar — fora do escopo desta fase (o adapter apenas converte formato, não valida existência).
+- `hasMedia: true` pode legitimamente vir acompanhado de `media: null` quando o WAHA não faz
+  auto-download da mídia — o adapter trata isso como mensagem sem `MediaRef` anexado, não como
+  erro.
+- Self-hosted sem host fixo: `baseUrl` é sempre fornecido pelo consumidor do adapter (não há
+  endpoint SaaS para hardcode).
+- `POST /api/{session}/auth/request-code` (pairing code): resposta real documentada só em prosa
+  (`{"code": "ABCD-ABCD"}`), sem schema OpenAPI correspondente — não implementado nesta fase (ver
+  "Capabilities implementadas").
+- `GET /api/sessions` referencia um esquema `oauth2` inexistente em `components.securitySchemes`
+  — artefato da spec, ignorado pelo adapter (`X-Api-Key` é o único mecanismo real).
