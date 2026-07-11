@@ -119,6 +119,10 @@ tratado como incremento futuro separado, não uma pendência desta Epic.
 - [x] **v0.1.0** publicado no npm (2026-07-10/11) — F1 completa (WAHA + Evolution GO)
 - [x] **v0.2.0** publicado no npm (2026-07-11) — uazapi + Z-API + Wuzapi (F2) —
       [PR #14](https://github.com/alltomatos/waconector/pull/14)
+- [x] **v0.3.0** publicado no npm (2026-07-11) — `messages.sendReaction` retrofit +
+      `groups.*`/`contacts.*` completas (fecha F2) + adapters Whapi + QuePasa + WPPConnect (fecha
+      os 3 adapters originalmente escopados para F3) —
+      [PR #27](https://github.com/alltomatos/waconector/pull/27)
 
 ## Epic 4 — F3 do produto: profundidade e DX
 
