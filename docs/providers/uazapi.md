@@ -305,6 +305,48 @@ evento canônico `unknown`, nunca lança.
   (literal) de `GET /instance/status` dentro do envelope `{event, instance, data}`. `data.instance`
   e `data.status` seguem exatamente os shapes documentados desses dois schemas.
 
+### Webhooks de grupo — não implementado nesta fase
+
+`GroupUpdateEvent` (core: `src/core/events.ts`) existe no contrato canônico e já é populado por
+outros adapters da fase (providers baseados em whatsmeow, como Evolution GO/Wuzapi, que documentam
+o shape real de `data` para mudanças de grupo). **Este adapter (uazapi) deliberadamente não
+implementa esse mapeamento** — o dispatch de `parseWebhookUnsafe` não tem nenhum `case` para
+`"group"`/`"groups"`, então esses eventos caem no fallback genérico `unknown` já existente
+(`Evento uazapi não mapeado nesta fase: "group"` / `"groups"`), com `raw` preservando o payload
+original. Isso é comportamento seguro por design (ADR-0002/ADR-0003: `parseWebhook` nunca lança e
+nunca inventa dado), não uma lacuna acidental.
+
+Por que não foi implementado:
+
+- A *categoria* de evento de grupo existe em dois lugares da especificação — `"groups"` no array
+  de configuração de webhook (`POST /webhook`, campo `events`) e `"group"` no enum documentado do
+  envelope `WebhookEvent` (mesma discrepância plural/singular já registrada acima para
+  `message`/`messages` e `status`/`messages_update`) — mas, diferente desses outros eventos,
+  **nenhum exemplo de payload de `data` para grupo foi encontrado em lugar nenhum da especificação
+  OpenAPI**, nem reconstrução plausível a partir de outro schema documentado.
+- O único indício indireto encontrado (`GET /webhook/errors`, log de tentativas de entrega — não
+  documentação de payload de grupo) sugere que o campo de nome do evento entregue pode ser
+  `EventType` (PascalCase) em vez de `event`, e que pode existir um campo `token` no nível raiz do
+  envelope; isso já é tratado defensivamente pelo parser genérico (`envelope.EventType` como
+  sinônimo de `envelope.event`, ver seção acima), mas **não é uma confirmação do formato de `data`
+  especificamente para grupo** — não há base real para inferir `groupId`, `action`
+  (`participants.add`/`remove`/`promote`/`demote`/`subject`/`description`) ou o formato de
+  `participants` sem inventar um shape.
+- Inventar esse shape violaria a regra mais importante do parser (ADR-0002/ADR-0003): "nunca
+  lança, e nunca inventa dado". Implementar parsing estruturado aqui sem uma amostra real
+  arriscaria emitir `GroupUpdateEvent`s com campos incorretos silenciosamente, em vez de cair no
+  fallback seguro `unknown`.
+
+O que falta para implementar com confiança (pré-requisito, não faça sem isso): capturar ao menos
+um payload real de `data` entregue por uma instância uazapi de teste para cada mudança de grupo
+relevante (entrada/saída de participante, promoção/rebaixamento de admin, troca de nome/descrição)
+e confirmar o nome de campo real do evento (`event` vs. `EventType`) nesse contexto específico. Só
+então mapear para `GroupUpdateEvent` (`groupId`, `action`, `participants` — reaproveitando
+`mapGroupParticipant`/o formato de ID já usado por `groups.getInfo` quando fizer sentido) seguindo
+a convenção documentada em `src/core/events.ts`. Ver testes em
+`test/contract/uazapi.contract.test.ts` que fixam o comportamento atual (fallback `unknown`) como
+contrato explícito, não acidental.
+
 ## Limites e particularidades
 
 - WhatsApp Business é recomendado explicitamente sobre conta pessoal; contas pessoais podem sofrer

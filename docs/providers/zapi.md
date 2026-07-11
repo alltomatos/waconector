@@ -232,9 +232,9 @@ campo e shapes de resposta vêm só da documentação oficial. Em particular:
   viva.
 - `groups.list` devolve `participants: []` para todo item por limitação do endpoint `GET /groups`
   (não do adapter) — ver tabela acima.
-- Webhooks de eventos de grupo (criação, entrada/saída de participante, mudança de admin) **não**
-  são mapeados nesta fase — `parseWebhook` continua sem um `type` dedicado para eles; qualquer
-  payload desse tipo cai em `unknown` (nunca lança).
+- Webhooks de eventos de grupo chegam pelo mesmo `type: "ReceivedCallback"` de mensagem, discriminados
+  por `record.notification` — ver "### Webhooks de grupo" abaixo para o que é e o que não é mapeado
+  para `group.update` nesta fase (parcial: só as 5 variantes de participante).
 
 ## Webhooks
 
@@ -267,6 +267,7 @@ como no uazapi — os campos do evento vêm todos no nível raiz do corpo).
 | `MessageStatusCallback` | `message.ack` (um evento por item de `ids`) | Ver mapeamento de `status` abaixo. |
 | `ConnectedCallback` | `connection.update` (`state: 'connected'`) | |
 | `DisconnectedCallback` | `connection.update` (`state: 'disconnected'`) | |
+| `ReceivedCallback` com `notification` de participante (`GROUP_PARTICIPANT_ADD`/`REMOVE`/`LEAVE`/`PROMOTE`/`DEMOTE`) | `group.update` | Ver "### Webhooks de grupo" abaixo — implementado PARCIALMENTE. |
 | qualquer outro valor | `unknown` | Nunca lança. |
 
 ### `fixtures/webhook-message-received.json` — REAL, copiado verbatim da doc
@@ -321,6 +322,86 @@ JSON, mantendo os mesmos campos/valores do exemplo original:
 
 `DisconnectedCallback` já vinha sintaticamente válido no material fonte, sem necessidade de
 correção.
+
+### Webhooks de grupo
+
+Eventos de grupo **não têm webhook de configuração dedicado**: chegam pelo MESMO `type:
+"ReceivedCallback"` já usado para mensagens, discriminados por um campo adicional
+`notification` (string, enum) presente no mesmo `record` — não há envelope `{ event, data }`
+aninhado, nem um `type` próprio de grupo.
+
+**Envelope confirmado** (schema comum a TODAS as notificações, exemplificado literalmente na
+pesquisa para `MEMBERSHIP_APPROVAL_REQUEST`/`REVOKED_MEMBERSHIP_REQUESTS` — dois valores do enum
+ADJACENTES, mas DIFERENTES dos 10 valores `GROUP_*` tratados aqui):
+
+```json
+{
+  "isGroup": true,
+  "isNewsletter": false,
+  "instanceId": "...",
+  "messageId": "...",
+  "phone": "5544999999999-group",
+  "connectedPhone": "...",
+  "fromMe": false,
+  "momment": 1700000000000,
+  "status": "RECEIVED",
+  "type": "ReceivedCallback",
+  "notification": "GROUP_PARTICIPANT_ADD",
+  "notificationParameters": ["5511999999999", "5511988887777"]
+}
+```
+
+O enum completo de `notification` é confirmado **por nome** na doc (10 valores `GROUP_*`):
+`GROUP_CREATE`, `GROUP_CHANGE_SUBJECT`, `GROUP_CHANGE_DESCRIPTION`, `GROUP_CHANGE_ICON`,
+`GROUP_PARTICIPANT_PROMOTE`, `GROUP_PARTICIPANT_DEMOTE`, `GROUP_PARTICIPANT_LEAVE`,
+`GROUP_PARTICIPANT_ADD`, `GROUP_PARTICIPANT_REMOVE`, `GROUP_PARTICIPANT_INVITE`. **Nenhum desses 10
+valores tem payload literal capturado na pesquisa** — só os 2 valores adjacentes citados acima têm
+exemplo real, e eles não são notificações `GROUP_*`.
+
+#### Implementado (confiança razoável: mesmo envelope estrutural dos 2 exemplos confirmados)
+
+As 5 variantes de **participante** são mapeadas para `group.update`, com `groupId = record.phone` e
+`participants = record.notificationParameters` (array de telefones — nesta fase, sem passar por
+`mapGroupParticipant`: esse helper converte um `Record` de `groups.getInfo`/`{ phone, isAdmin,
+isSuperAdmin, ... }` para `GroupParticipant`; aqui `notificationParameters` já chega como
+`string[]` de telefones, sem objeto para desestruturar, então a reutilização não se aplica):
+
+| `notification` | `action` canônico | Observação |
+| --- | --- | --- |
+| `GROUP_PARTICIPANT_ADD` | `'participants.add'` | |
+| `GROUP_PARTICIPANT_REMOVE` | `'participants.remove'` | |
+| `GROUP_PARTICIPANT_LEAVE` | `'participants.remove'` | **Mesma `action` de REMOVE, deliberadamente**: do ponto de vista canônico ambos resultam em "não é mais participante do grupo", e `GroupUpdateEvent.action` não tem um valor dedicado para distinguir "saiu por conta própria" de "foi removido por um admin". Quem precisar da distinção original ainda pode inspecionar `raw.notification`. |
+| `GROUP_PARTICIPANT_PROMOTE` | `'participants.promote'` | |
+| `GROUP_PARTICIPANT_DEMOTE` | `'participants.demote'` | |
+
+Cada notificação gera exatamente **um** `GroupUpdateEvent` (nunca múltiplos eventos a partir de um
+único payload de entrada): ao contrário de providers baseados em whatsmeow (Evolution GO/Wuzapi),
+que reportam várias mudanças simultâneas dentro de um único payload de webhook, a Z-API reporta UM
+`notification` por chamada — múltiplos participantes afetados pela MESMA ação (ex.: dois números
+adicionados juntos) aparecem como múltiplas entradas em `notificationParameters` de UM único evento,
+não como eventos separados.
+
+#### Deliberadamente NÃO implementado (zero exemplo de payload — seria adivinhação)
+
+`GROUP_CREATE`, `GROUP_CHANGE_SUBJECT`, `GROUP_CHANGE_DESCRIPTION`, `GROUP_CHANGE_ICON` e
+`GROUP_PARTICIPANT_INVITE` **não** são reconhecidos como `group.update` nesta fase. Motivo: nenhum
+desses 5 valores tem um payload de exemplo capturado na pesquisa, então não há como confirmar onde
+viria o "novo valor" de cada mudança (o novo `subject`? a nova `description`? o link/código do
+convite?) — implementar seria inventar um formato de campo sem base real, o que a ADR-0002/ADR-0003
+proíbem explicitamente. Esses 5 valores de `notification` são ignorados silenciosamente pelo branch
+de grupo; o `record` segue para o dispatch de mensagem comum (`mapZapiMessage`), que por sua vez cai
+em `MessageKind: 'unknown'` (não tendo nenhuma chave de conteúdo reconhecida) — nunca em `unknown`
+de EVENTO, já que o `type` de nível superior (`"ReceivedCallback"`) continua sendo reconhecido.
+
+#### `fixtures/webhook-group-participant-add.json` — RECONSTRUÍDO (nível de confiança: parcial)
+
+Fixture montada a partir do envelope comum confirmado (campos e nomes reais) + o valor de enum
+`GROUP_PARTICIPANT_ADD` (confirmado por nome, mas sem payload literal próprio) + valores de exemplo
+inventados para `messageId`/`phone`/`notificationParameters` (formato plausível, não copiados de
+nenhum payload real). **Precisa de validação contra uma instância real** antes de se apoiar nela em
+produção — especialmente para confirmar (a) que `notificationParameters` de fato contém telefones em
+texto puro (dígitos, sem `@`) e não algum outro formato (JID, objeto), e (b) que os outros 4 valores
+de participante (`REMOVE`/`LEAVE`/`PROMOTE`/`DEMOTE`) realmente compartilham o mesmo envelope.
 
 ## Limites e particularidades
 

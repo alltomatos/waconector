@@ -314,6 +314,87 @@ pesquisa original — é passthrough do encoding protobuf→JSON do whatsmeow. O
 pela chave presente e extrai `url`/`mimetype`/`fileName`/`caption` quando existirem nesse nível,
 sem garantia de cobertura completa (ver `openQuestions` abaixo).
 
+## Webhooks de grupo
+
+**Confiança MÉDIA-ALTA**: assim como o restante desta seção, os dois eventos abaixo foram
+**RECONSTRUÍDOS a partir do código-fonte da biblioteca whatsmeow** (subjacente ao Evolution GO) —
+**nenhum payload "ao vivo" foi capturado**. Mesma metodologia já usada para `webhook-message-image
+.json`/`webhook-message-document.json` acima. Trate como confiança média-alta, não como
+"copiado literalmente do provider" (diferente de `webhook-message-received.json`/`webhook-ack.json`
+/`webhook-connection-update.json`); validar contra uma instância real antes de depender disso em
+produção crítica.
+
+**Pré-requisito de assinatura**: a categoria `GROUP` precisa estar no array `subscribe` de
+`POST /instance/connect` (ver `EvolutionOptions.subscribe`) para que esses eventos cheguem — isso é
+responsabilidade do consumidor do adapter configurar, não algo que o código deste adapter possa
+fazer sozinho (ver seção "Webhooks" acima).
+
+### `GroupInfo` — evento de DIFF de grupo (`events.GroupInfo` do whatsmeow)
+
+`data` é o struct `events.GroupInfo` do whatsmeow serializado verbatim (sem json tags, campos
+capitalizados): `{JID, Notify, Sender, SenderPN, Timestamp, Name, Topic, Locked, Announce,
+Ephemeral, MembershipApprovalMode, Delete, Link, Unlink, NewInviteLink,
+PrevParticipantVersionID, ParticipantVersionID, JoinReason, Join: JID[], Leave: JID[],
+Promote: JID[], Demote: JID[], Suspended, Unsuspended, UnknownChanges}`. É um evento de **diff**:
+pode reportar **múltiplas mudanças simultâneas** no mesmo payload (ex.: adicionar 2 participantes E
+promover um terceiro no mesmo evento) — comum em providers baseados em whatsmeow.
+
+**Implementado** (`mapGroupInfoEvent`, em `src/adapters/evolution/index.ts`) — emite **um
+`GroupUpdateEvent` por mudança identificada** (`parseWebhook` já retorna `CanonicalEvent[]`, então
+vários eventos a partir de um único payload de entrada é natural, não um caso especial):
+
+| Campo do payload | Condição | `GroupUpdateEvent` emitido |
+| --- | --- | --- |
+| `Join` (`JID[]`) | array não vazio | `{groupId: data.JID, action: 'participants.add', participants: data.Join}` |
+| `Leave` (`JID[]`) | array não vazio | `action: 'participants.remove'`, `participants: data.Leave` |
+| `Promote` (`JID[]`) | array não vazio | `action: 'participants.promote'`, `participants: data.Promote` |
+| `Demote` (`JID[]`) | array não vazio | `action: 'participants.demote'`, `participants: data.Demote` |
+| `Name` (objeto) | truthy | `action: 'subject'`, **sem** `participants` |
+| `Topic` (objeto) | truthy | `action: 'description'`, **sem** `participants` |
+
+`Join`/`Leave`/`Promote`/`Demote` já vêm como array de strings JID (`[]types.JID` no whatsmeow, não
+uma lista de objetos de participante) — por isso **não passam** por `mapGroupParticipant` (que
+existe para o shape `{JID, IsAdmin, IsSuperAdmin, ...}` de `Participants` em `getGroupInfo`/
+`listGroups`; aqui não há esse shape, só a string do JID, já no mesmo formato usado no resto do
+adapter para `chatId`/participante).
+
+**Deliberadamente fora de escopo** (cai em `unknown` em vez de inventar uma `action` genérica): os
+demais campos do diff — `Locked`, `Announce`, `Ephemeral`, `MembershipApprovalMode`, `Delete`,
+`Link`, `Unlink`, `NewInviteLink`, `Suspended`, `Unsuspended`, `UnknownChanges`. Nenhum deles tem
+uma `action` canônica correspondente hoje em `GroupUpdateEvent` (ver `src/core/events.ts`); se um
+payload `GroupInfo` só contiver essas mudanças (nenhum de `Join`/`Leave`/`Promote`/`Demote`/`Name`/
+`Topic` populado), o evento inteiro vira `unknown` — comportamento seguro (ADR-0002/ADR-0003), não
+uma regressão.
+
+Também **não extraído**: o **novo valor** de `Name`/`Topic` (ex. o novo texto do assunto/descrição
+do grupo). O struct real (`types.GroupName`/`types.GroupTopic`) tem campos aninhados
+(`Name`/`NameSetAt`/`NameSetBy`, `Topic`/`TopicID`/`TopicSetAt`/`TopicSetBy`/`TopicDeleted`), mas
+sem um exemplo de payload real para confirmar o formato exato, preferimos só sinalizar a mudança
+(`action: 'subject'`/`'description'`) sem tentar ler um campo de valor que poderia estar errado —
+quem consumir o evento e precisar do novo valor deve chamar `groups.getInfo` em seguida.
+
+### `JoinedGroup` — a própria sessão entrou em um grupo
+
+`data` mistura campos específicos do evento (`Reason`, `Type`, `CreateKey`, `Sender`, `SenderPN`,
+`Notify`) com os campos do `GroupInfo` completo do grupo ingressado, achatados no mesmo nível
+(`JID`, `Name`, `Participants`, ...).
+
+**Implementado** (`mapJoinedGroupEvent`): mapeia para
+`{groupId: data.JID, action: 'participants.add'}` — sem `participants` (o evento não identifica
+"quem" foi adicionado além da própria sessão, que não tem um JID canônico aqui) e sem extrair
+`Reason`/`Type`/o `GroupInfo` embutido (sem campo canônico correspondente em `GroupUpdateEvent`
+para eles).
+
+### Fixtures (`src/adapters/evolution/fixtures/`)
+
+Todas marcadas como **RECONSTRUÍDAS** (mesmo aviso de confiança acima):
+
+- `webhook-group-participants-add.json` — `GroupInfo` com só `Join` populado (2 participantes).
+- `webhook-group-multiple-changes.json` — `GroupInfo` com `Join` **e** `Promote` simultâneos no
+  mesmo payload, cobrindo o caso de múltiplos `GroupUpdateEvent` a partir de um único webhook.
+- `webhook-group-subject-update.json` — `GroupInfo` com `Name` populado (`action: 'subject'`).
+- `webhook-group-joined.json` — `JoinedGroup`.
+
 ## Limites e particularidades
 
 - **Gate de licença**: servidor recém-implantado devolve HTTP 503 em endpoints de API até ativação

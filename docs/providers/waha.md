@@ -288,11 +288,57 @@ Entrega: POST JSON com headers `X-Webhook-Request-Id`, `X-Webhook-Timestamp` e, 
 configurado, `X-Webhook-Hmac` + `X-Webhook-Hmac-Algorithm: sha512`.
 
 Envelope genérico (todo webhook): `{ id, timestamp, event, session, metadata?, me?, engine,
-environment, payload }`. Nesta fase (F1) o adapter mapeia apenas `message` (→
+environment, payload }`. Nesta fase (F1) o adapter mapeia `message` (→
 `message.received`/`message.sent` conforme `payload.fromMe`), `message.ack` (→ `message.ack`) e
-`session.status` (→ `connection.update`). Qualquer outro `event` (ex.: `message.reaction`,
-`group.join`, `presence.update`, `call.received`, ...) vira evento canônico `unknown` — não é um
-erro, é escopo de fases futuras (F2/F3).
+`session.status` (→ `connection.update`). Um retrofit posterior (ADR-0009, ver seção "Webhooks de
+grupo" abaixo) acrescentou `group.v2.participants`, `group.v2.update`, `group.v2.join` e
+`group.v2.leave` (→ `group.update`). Qualquer outro `event` (ex.: `message.reaction`,
+`presence.update`, `call.received`, os legados `group.join`/`group.leave`, ...) vira evento
+canônico `unknown` — não é um erro, é escopo de fases futuras (F2/F3) ou confiança insuficiente
+para parsing estruturado (ver seção seguinte).
+
+### Webhooks de grupo (`group.v2.*`, retrofit ADR-0009)
+
+Popula o evento canônico `GroupUpdateEvent` (`type: 'group.update'`) a partir dos webhooks de grupo
+do WAHA. Confiança **ALTA**: os 4 eventos abaixo (tag "📁 Groups" do `openapi.json` oficial e a
+página <https://waha.devlike.pro/docs/how-to/groups/>) têm shape de payload confirmado por exemplos
+JSON literais nas duas fontes. Os eventos legados `group.join`/`group.leave` (sem `v2`, marcados
+`deprecated: true` no `openapi.json`, payload não documentado/genérico) **não** ganharam parsing
+estruturado — confiança baixa demais; continuam caindo em `unknown`, como já documentado acima.
+
+| Evento WAHA (`envelope.event`) | `action` do `GroupUpdateEvent` | `participants` | Observações |
+| --- | --- | --- | --- |
+| `group.v2.participants` | `'participants.' + payload.type` (`join→add`, `leave→remove`, `promote→promote`, `demote→demote`) | Presente: IDs dos participantes **afetados** (`payload.participants`), mesma preferência `pn` > `id` já usada em `mapGroupParticipant` (`groups.getInfo`) | Evento **principal** de mudança de participante. `payload.type` fora dos 4 valores conhecidos vira `unknown` (nunca inventa uma `action` genérica). |
+| `group.v2.update` | `'subject'` e/ou `'description'` — **um `GroupUpdateEvent` por campo presente** em `payload.group` | Ausente (evento não carrega lista de participantes) | `payload.group` pode ser parcial: só `{id, subject}`, só `{id, description}`, ou os dois juntos (mudança simultânea) — nesse caso o adapter emite **dois** eventos no array (`parseWebhook` já retorna `CanonicalEvent[]`). `description: ''` é um valor válido (limpa a descrição), não tratado como ausente. Nenhum dos dois campos presente em `group` (além de `id`) vira `unknown`. |
+| `group.v2.join` | `'participants.add'` | **Ausente, deliberadamente** | Dispara quando a PRÓPRIA sessão entra/é adicionada a um grupo. O payload traz o `GroupInfo` completo em `group`, mas não isola qual participante é "a própria sessão" vs a lista inteira — o adapter não inventa esse dado (ADR-0002/0003). |
+| `group.v2.leave` | `'participants.remove'` | Ausente (payload só traz `group: { id }`) | Dispara quando a PRÓPRIA sessão sai/é removida de um grupo. |
+
+`groupId` em todos os 4 casos vem de `payload.group.id` (sem conversão adicional — já chega no
+formato de JID `<dígitos>@g.us` usado nativamente pelo WAHA, o mesmo formato de `GroupInfo.id`).
+Qualquer um dos 4 eventos sem `payload` ou sem `group.id` reconhecível vira `unknown` (nunca lança).
+
+**Nuance documentada, não é bug**: a doc oficial avisa que `group.v2.participants` PODE duplicar
+`group.v2.join`/`group.v2.leave` quando o participante afetado é a própria sessão (ex.: o bot é
+adicionado a um grupo por outra pessoa — `group.v2.join` dispara, e `group.v2.participants` com
+`type: 'join'` também pode disparar para o mesmo evento). O adapter não deduplica: um consumidor
+pode legitimamente receber 2 `GroupUpdateEvent` para essa mesma mudança em alguns casos. Trate
+`GroupUpdateEvent` como at-least-once, não exactly-once, para essa sobreposição específica.
+
+**Não confirmado nesta pesquisa** (a validar contra uma instância WAHA real):
+
+- O shape exato de `payload._data` (presente nos 4 eventos, ignorado pelo adapter) — provavelmente
+  o payload bruto do engine subjacente (whatsmeow/GOWS ou outro), não documentado como parte da API
+  pública.
+- Se `group.v2.update` pode reportar mudanças além de `subject`/`description` (ex.: configurações
+  `membersCanAddNewMember`) em versões futuras do WAHA — o adapter só reconhece esses dois campos
+  hoje; qualquer campo adicional presente em `group` além de `id` é ignorado silenciosamente (não é
+  erro, é escopo não coberto).
+- Fixtures desta seção (`webhook-group-v2-participants-join.json`,
+  `webhook-group-v2-update-subject.json`, `webhook-group-v2-join.json`,
+  `webhook-group-v2-leave.json`) são **reconstruídas** a partir do shape documentado na pesquisa
+  (não uma cópia verbatim capturada de uma instância real ou de uma página específica da doc) —
+  mesmo tratamento de confiança que `fixtures/webhook-message-received.json` (ver seção "Payloads
+  capturados / fixtures" abaixo): plausíveis, mas a confirmar contra uma instância real.
 
 ### Verificação HMAC de webhooks
 
@@ -371,6 +417,12 @@ acima. O adapter WAHA verifica isso de forma **opt-in** (ADR-0006):
   `fromMe:true`), e o prefixo do `id` de `true_` para `false_` (convenção real e documentada do
   WhatsApp: mensagens de fora usam prefixo `false_`, ecoadas usam `true_`). Todos os demais campos
   e valores vêm do exemplo oficial. Tratar como plausível, não como payload capturado ao vivo.
+- **`fixtures/webhook-group-v2-participants-join.json`**,
+  **`fixtures/webhook-group-v2-update-subject.json`**, **`fixtures/webhook-group-v2-join.json`**,
+  **`fixtures/webhook-group-v2-leave.json`** — **RECONSTRUÍDAS, não verbatim**. Montadas a partir
+  do shape de payload confirmado na pesquisa (ver seção "Webhooks de grupo" acima), não copiadas
+  byte-a-byte de uma captura real. Tratar como plausíveis, a confirmar contra uma instância WAHA
+  real.
 
 Mensagem respondida (reply): quando `payload.replyTo` está presente (schema `ReplyToMessage`,
 confirmado no `openapi.json` real), `payload.replyTo.id` é mapeado para `WaMessage.quotedId` no

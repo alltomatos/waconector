@@ -3,6 +3,10 @@ import { createConnector, isWaConnectorError } from '../../src';
 import { type WuzapiOptions, wuzapi } from '../../src/adapters/wuzapi';
 import ackFixture from '../../src/adapters/wuzapi/fixtures/webhook-ack.json';
 import connectionUpdateFixture from '../../src/adapters/wuzapi/fixtures/webhook-connection-update.json';
+import groupMetadataFixture from '../../src/adapters/wuzapi/fixtures/webhook-group-metadata.json';
+import groupParticipantsFixture from '../../src/adapters/wuzapi/fixtures/webhook-group-participants.json';
+import groupUnknownChangeFixture from '../../src/adapters/wuzapi/fixtures/webhook-group-unknown-change.json';
+import joinedGroupFixture from '../../src/adapters/wuzapi/fixtures/webhook-joined-group.json';
 import messageReceivedFixture from '../../src/adapters/wuzapi/fixtures/webhook-message-received.json';
 import qrFixture from '../../src/adapters/wuzapi/fixtures/webhook-qr.json';
 import { describeAdapterContract } from './adapter-contract';
@@ -733,6 +737,85 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
 
     const events = adapter.parseWebhook({ body: { formato: 'desconhecido' } });
     expect(events.every((event) => event.type === 'unknown')).toBe(true);
+  });
+
+  it('parseWebhook normaliza "GroupInfo" com MÚLTIPLAS mudanças de participante num único payload para um GroupUpdateEvent por mudança (RECONSTRUÍDO)', () => {
+    const adapter = wuzapi(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: groupParticipantsFixture });
+
+    expect(events).toHaveLength(4);
+    expect(events.every((event) => event.type === 'group.update')).toBe(true);
+
+    const byAction = new Map(
+      events.map((event) => [event.type === 'group.update' ? event.action : undefined, event]),
+    );
+
+    const add = byAction.get('participants.add');
+    expect(add?.type === 'group.update' && add.groupId).toBe('120363000000000000@g.us');
+    expect(add?.type === 'group.update' && add.participants).toEqual([
+      '5511988887777@s.whatsapp.net',
+    ]);
+    expect(add?.provider).toBe('wuzapi');
+    expect(add?.instanceId).toBe('minha-sessao');
+
+    const remove = byAction.get('participants.remove');
+    expect(remove?.type === 'group.update' && remove.participants).toEqual([
+      '5511966665555@s.whatsapp.net',
+    ]);
+
+    const promote = byAction.get('participants.promote');
+    expect(promote?.type === 'group.update' && promote.participants).toEqual([
+      '5511977776666@s.whatsapp.net',
+    ]);
+
+    const demote = byAction.get('participants.demote');
+    expect(demote?.type === 'group.update' && demote.participants).toEqual([
+      '5511955554444@s.whatsapp.net',
+    ]);
+  });
+
+  it('parseWebhook normaliza "GroupInfo" com Name+Topic populados em "subject"+"description", sem "participants" (RECONSTRUÍDO)', () => {
+    const adapter = wuzapi(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: groupMetadataFixture });
+
+    expect(events).toHaveLength(2);
+    expect(events.every((event) => event.type === 'group.update')).toBe(true);
+
+    const actions = events.map((event) =>
+      event.type === 'group.update' ? event.action : undefined,
+    );
+    expect(actions).toEqual(['subject', 'description']);
+
+    for (const event of events) {
+      if (event.type === 'group.update') {
+        expect(event.groupId).toBe('120363000000000000@g.us');
+        expect(event.participants).toBeUndefined();
+      }
+    }
+  });
+
+  it('parseWebhook cai em "unknown" para "GroupInfo" sem nenhuma mudança reconhecida (ex.: só "Locked")', () => {
+    const adapter = wuzapi(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: groupUnknownChangeFixture });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('unknown');
+  });
+
+  it('parseWebhook normaliza "JoinedGroup" para group.update com action "participants.add", sem "participants" (RECONSTRUÍDO)', () => {
+    const adapter = wuzapi(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: joinedGroupFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.groupId).toBe('120363000000000001@g.us');
+      expect(event.action).toBe('participants.add');
+      expect(event.participants).toBeUndefined();
+      expect(event.provider).toBe('wuzapi');
+      expect(event.instanceId).toBe('minha-sessao');
+    }
   });
 
   it('redige o token de mensagens de erro (HttpClient secrets)', async () => {

@@ -1,0 +1,26 @@
+{
+  "id": "evt_group_join_01",
+  "timestamp": 1700000300000,
+  "event": "group.v2.join",
+  "session": "default",
+  "engine": "GOWS",
+  "environment": {
+    "version": "2024.1.1",
+    "engine": "GOWS",
+    "tier": "CORE"
+  },
+  "payload": {
+    "timestamp": 1700000300000,
+    "group": {
+      "id": "120363043140393908@g.us",
+      "subject": "Contrato: Grupo Teste",
+      "description": "Descrição do grupo de teste",
+      "invite": "https://chat.whatsapp.com/ABCDEFGHIJKLMNOPQRSTUV",
+      "membersCanAddNewMember": false,
+      "membersCanSendMessages": true,
+      "newMembersApprovalRequired": false,
+      "participants": [{ "id": "5585999999999@c.us", "role": "admin" }]
+    },
+    "_data": {}
+  }
+}

@@ -11,6 +11,7 @@ import { WaConnectorError } from '../../core/errors';
 import type {
   CanonicalEvent,
   ConnectionUpdateEvent,
+  GroupUpdateEvent,
   MessageAckEvent,
   UnknownEvent,
 } from '../../core/events';
@@ -701,6 +702,10 @@ function parseWebhookUnsafe(input: WebhookInput): CanonicalEvent[] {
       return [
         connectionEvent(instanceId, 'qr', asString(data?.qrcode) ?? asString(data?.code), body),
       ];
+    case 'GroupInfo':
+      return mapGroupInfoEvent(instanceId, data, body);
+    case 'JoinedGroup':
+      return [mapJoinedGroupEvent(instanceId, data, body)];
     default:
       return [
         unknownEvent(body, `Evento Evolution GO não reconhecido: "${eventName}".`, instanceId),
@@ -868,6 +873,127 @@ function connectionEvent(
   rawBody: unknown,
 ): ConnectionUpdateEvent {
   return { type: 'connection.update', provider: PROVIDER, instanceId, state, qr, raw: rawBody };
+}
+
+/**
+ * "GroupInfo" é o evento de DIFF de grupo do whatsmeow (`events.GroupInfo`, serializado verbatim
+ * pelo Evolution GO: struct Go sem json tags, campos capitalizados). RECONSTRUÍDO diretamente do
+ * código-fonte whatsmeow — nenhum payload "ao vivo" foi capturado na pesquisa (mesma metodologia já
+ * usada neste dossiê para outros payloads "RECONSTRUÍDO"; ver docs/providers/evolution.md, seção
+ * "Webhooks de grupo").
+ *
+ * Este evento pode reportar MÚLTIPLAS mudanças simultâneas no mesmo payload (ex.: adicionar
+ * participantes E promover outro no mesmo evento) — por isso emitimos UM `GroupUpdateEvent` por
+ * mudança identificada, nunca um único evento "resumo" (`parseWebhook` já retorna
+ * `CanonicalEvent[]`, então múltiplos eventos a partir de um único payload de entrada é natural).
+ *
+ * Só os campos abaixo têm tradução para `GroupUpdateEvent.action` porque só eles têm confirmação
+ * de formato: `Join`/`Leave`/`Promote`/`Demote` (arrays de JID) → `participants.add`/`.remove`/
+ * `.promote`/`.demote` (com `participants` populado, já no formato JID usado pelo resto do
+ * adapter — nenhum remapeamento via `mapGroupParticipant` é necessário aqui, pois estes campos já
+ * são `[]JID`, não uma lista de objetos de participante); `Name`/`Topic` (objetos truthy quando a
+ * mudança correspondente ocorreu) → `subject`/`description` (sem popular `participants`, e SEM
+ * tentar extrair o novo valor do nome/descrição — não há exemplo real do formato exato de
+ * `GroupName`/`GroupTopic` para confiar nessa extração; ver ADR-0002/ADR-0003). Os demais campos do
+ * diff (`Locked`, `Announce`, `Ephemeral`, `MembershipApprovalMode`, `Delete`, `Link`, `Unlink`,
+ * `NewInviteLink`, `Suspended`, `Unsuspended`, `UnknownChanges`, ...) ficam **fora do escopo** do
+ * `GroupUpdateEvent` atual (não têm uma `action` canônica correspondente) — se nenhum dos campos
+ * reconhecidos acima estiver populado, o evento cai em `unknown` em vez de inventar uma action
+ * genérica.
+ */
+function mapGroupInfoEvent(
+  instanceId: string | undefined,
+  data: Record<string, unknown> | undefined,
+  rawBody: unknown,
+): CanonicalEvent[] {
+  if (!data) {
+    return [unknownEvent(rawBody, 'Evento "GroupInfo" sem campo "data".', instanceId)];
+  }
+  const groupId = asString(data.JID);
+  if (!groupId) {
+    return [unknownEvent(rawBody, 'Evento "GroupInfo" sem "data.JID".', instanceId)];
+  }
+
+  const events: GroupUpdateEvent[] = [];
+
+  const join = asStringArray(data.Join);
+  if (join.length > 0) {
+    events.push(groupUpdateEvent(instanceId, groupId, 'participants.add', join, rawBody));
+  }
+  const leave = asStringArray(data.Leave);
+  if (leave.length > 0) {
+    events.push(groupUpdateEvent(instanceId, groupId, 'participants.remove', leave, rawBody));
+  }
+  const promote = asStringArray(data.Promote);
+  if (promote.length > 0) {
+    events.push(groupUpdateEvent(instanceId, groupId, 'participants.promote', promote, rawBody));
+  }
+  const demote = asStringArray(data.Demote);
+  if (demote.length > 0) {
+    events.push(groupUpdateEvent(instanceId, groupId, 'participants.demote', demote, rawBody));
+  }
+  if (asRecord(data.Name)) {
+    events.push(groupUpdateEvent(instanceId, groupId, 'subject', undefined, rawBody));
+  }
+  if (asRecord(data.Topic)) {
+    events.push(groupUpdateEvent(instanceId, groupId, 'description', undefined, rawBody));
+  }
+
+  if (events.length === 0) {
+    return [
+      unknownEvent(
+        rawBody,
+        'Evento "GroupInfo" sem nenhuma mudança reconhecida (Join/Leave/Promote/Demote/Name/Topic).',
+        instanceId,
+      ),
+    ];
+  }
+
+  return events;
+}
+
+/**
+ * "JoinedGroup" é emitido quando a própria sessão entra em um grupo ou é adicionada a um por
+ * outro participante. RECONSTRUÍDO do código-fonte whatsmeow (sem payload real capturado) — ver
+ * docs/providers/evolution.md, seção "Webhooks de grupo". `data` mistura campos específicos do
+ * evento (`Reason`, `Type`, `CreateKey`, `Sender`, `SenderPN`, `Notify`) com os campos do
+ * `GroupInfo` completo do grupo ingressado, achatados no mesmo nível (`JID`, `Name`,
+ * `Participants`, ...). Só traduzimos `groupId` (de `data.JID`) e a `action` fixa
+ * `'participants.add'` — não extraímos `Reason`/`Type` nem o `GroupInfo` embutido, pois
+ * `GroupUpdateEvent` não tem campo canônico para eles.
+ */
+function mapJoinedGroupEvent(
+  instanceId: string | undefined,
+  data: Record<string, unknown> | undefined,
+  rawBody: unknown,
+): CanonicalEvent {
+  if (!data) {
+    return unknownEvent(rawBody, 'Evento "JoinedGroup" sem campo "data".', instanceId);
+  }
+  const groupId = asString(data.JID);
+  if (!groupId) {
+    return unknownEvent(rawBody, 'Evento "JoinedGroup" sem "data.JID".', instanceId);
+  }
+
+  return groupUpdateEvent(instanceId, groupId, 'participants.add', undefined, rawBody);
+}
+
+function groupUpdateEvent(
+  instanceId: string | undefined,
+  groupId: string,
+  action: string,
+  participants: string[] | undefined,
+  rawBody: unknown,
+): GroupUpdateEvent {
+  return {
+    type: 'group.update',
+    provider: PROVIDER,
+    instanceId,
+    groupId,
+    action,
+    participants,
+    raw: rawBody,
+  };
 }
 
 function unknownEvent(raw: unknown, reason: string, instanceId?: string): UnknownEvent {

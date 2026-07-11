@@ -605,6 +605,39 @@ describe('uazapi adapter: comportamento específico do provider', () => {
     expect(events[0]?.type).toBe('message.received');
   });
 
+  it('parseWebhook evento "group" (enum do envelope) cai em "unknown" — grupo webhooks não implementados nesta fase (ver docs/providers/uazapi.md#webhooks-de-grupo--não-implementado-nesta-fase)', () => {
+    const adapter = uazapi(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: {
+        event: 'group',
+        instance: 'minha-instancia',
+        data: {
+          id: '120363000000000000@g.us',
+          action: 'add',
+          participants: ['5511988887777@s.whatsapp.net'],
+        },
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('unknown');
+    if (event?.type === 'unknown') {
+      expect(event.reason).toContain('não mapeado nesta fase');
+      expect(event.instanceId).toBe('minha-instancia');
+    }
+  });
+
+  it('parseWebhook evento "groups" (nome de configuração) cai em "unknown" pela mesma razão', () => {
+    const adapter = uazapi(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: { event: 'groups', instance: 'minha-instancia', data: {} },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('unknown');
+  });
+
   it('parseWebhook nunca lança para payload desconhecido ou quebrado (vira "unknown")', () => {
     const adapter = uazapi(buildAdapterOptions());
 

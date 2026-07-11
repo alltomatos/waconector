@@ -3,6 +3,10 @@ import { createConnector, isWaConnectorError, type SentMessage } from '../../src
 import { type WahaOptions, waha } from '../../src/adapters/waha';
 import ackFixture from '../../src/adapters/waha/fixtures/webhook-ack.json';
 import connectionUpdateFixture from '../../src/adapters/waha/fixtures/webhook-connection-update.json';
+import groupV2JoinFixture from '../../src/adapters/waha/fixtures/webhook-group-v2-join.json';
+import groupV2LeaveFixture from '../../src/adapters/waha/fixtures/webhook-group-v2-leave.json';
+import groupParticipantsJoinFixture from '../../src/adapters/waha/fixtures/webhook-group-v2-participants-join.json';
+import groupUpdateSubjectFixture from '../../src/adapters/waha/fixtures/webhook-group-v2-update-subject.json';
 import hmacValidFixture from '../../src/adapters/waha/fixtures/webhook-hmac-valid.json';
 import messageReceivedFixture from '../../src/adapters/waha/fixtures/webhook-message-received.json';
 import { describeAdapterContract } from './adapter-contract';
@@ -756,6 +760,222 @@ describe('WAHA adapter: comportamento específico do provider', () => {
 
     await adapter.instance.status();
     expect(calls[0]?.get('X-Api-Key')).toBe(API_KEY);
+  });
+});
+
+describe('WAHA adapter: webhooks de grupo (group.v2.*, retrofit ADR-0009)', () => {
+  it('parseWebhook normaliza "group.v2.participants" (type: "join") para GroupUpdateEvent com action "participants.add"', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: groupParticipantsJoinFixture });
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.groupId).toBe(GROUP_ID);
+      expect(event.action).toBe('participants.add');
+      // Segunda entrada da fixture vem como @lid (privacidade) com "pn" @c.us -> "pn" tem
+      // preferência sobre "id", mesma convenção já usada por mapGroupParticipant (groups.getInfo).
+      expect(event.participants).toEqual(['5585999999999@c.us', '5585888888888@c.us']);
+      expect(event).toHaveProperty('raw');
+    }
+  });
+
+  it('parseWebhook normaliza "group.v2.participants" (type: "leave"/"promote"/"demote") para a action correspondente', () => {
+    const adapter = waha(buildAdapterOptions());
+
+    const buildBody = (type: string) => ({
+      event: 'group.v2.participants',
+      session: SESSION,
+      payload: {
+        type,
+        timestamp: 1700000101000,
+        group: { id: GROUP_ID },
+        participants: [{ id: '5585999999999@c.us' }],
+        _data: {},
+      },
+    });
+
+    const leaveEvents = adapter.parseWebhook({ body: buildBody('leave') });
+    expect(leaveEvents).toHaveLength(1);
+    expect(leaveEvents[0]?.type).toBe('group.update');
+    if (leaveEvents[0]?.type === 'group.update') {
+      expect(leaveEvents[0].action).toBe('participants.remove');
+    }
+
+    const promoteEvents = adapter.parseWebhook({ body: buildBody('promote') });
+    expect(promoteEvents[0]?.type).toBe('group.update');
+    if (promoteEvents[0]?.type === 'group.update') {
+      expect(promoteEvents[0].action).toBe('participants.promote');
+    }
+
+    const demoteEvents = adapter.parseWebhook({ body: buildBody('demote') });
+    expect(demoteEvents[0]?.type).toBe('group.update');
+    if (demoteEvents[0]?.type === 'group.update') {
+      expect(demoteEvents[0].action).toBe('participants.demote');
+    }
+  });
+
+  it('parseWebhook nunca lança para "group.v2.participants" com "type" não reconhecido (vira "unknown")', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: {
+        event: 'group.v2.participants',
+        session: SESSION,
+        payload: {
+          type: 'modify_tag', // valor hipotético não documentado
+          group: { id: GROUP_ID },
+          participants: [],
+        },
+      },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('unknown');
+  });
+
+  it('parseWebhook normaliza "group.v2.update" com só "subject" presente para UM GroupUpdateEvent (action "subject")', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: groupUpdateSubjectFixture });
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.groupId).toBe(GROUP_ID);
+      expect(event.action).toBe('subject');
+      expect(event.participants).toBeUndefined();
+    }
+  });
+
+  it('parseWebhook normaliza "group.v2.update" com só "description" presente para UM GroupUpdateEvent (action "description")', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: {
+        event: 'group.v2.update',
+        session: SESSION,
+        payload: {
+          timestamp: 1700000201000,
+          group: { id: GROUP_ID, description: 'Nova descrição do grupo' },
+          _data: {},
+        },
+      },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('group.update');
+    if (events[0]?.type === 'group.update') {
+      expect(events[0].action).toBe('description');
+    }
+  });
+
+  it('parseWebhook normaliza "group.v2.update" com "description" vazia (limpa a descrição) como caso válido, não erro', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: {
+        event: 'group.v2.update',
+        session: SESSION,
+        payload: { group: { id: GROUP_ID, description: '' } },
+      },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('group.update');
+    if (events[0]?.type === 'group.update') {
+      expect(events[0].action).toBe('description');
+    }
+  });
+
+  it('parseWebhook normaliza "group.v2.update" com "subject" E "description" simultâneos para DOIS GroupUpdateEvent (uma mudança por entrada)', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: {
+        event: 'group.v2.update',
+        session: SESSION,
+        payload: {
+          timestamp: 1700000202000,
+          group: { id: GROUP_ID, subject: 'Assunto novo', description: 'Descrição nova' },
+          _data: {},
+        },
+      },
+    });
+    expect(events).toHaveLength(2);
+    expect(
+      events.map((event) => (event.type === 'group.update' ? event.action : undefined)),
+    ).toEqual(['subject', 'description']);
+    for (const event of events) {
+      expect(event.type).toBe('group.update');
+      if (event.type === 'group.update') {
+        expect(event.groupId).toBe(GROUP_ID);
+      }
+    }
+  });
+
+  it('parseWebhook nunca lança para "group.v2.update" sem "subject"/"description" reconhecíveis (vira "unknown")', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: {
+        event: 'group.v2.update',
+        session: SESSION,
+        payload: { group: { id: GROUP_ID }, _data: {} },
+      },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('unknown');
+  });
+
+  it('parseWebhook normaliza "group.v2.join" (a própria sessão entrou no grupo) para GroupUpdateEvent com action "participants.add", sem "participants"', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: groupV2JoinFixture });
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.groupId).toBe(GROUP_ID);
+      expect(event.action).toBe('participants.add');
+      // O payload traz o GroupInfo completo, mas não isola qual participante é "a própria sessão"
+      // vs a lista inteira -> o adapter não inventa esse dado (participants fica ausente).
+      expect(event.participants).toBeUndefined();
+    }
+  });
+
+  it('parseWebhook normaliza "group.v2.leave" (a própria sessão saiu/foi removida do grupo) para GroupUpdateEvent com action "participants.remove"', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: groupV2LeaveFixture });
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.groupId).toBe(GROUP_ID);
+      expect(event.action).toBe('participants.remove');
+      expect(event.participants).toBeUndefined();
+    }
+  });
+
+  it('parseWebhook nunca lança para os eventos legados "group.join"/"group.leave" (deprecated, sem parsing estruturado) — viram "unknown"', () => {
+    const adapter = waha(buildAdapterOptions());
+
+    const joinEvents = adapter.parseWebhook({
+      body: { event: 'group.join', session: SESSION, payload: { id: GROUP_ID } },
+    });
+    expect(joinEvents).toHaveLength(1);
+    expect(joinEvents[0]?.type).toBe('unknown');
+
+    const leaveEvents = adapter.parseWebhook({
+      body: { event: 'group.leave', session: SESSION, payload: { id: GROUP_ID } },
+    });
+    expect(leaveEvents).toHaveLength(1);
+    expect(leaveEvents[0]?.type).toBe('unknown');
+  });
+
+  it('parseWebhook nunca lança para "group.v2.participants"/"group.v2.update"/"group.v2.join"/"group.v2.leave" sem "payload"', () => {
+    const adapter = waha(buildAdapterOptions());
+
+    for (const eventName of [
+      'group.v2.participants',
+      'group.v2.update',
+      'group.v2.join',
+      'group.v2.leave',
+    ]) {
+      const events = adapter.parseWebhook({ body: { event: eventName, session: SESSION } });
+      expect(events).toHaveLength(1);
+      expect(events[0]?.type).toBe('unknown');
+    }
   });
 });
 

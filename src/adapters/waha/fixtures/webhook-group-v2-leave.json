@@ -1,0 +1,17 @@
+{
+  "id": "evt_group_leave_01",
+  "timestamp": 1700000400000,
+  "event": "group.v2.leave",
+  "session": "default",
+  "engine": "GOWS",
+  "environment": {
+    "version": "2024.1.1",
+    "engine": "GOWS",
+    "tier": "CORE"
+  },
+  "payload": {
+    "timestamp": 1700000400000,
+    "group": { "id": "120363043140393908@g.us" },
+    "_data": {}
+  }
+}

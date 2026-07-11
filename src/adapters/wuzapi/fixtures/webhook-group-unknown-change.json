@@ -1,0 +1,13 @@
+{
+  "type": "GroupInfo",
+  "userID": "1",
+  "instanceName": "minha-sessao",
+  "event": {
+    "JID": "120363000000000000@g.us",
+    "Sender": "5511999999999@s.whatsapp.net",
+    "Timestamp": "2026-07-11T10:07:00Z",
+    "Locked": {
+      "IsLocked": true
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "type": "GroupInfo",
+  "userID": "1",
+  "instanceName": "minha-sessao",
+  "event": {
+    "JID": "120363000000000000@g.us",
+    "Sender": "5511999999999@s.whatsapp.net",
+    "Timestamp": "2026-07-11T10:05:00Z",
+    "Join": ["5511988887777@s.whatsapp.net"],
+    "Leave": ["5511966665555@s.whatsapp.net"],
+    "Promote": ["5511977776666@s.whatsapp.net"],
+    "Demote": ["5511955554444@s.whatsapp.net"]
+  }
+}

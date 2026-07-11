@@ -3,6 +3,10 @@ import { createConnector } from '../../src';
 import { evolution } from '../../src/adapters/evolution';
 import ackFixture from '../../src/adapters/evolution/fixtures/webhook-ack.json';
 import connectionUpdateFixture from '../../src/adapters/evolution/fixtures/webhook-connection-update.json';
+import groupJoinedFixture from '../../src/adapters/evolution/fixtures/webhook-group-joined.json';
+import groupMultipleChangesFixture from '../../src/adapters/evolution/fixtures/webhook-group-multiple-changes.json';
+import groupParticipantsAddFixture from '../../src/adapters/evolution/fixtures/webhook-group-participants-add.json';
+import groupSubjectUpdateFixture from '../../src/adapters/evolution/fixtures/webhook-group-subject-update.json';
 import documentMessageFixture from '../../src/adapters/evolution/fixtures/webhook-message-document.json';
 import imageMessageFixture from '../../src/adapters/evolution/fixtures/webhook-message-image.json';
 import messageReceivedFixture from '../../src/adapters/evolution/fixtures/webhook-message-received.json';
@@ -885,6 +889,111 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
     if (event?.type === 'connection.update') {
       expect(event.state).toBe('connected');
     }
+  });
+
+  it('parseWebhook normaliza evento "GroupInfo" (Join) para group.update com action "participants.add"', () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+    const events = adapter.parseWebhook({ body: groupParticipantsAddFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.groupId).toBe('123456789-987654321@g.us');
+      expect(event.action).toBe('participants.add');
+      expect(event.participants).toEqual([
+        '5511988887777@s.whatsapp.net',
+        '5511977776666@s.whatsapp.net',
+      ]);
+    }
+  });
+
+  it('parseWebhook normaliza evento "GroupInfo" com MÚLTIPLAS mudanças simultâneas (Join + Promote) em UM GroupUpdateEvent por mudança', () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+    const events = adapter.parseWebhook({ body: groupMultipleChangesFixture });
+
+    expect(events).toHaveLength(2);
+    expect(events.every((event) => event.type === 'group.update')).toBe(true);
+
+    const add = events.find(
+      (event) => event.type === 'group.update' && event.action === 'participants.add',
+    );
+    const promote = events.find(
+      (event) => event.type === 'group.update' && event.action === 'participants.promote',
+    );
+
+    expect(add && add.type === 'group.update' ? add.participants : undefined).toEqual([
+      '5511988887777@s.whatsapp.net',
+    ]);
+    expect(promote && promote.type === 'group.update' ? promote.participants : undefined).toEqual([
+      '5511977776666@s.whatsapp.net',
+    ]);
+    for (const event of events) {
+      if (event.type === 'group.update') {
+        expect(event.groupId).toBe('123456789-987654321@g.us');
+      }
+    }
+  });
+
+  it('parseWebhook normaliza evento "GroupInfo" (Name populado) para group.update com action "subject", sem popular participants', () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+    const events = adapter.parseWebhook({ body: groupSubjectUpdateFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.groupId).toBe('123456789-987654321@g.us');
+      expect(event.action).toBe('subject');
+      expect(event.participants).toBeUndefined();
+    }
+  });
+
+  it('parseWebhook normaliza evento "GroupInfo" sem nenhuma mudança reconhecida (ex.: só Locked) para unknown, sem inventar action', () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+    const events = adapter.parseWebhook({
+      body: {
+        event: 'GroupInfo',
+        data: {
+          JID: '123456789-987654321@g.us',
+          Locked: { IsLocked: true },
+        },
+        instanceId: '249aad2e-68f9-464f-bc84-aca560c38f0e',
+      },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('unknown');
+  });
+
+  it('parseWebhook normaliza evento "JoinedGroup" (a própria sessão entrou no grupo) para group.update com action "participants.add"', () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+    const events = adapter.parseWebhook({ body: groupJoinedFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.groupId).toBe('123456789-987654321@g.us');
+      expect(event.action).toBe('participants.add');
+      expect(event.participants).toBeUndefined();
+    }
+  });
+
+  it('parseWebhook cai em unknown quando "GroupInfo"/"JoinedGroup" vêm sem "data.JID"', () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+
+    const groupInfoEvents = adapter.parseWebhook({
+      body: { event: 'GroupInfo', data: { Join: ['5511988887777@s.whatsapp.net'] } },
+    });
+    expect(groupInfoEvents).toHaveLength(1);
+    expect(groupInfoEvents[0]?.type).toBe('unknown');
+
+    const joinedGroupEvents = adapter.parseWebhook({
+      body: { event: 'JoinedGroup', data: { Reason: 'invite' } },
+    });
+    expect(joinedGroupEvents).toHaveLength(1);
+    expect(joinedGroupEvents[0]?.type).toBe('unknown');
   });
 
   it('parseWebhook nunca lança em payload propositalmente quebrado', () => {

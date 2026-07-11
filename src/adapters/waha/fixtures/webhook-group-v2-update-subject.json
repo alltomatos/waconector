@@ -1,0 +1,17 @@
+{
+  "id": "evt_group_update_subject_01",
+  "timestamp": 1700000200000,
+  "event": "group.v2.update",
+  "session": "default",
+  "engine": "GOWS",
+  "environment": {
+    "version": "2024.1.1",
+    "engine": "GOWS",
+    "tier": "CORE"
+  },
+  "payload": {
+    "timestamp": 1700000200000,
+    "group": { "id": "120363043140393908@g.us", "subject": "Novo nome do grupo" },
+    "_data": {}
+  }
+}
