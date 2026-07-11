@@ -74,7 +74,8 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       foto (com `media.kind` obrigatoriamente `'image'`). Cada adapter converteu para o formato
       de imagem exigido pelo provider — nem todos aceitam o mesmo formato de `sendMedia` (ex.:
       Evolution GO/Wuzapi exigem data-URI com prefixo explícito; Wuzapi só aceita JPEG de fato,
-      verificado por magic bytes no servidor).
+      verificado por magic bytes no servidor). Mergeado via
+      [PR #18](https://github.com/alltomatos/waconector/pull/18).
 - [ ] Capability `groups.*` — PR3 (convites + saída: invite link/join/leave), planejado, ainda
       não iniciado
 - [ ] Capability `contacts.*` (escopo grande, ainda não iniciado)
