@@ -68,6 +68,16 @@
         "default": "./dist/adapters/evolution/index.cjs"
       }
     },
+    "./uazapi": {
+      "import": {
+        "types": "./dist/adapters/uazapi/index.d.ts",
+        "default": "./dist/adapters/uazapi/index.js"
+      },
+      "require": {
+        "types": "./dist/adapters/uazapi/index.d.cts",
+        "default": "./dist/adapters/uazapi/index.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.cjs",

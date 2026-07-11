@@ -1,0 +1,18 @@
+{
+  "event": "message",
+  "instance": "minha-instancia",
+  "data": {
+    "id": "r1a2b3c4",
+    "messageid": "3EB0538DA65A59F6D8A251",
+    "chatid": "5511999999999@s.whatsapp.net",
+    "sender": "5511999999999@s.whatsapp.net",
+    "senderName": "Joao Silva",
+    "isGroup": false,
+    "fromMe": false,
+    "messageType": "conversation",
+    "messageTimestamp": 1706000000000,
+    "status": "Sent",
+    "text": "Ola, tudo bem?",
+    "wasSentByApi": false
+  }
+}
