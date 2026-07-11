@@ -1,0 +1,13 @@
+{
+  "type": "ReadReceipt",
+  "state": "Read",
+  "userID": "1",
+  "instanceName": "minha-sessao",
+  "event": {
+    "MessageIDs": ["3EB0FAKE00000000WUZ01"],
+    "Chat": "5511999999999@s.whatsapp.net",
+    "Sender": "5511999999999@s.whatsapp.net",
+    "Timestamp": "2026-07-11T10:00:05Z",
+    "Type": "read"
+  }
+}

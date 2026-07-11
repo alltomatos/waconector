@@ -8,6 +8,7 @@ export default defineConfig({
     'adapters/evolution/index': 'src/adapters/evolution/index.ts',
     'adapters/uazapi/index': 'src/adapters/uazapi/index.ts',
     'adapters/zapi/index': 'src/adapters/zapi/index.ts',
+    'adapters/wuzapi/index': 'src/adapters/wuzapi/index.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,

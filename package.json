@@ -88,6 +88,16 @@
         "default": "./dist/adapters/zapi/index.cjs"
       }
     },
+    "./wuzapi": {
+      "import": {
+        "types": "./dist/adapters/wuzapi/index.d.ts",
+        "default": "./dist/adapters/wuzapi/index.js"
+      },
+      "require": {
+        "types": "./dist/adapters/wuzapi/index.d.cts",
+        "default": "./dist/adapters/wuzapi/index.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.cjs",
