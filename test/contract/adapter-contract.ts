@@ -56,6 +56,14 @@ export function describeAdapterContract(harness: AdapterContractHarness): void {
       expect(sent).toHaveProperty('raw');
     });
 
+    it('instance.connect() e instance.status() sempre carregam "raw" (ADR-0002)', async () => {
+      const connectResult = await ctx.adapter.instance.connect();
+      expect(connectResult).toHaveProperty('raw');
+
+      const status = await ctx.adapter.instance.status();
+      expect(status).toHaveProperty('raw');
+    });
+
     it('rejeita entrada inválida com erro tipado INVALID_INPUT', async () => {
       await ctx.ready();
       const wa = createConnector(ctx.adapter);

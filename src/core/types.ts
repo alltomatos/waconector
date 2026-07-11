@@ -18,7 +18,7 @@ export type InstanceState = (typeof INSTANCE_STATES)[number];
 
 export interface InstanceStatus {
   state: InstanceState;
-  raw?: unknown;
+  raw: unknown;
 }
 
 export interface ConnectResult {
@@ -26,7 +26,7 @@ export interface ConnectResult {
   qr?: string;
   /** Código de pareamento quando o provider suporta `instance.pairingCode`. */
   pairingCode?: string;
-  raw?: unknown;
+  raw: unknown;
 }
 
 export const MESSAGE_ACKS = ['pending', 'sent', 'delivered', 'read', 'played', 'error'] as const;

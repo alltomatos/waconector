@@ -23,3 +23,12 @@ Todo objeto normalizado (`WaMessage`, `SentMessage`, eventos canônicos, `Connec
 
 - Código que depende de `raw` é explicitamente não-portável entre providers — decisão consciente
   do consumidor, visível no type system (`unknown` exige narrowing).
+
+## Nota (2026-07-10)
+
+O invariante deixou de depender só de convenção: `raw` é `unknown` obrigatório (sem `?`) em todos
+os tipos normalizados de `src/core/types.ts` (incluindo `ConnectResult` e `InstanceStatus`, que
+antes eram `raw?: unknown`), e a suite de contrato compartilhada
+(`test/contract/adapter-contract.ts`) faz `expect(...).toHaveProperty('raw')` em `instance.connect()`
+e `instance.status()` — qualquer adapter que deixar de popular `raw` falha o typecheck e/ou o
+contrato, não só uma revisão de código.
