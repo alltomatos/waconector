@@ -1,9 +1,17 @@
-import type { GroupsApi, InstanceApi, MessagesApi, WaAdapter, WebhookInput } from '../core/adapter';
+import type {
+  ContactsApi,
+  GroupsApi,
+  InstanceApi,
+  MessagesApi,
+  WaAdapter,
+  WebhookInput,
+} from '../core/adapter';
 import { CAPABILITIES, type CapabilitySet } from '../core/capabilities';
 import { extractInviteCode, normalizeInviteLink } from '../core/chat-id';
 import { WaConnectorError } from '../core/errors';
 import type { CanonicalEvent } from '../core/events';
 import {
+  type Contact,
   type GroupInfo,
   type GroupParticipant,
   INSTANCE_STATES,
@@ -40,6 +48,7 @@ export class MockAdapter implements WaAdapter {
   readonly instance: InstanceApi;
   readonly messages: MessagesApi;
   readonly groups: GroupsApi;
+  readonly contacts: ContactsApi;
 
   private state: InstanceState;
   private seq = 0;
@@ -47,6 +56,7 @@ export class MockAdapter implements WaAdapter {
   private inviteSeq = 0;
   private readonly groupsById = new Map<string, GroupInfo>();
   private readonly groupIdByInviteCode = new Map<string, string>();
+  private readonly contactsById = new Map<string, Contact>();
 
   constructor(options: MockAdapterOptions = {}) {
     this.provider = options.provider ?? 'mock';
@@ -161,6 +171,36 @@ export class MockAdapter implements WaAdapter {
         this.groupsById.delete(groupId);
       },
     };
+
+    this.contacts = {
+      list: async () => {
+        this.assertConnected();
+        return Array.from(this.contactsById.values());
+      },
+      get: async (chatId) => {
+        this.assertConnected();
+        return (
+          this.contactsById.get(chatId) ?? { id: chatId, hasWhatsApp: true, raw: { mock: true } }
+        );
+      },
+      checkExists: async (phone) => {
+        this.assertConnected();
+        const contact = this.contactsById.get(phone);
+        return {
+          exists: contact?.hasWhatsApp ?? true,
+          chatId: phone,
+          raw: { mock: true, contact },
+        };
+      },
+      getProfilePicture: async (chatId) => {
+        this.assertConnected();
+        return { url: this.contactsById.get(chatId)?.profilePictureUrl, raw: { mock: true } };
+      },
+      getAbout: async (chatId) => {
+        this.assertConnected();
+        return { about: this.contactsById.get(chatId)?.about, raw: { mock: true } };
+      },
+    };
   }
 
   simulateConnected(): void {
@@ -169,6 +209,11 @@ export class MockAdapter implements WaAdapter {
 
   simulateState(state: InstanceState): void {
     this.state = state;
+  }
+
+  /** Semeia (ou atualiza) um contato conhecido pelo mock, usado por `list`/`get`/`checkExists`/etc. */
+  simulateContact(contact: Contact): void {
+    this.contactsById.set(contact.id, contact);
   }
 
   parseWebhook(input: WebhookInput): CanonicalEvent[] {

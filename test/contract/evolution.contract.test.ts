@@ -170,6 +170,74 @@ function createFetchStub(): typeof globalThis.fetch {
     if (method === 'POST' && url.pathname === '/group/leave') {
       return jsonResponse(200, { message: 'success' });
     }
+    if (method === 'GET' && url.pathname === '/user/contacts') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: [
+          {
+            Jid: '5511999999999@s.whatsapp.net',
+            Found: true,
+            FirstName: 'Fulano',
+            FullName: 'Fulano de Tal',
+            PushName: 'Fulano PN',
+            BusinessName: '',
+          },
+          {
+            Jid: '5511988887777@s.whatsapp.net',
+            Found: true,
+            FirstName: '',
+            FullName: '',
+            PushName: 'Só PushName',
+            BusinessName: '',
+          },
+        ],
+      });
+    }
+    if (method === 'POST' && url.pathname === '/user/info') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          Users: {
+            '5511999999999@s.whatsapp.net': {
+              VerifiedName: '',
+              Status: 'Disponível para conversar',
+              PictureID: 'abc123hash',
+              Devices: [0],
+              LID: '123456.0:1@lid',
+            },
+          },
+        },
+      });
+    }
+    if (method === 'POST' && url.pathname === '/user/check') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          Users: [
+            {
+              Query: '5511999999999',
+              IsInWhatsapp: true,
+              JID: '5511999999999@s.whatsapp.net',
+              RemoteJID: '5511999999999@s.whatsapp.net',
+              LID: '123456.0:1@lid',
+              VerifiedName: '',
+            },
+          ],
+        },
+      });
+    }
+    if (method === 'POST' && url.pathname === '/user/avatar') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          ID: 'abc123hash',
+          URL: 'https://pps.whatsapp.net/v/t61.24694-24/fake-avatar.jpg',
+          Type: 'image',
+          DirectPath: '/v/t61.24694-24/fake-avatar.jpg',
+          Hash: 'fakehash==',
+        },
+      });
+    }
 
     throw new Error(`fetchStub (evolution): rota não configurada ${method} ${url.pathname}`);
   };
@@ -829,6 +897,150 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
 
     expect(capturedBody).toEqual({ groupJid: '123456789-987654321@g.us' });
     expect(result).toBeUndefined();
+  });
+
+  it('contacts.list envia GET /user/contacts e mapeia Jid->id, com nome pela ordem FullName > FirstName > PushName', async () => {
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: createFetchStub(),
+    });
+    const wa = createConnector(adapter);
+
+    const contactList = await wa.contacts.list();
+
+    expect(contactList).toHaveLength(2);
+    expect(contactList[0]?.id).toBe('5511999999999@s.whatsapp.net');
+    // FullName presente vence sobre FirstName/PushName.
+    expect(contactList[0]?.name).toBe('Fulano de Tal');
+    expect(contactList[0]?.about).toBeUndefined();
+    expect(contactList[0]?.profilePictureUrl).toBeUndefined();
+    expect(contactList[0]?.hasWhatsApp).toBeUndefined();
+    // segundo item: FullName/FirstName vêm "" (zero value Go, ausência real) — deve cair no
+    // fallback para PushName (ver mapContactInfo/asNonEmptyString).
+    expect(contactList[1]?.id).toBe('5511988887777@s.whatsapp.net');
+    expect(contactList[1]?.name).toBe('Só PushName');
+    expect(contactList[1]).toHaveProperty('raw');
+  });
+
+  it('contacts.get envia POST /user/info com {number:[chatId], formatJid:true} e mapeia Status->about, sem name/profilePictureUrl', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/user/info') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const contact = await wa.contacts.get('5511999999999@s.whatsapp.net');
+
+    expect(capturedBody).toEqual({
+      number: ['5511999999999@s.whatsapp.net'],
+      formatJid: true,
+    });
+    expect(contact.id).toBe('5511999999999@s.whatsapp.net');
+    expect(contact.about).toBe('Disponível para conversar');
+    // Limitações documentadas (docs/providers/evolution.md, seção "Contatos"): a resposta de
+    // /user/info não traz nome de exibição nem uma URL de foto utilizável (PictureID é só um
+    // id/hash interno) — ambos devem ficar undefined, nunca inventados.
+    expect(contact.name).toBeUndefined();
+    expect(contact.profilePictureUrl).toBeUndefined();
+    expect(contact).toHaveProperty('raw');
+  });
+
+  it('contacts.getAbout reaproveita POST /user/info (mesmo endpoint de contacts.get) e mapeia Status->about', async () => {
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: createFetchStub(),
+    });
+    const wa = createConnector(adapter);
+
+    const about = await wa.contacts.getAbout('5511999999999@s.whatsapp.net');
+
+    expect(about.about).toBe('Disponível para conversar');
+    expect(about).toHaveProperty('raw');
+  });
+
+  it('contacts.checkExists envia POST /user/check com {number:[phone], formatJid:true} e mapeia IsInWhatsapp/JID', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/user/check') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.contacts.checkExists('5511999999999');
+
+    expect(capturedBody).toEqual({ number: ['5511999999999'], formatJid: true });
+    expect(result.exists).toBe(true);
+    expect(result.chatId).toBe('5511999999999@s.whatsapp.net');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('contacts.getProfilePicture envia POST /user/avatar com {number, preview:false} (number é string única, não array) e mapeia URL->url', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/user/avatar') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const picture = await wa.contacts.getProfilePicture('5511999999999@s.whatsapp.net');
+
+    expect(capturedBody).toEqual({ number: '5511999999999@s.whatsapp.net', preview: false });
+    expect(picture.url).toBe('https://pps.whatsapp.net/v/t61.24694-24/fake-avatar.jpg');
+    expect(picture).toHaveProperty('raw');
+  });
+
+  it('contacts.getProfilePicture propaga o erro HTTP quando o contato não tem foto (sem capturar/mascarar)', async () => {
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/user/avatar') {
+        return jsonResponse(404, { error: 'no avatar found for this jid' });
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const failure = await wa.contacts
+      .getProfilePicture('5511999999999@s.whatsapp.net')
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error & { code?: string }).code).toBe('PROVIDER_ERROR');
   });
 
   it('parseWebhook normaliza evento "Message" de imagem e popula media.url a partir da chave "URL" (maiúscula)', () => {

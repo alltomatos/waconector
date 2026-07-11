@@ -74,7 +74,8 @@ presa permanentemente a um número). Não há conceito de "sessão" separado do 
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
 `groups.updatePicture`, `groups.getInviteLink`, `groups.revokeInviteLink`,
-`groups.joinViaInviteLink`, `groups.leaveGroup`, `webhooks.parse`.
+`groups.joinViaInviteLink`, `groups.leaveGroup`, `contacts.list`, `contacts.get`,
+`contacts.checkExists`, `contacts.getProfilePicture`, `contacts.getAbout`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada: embora a Z-API suporte pareamento por código
 (`GET /phone-code/{phone}`), `InstanceApi.connect()` não recebe telefone como parâmetro nesta
@@ -402,6 +403,51 @@ nenhum payload real). **Precisa de validação contra uma instância real** ante
 produção — especialmente para confirmar (a) que `notificationParameters` de fato contém telefones em
 texto puro (dígitos, sem `@`) e não algum outro formato (JID, objeto), e (b) que os outros 4 valores
 de participante (`REMOVE`/`LEAVE`/`PROMOTE`/`DEMOTE`) realmente compartilham o mesmo envelope.
+
+## Contatos
+
+Fonte primária: `developer.z-api.io/chats/*` e `developer.z-api.io/instance/*` (páginas `contacts`,
+`contact`, `phone-exists`, `profile-picture`). Ver ADR-0010 para o contrato canônico (`Contact`,
+`CheckExistsResult`, `ContactProfilePicture`, `ContactAbout`) e a regra de ouro desta capability:
+cada operação mapeia para **UMA ÚNICA** chamada HTTP — nenhuma é composta de múltiplas chamadas.
+
+### `chatId`/`phone` de contato NÃO é opaco
+
+Diferente do `groupId` (opaco, ver seção "Grupos" acima), o identificador de contato é o MESMO
+chatId canônico usado por `messages.*`: dígitos DDI+DDD+número (sem `+`) para a imensa maioria dos
+casos, ou um JID explícito intacto — inclusive um `"...@lid"` opaco nos casos raros de contato com
+privacidade ativada (o WhatsApp usa um "Linked ID" em vez do telefone real). O adapter reaproveita
+`toZapiPhone` (a mesma função de `messages.*`/participantes de grupo) nos **dois sentidos**: para
+montar o path/query da requisição (canônico → Z-API) e para mapear o `phone`/`lid` de volta de uma
+resposta (Z-API → canônico). Isso é seguro porque a regra de `toZapiPhone` é simétrica: qualquer
+string com `"@"` é tratada como JID e passa intacta nos dois sentidos; qualquer outra vira dígitos
+puros (idempotente quando já são dígitos puros).
+
+### Operações
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `contacts.list` | `GET /contacts` | Exige paginação (`page`, `pageSize`) como query params — `ContactsApi.list()` não expõe paginação no contrato canônico, então o adapter usa o mesmo default fixo já adotado por `groups.list` (`page=1, pageSize=100`). Resposta: array de `{ name?, short?, notify?, vname?, phone }`. `id` vem de `phone` (convertido para o formato canônico via `toZapiPhone`); `name` vem de `name` (fallback `notify`, fallback `short`). **Limitação**: este endpoint NÃO devolve `about`/`imgUrl`/confirmação de "tem WhatsApp" — todo `Contact` desta lista vem com `about`/`profilePictureUrl`/`hasWhatsApp` indefinidos. |
+| `contacts.get` | `GET /contacts/{phone}` | `phone` no **path**, convertido do chatId canônico via `toZapiPhone`. Resposta MAIS RICA entre os providers pesquisados para esta capability: `{ name, phone, notify, short, imgUrl, about }` num único endpoint. Mapeamento: `name` (fallback `notify`) → `name`, `imgUrl` → `profilePictureUrl`, `about` → `about`; `id` cai de volta no `phone` da resposta (convertido ao canônico), com fallback no chatId requisitado. **SEM `hasWhatsApp` explícito** — é isso que `contacts.checkExists` confirma. |
+| `contacts.checkExists` | `GET /phone-exists/{phone}` | `phone` no **path** — **cuidado**: a doc oficial rotula a seção como "Query Parameters", mas o exemplo `curl` real confirma que é path; o adapter segue o `curl`, não o cabeçalho de prosa. Resposta: ARRAY com um único item, `[{ exists, phone, lid }]` (`lid` é `string \| null`). O adapter pega o primeiro item; mapeia `exists` → `exists`, e `lid` (quando presente — contato com privacidade ativada) OU `phone` → `chatId`, ambos convertidos ao canônico via `toZapiPhone`. |
+| `contacts.getProfilePicture` | `GET /profile-picture` | `phone` como **query param** (não path, diferente de `get`/`checkExists`). Resposta: `{ link: string }` → `ContactProfilePicture.url`. `link` ausente/vazio (contato sem foto, ou privacidade que bloqueia) vira `url: undefined`, nunca lança. |
+| `contacts.getAbout` | `GET /contacts/{phone}` | **MESMO endpoint de `contacts.get`** — o adapter reaproveita a mesma função interna de requisição (`fetchContactDetail`) em vez de compor uma segunda chamada (ADR-0010: uma operação canônica, uma chamada HTTP). O campo `about` já vem embutido nessa resposta. |
+
+### Limitações e assunções não confirmadas contra uma instância real
+
+- Nenhuma chamada real foi feita contra `api.z-api.io/.../contacts`, `/phone-exists/*` ou
+  `/profile-picture` durante a pesquisa (sem credenciais) — rotas, nomes de campo e shapes de
+  resposta vêm só da documentação oficial.
+- `contacts.list` nunca preenche `about`/`profilePictureUrl`/`hasWhatsApp` — limitação do endpoint
+  `GET /contacts` (que devolve um objeto leve), não um bug do adapter. Para esses campos, use
+  `contacts.get`/`getProfilePicture`/`checkExists` por contato.
+- `contacts.get` não confirma "tem WhatsApp" (`hasWhatsApp` fica sempre `undefined` nesta
+  operação) — só `contacts.checkExists` confirma isso.
+- `isBlocked` fica sempre `undefined` em todas as operações desta capability: nenhum endpoint
+  pesquisado da Z-API expõe esse dado.
+- Não confirmado se `GET /phone-exists/{phone}` de fato aceita apenas dígitos no path para
+  qualquer formato de telefone (DDI+DDD+número) ou se há alguma normalização adicional exigida
+  pelo provider.
 
 ## Limites e particularidades
 

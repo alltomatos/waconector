@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
+  ContactsApi,
   GroupsApi,
   InstanceApi,
   MessagesApi,
@@ -17,7 +18,11 @@ import type {
 } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  CheckExistsResult,
   ConnectResult,
+  Contact,
+  ContactAbout,
+  ContactProfilePicture,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -87,6 +92,11 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'groups.revokeInviteLink',
   'groups.joinViaInviteLink',
   'groups.leaveGroup',
+  'contacts.list',
+  'contacts.get',
+  'contacts.checkExists',
+  'contacts.getProfilePicture',
+  'contacts.getAbout',
   'webhooks.parse',
 ];
 
@@ -349,12 +359,78 @@ export function waha(options: WahaOptions): WaAdapter {
     },
   };
 
+  const contacts: ContactsApi = {
+    list: async () => {
+      // GET /api/contacts/all, query { session }. Resposta: array de contatos no schema
+      // WWebJSContact (id/number, name, pushname, shortName, isMe, isGroup, isWAContact,
+      // isMyContact, isBlocked) — sem `about`/foto de perfil (endpoints próprios, ver
+      // getProfilePicture/getAbout abaixo).
+      const body = await http.request<unknown>({
+        method: 'GET',
+        path: '/api/contacts/all',
+        query: { session },
+      });
+      const items = Array.isArray(body) ? body : [];
+      return items.map((item) => mapContact(item));
+    },
+
+    get: async (chatId) => {
+      // GET /api/contacts, query { contactId, session }. `contactId` aceita dígitos ou "@c.us" na
+      // doc, mas usamos o formato "@c.us" (canônico do provider) via toWahaChatId, mesma conversão
+      // já usada por sendText/sendMedia/groups.*. Mesmo shape de resposta de `list`, um objeto só.
+      const contactId = toWahaChatId(chatId);
+      const body = await http.request<unknown>({
+        method: 'GET',
+        path: '/api/contacts',
+        query: { contactId, session },
+      });
+      return mapContact(body);
+    },
+
+    checkExists: async (phone) => {
+      // GET /api/contacts/check-exists, query { phone, session }. Diferente de `get`, este
+      // endpoint quer o telefone em DÍGITOS (não "@c.us") — toWahaPhoneDigits reaproveita
+      // toWahaChatId para chegar num JID canônico e então extrai só a parte antes do "@".
+      const phoneDigits = toWahaPhoneDigits(phone);
+      const body = await http.request<unknown>({
+        method: 'GET',
+        path: '/api/contacts/check-exists',
+        query: { phone: phoneDigits, session },
+      });
+      return mapCheckExistsResult(body);
+    },
+
+    getProfilePicture: async (chatId) => {
+      // GET /api/contacts/profile-picture, query { contactId, session }. `refresh` é opcional
+      // (default false na doc) — omitido, sem necessidade de forçar refresh nesta operação.
+      const contactId = toWahaChatId(chatId);
+      const body = await http.request<unknown>({
+        method: 'GET',
+        path: '/api/contacts/profile-picture',
+        query: { contactId, session },
+      });
+      return mapContactProfilePicture(body);
+    },
+
+    getAbout: async (chatId) => {
+      // GET /api/contacts/about, query { contactId, session }.
+      const contactId = toWahaChatId(chatId);
+      const body = await http.request<unknown>({
+        method: 'GET',
+        path: '/api/contacts/about',
+        query: { contactId, session },
+      });
+      return mapContactAbout(body);
+    },
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WAHA_CAPABILITIES,
     instance,
     messages,
     groups,
+    contacts,
     parseWebhook: (input) => parseWahaWebhook(input, session, options.webhookHmacKey),
   };
 }
@@ -378,6 +454,20 @@ function toWahaChatId(canonical: string): string {
     return canonical;
   }
   return `${canonical}@c.us`;
+}
+
+/**
+ * Extrai só os dígitos de um chatId canônico (telefone ou JID) para o parâmetro `phone` de
+ * `GET /api/contacts/check-exists` — diferente de `toWahaChatId` (que devolve o JID "@c.us"
+ * completo), esse endpoint específico quer o telefone cru. Reaproveita `toWahaChatId` (mesma
+ * conversão já usada por sendText/sendMedia) em vez de duplicar a lógica de domínio
+ * (`@s.whatsapp.net` → `@c.us`, JIDs já reconhecidos passam intactos) e só depois corta o `@...`
+ * final.
+ */
+function toWahaPhoneDigits(canonical: string): string {
+  const chatId = toWahaChatId(canonical);
+  const atIndex = chatId.indexOf('@');
+  return atIndex === -1 ? chatId : chatId.slice(0, atIndex);
 }
 
 /**
@@ -611,6 +701,72 @@ function mapGroupInfo(body: unknown, fallback: GroupInfoFallback = {}): GroupInf
 function mapGroupInviteLink(body: unknown): GroupInviteLink {
   const code = typeof body === 'string' ? body : '';
   return { link: normalizeInviteLink(code), raw: body };
+}
+
+/**
+ * Mapeia um contato do schema `WWebJSContact` (`GET /api/contacts/all` e `GET /api/contacts`, mesmo
+ * shape nos dois) para `Contact`. `id`/`number` já vêm em formato "@c.us" na doc, mas passamos pelo
+ * MESMO `toWahaChatId` usado para envio — garante o formato canônico mesmo se um dos dois campos
+ * vier sem domínio (ex.: `number` cru). Sem `about`/`profilePictureUrl` neste endpoint (endpoints
+ * dedicados, ver `getAbout`/`getProfilePicture`) — ficam `undefined` por limitação do provider, não
+ * por bug (ver docs/providers/waha.md#contatos).
+ */
+function mapContact(body: unknown): Contact {
+  const record = asRecord(body);
+  const idSource =
+    (record ? asString(record.id) : undefined) ?? (record ? asString(record.number) : undefined);
+  const id = idSource === undefined ? 'unknown' : toWahaChatId(idSource);
+  const name =
+    (record ? asString(record.name) : undefined) ??
+    (record ? asString(record.pushname) : undefined);
+  return {
+    id,
+    name,
+    hasWhatsApp: record ? asBoolean(record.isWAContact) : undefined,
+    isBlocked: record ? asBoolean(record.isBlocked) : undefined,
+    raw: body,
+  };
+}
+
+/**
+ * Mapeia a resposta de `GET /api/contacts/check-exists` (schema `WANumberExistResult`) para
+ * `CheckExistsResult`. `chatId` fica ausente quando o provider não o devolve (comum quando
+ * `numberExists` é `false`) — passado por `toWahaChatId` quando presente pelo mesmo motivo de
+ * `mapContact` (garantir formato canônico consistente).
+ */
+function mapCheckExistsResult(body: unknown): CheckExistsResult {
+  const record = asRecord(body);
+  const chatIdRaw = record ? asString(record.chatId) : undefined;
+  return {
+    exists: (record ? asBoolean(record.numberExists) : undefined) ?? false,
+    chatId: chatIdRaw === undefined ? undefined : toWahaChatId(chatIdRaw),
+    raw: body,
+  };
+}
+
+/**
+ * Mapeia a resposta de `GET /api/contacts/profile-picture` para `ContactProfilePicture`.
+ * `profilePictureURL` pode vir `null` quando a privacidade do contato não permite — tratado como
+ * `url` ausente, não como erro.
+ */
+function mapContactProfilePicture(body: unknown): ContactProfilePicture {
+  const record = asRecord(body);
+  return {
+    url: record ? asString(record.profilePictureURL) : undefined,
+    raw: body,
+  };
+}
+
+/**
+ * Mapeia a resposta de `GET /api/contacts/about` para `ContactAbout`. `about` pode vir `null`
+ * quando a privacidade do contato não permite — tratado como ausente, não como erro.
+ */
+function mapContactAbout(body: unknown): ContactAbout {
+  const record = asRecord(body);
+  return {
+    about: record ? asString(record.about) : undefined,
+    raw: body,
+  };
 }
 
 function mapWahaStatus(status: string | undefined): InstanceState {

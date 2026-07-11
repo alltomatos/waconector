@@ -93,8 +93,17 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       notificações de participante (não as de subject/description/ícone/criação, sem exemplo de
       payload). **uazapi deliberadamente sem parsing estruturado** — nenhum exemplo de payload de
       grupo existe na doc oficial; eventos continuam caindo em `unknown` (comportamento seguro por
-      design, ADR-0002/ADR-0003). **Fecha o ADR-0009 por completo.**
-- [ ] Capability `contacts.*` (escopo grande, ainda não iniciado)
+      design, ADR-0002/ADR-0003). **Fecha o ADR-0009 por completo.** Mergeado via
+      [PR #20](https://github.com/alltomatos/waconector/pull/20).
+- [x] Capability `contacts.*` — PR1: descoberta + perfil (ADR-0010), pesquisa (9 operações nos 5
+      providers) + implementação + auditoria adversarial via workflow. `list`/`get`/`checkExists`/
+      `getProfilePicture`/`getAbout` implementados em 4/5 adapters — **uazapi não declara
+      `contacts.getAbout`** (nenhum endpoint/campo para recado pessoal em toda a doc oficial,
+      confirmado por busca exaustiva). Nenhum adapter compõe múltiplas chamadas HTTP atrás de uma
+      operação (regra de ouro do ADR-0010) — campos ausentes ficam `undefined`, documentados.
+- [ ] Capability `contacts.*` — PR2 (moderação: block/unblock/listBlocked), planejado, ainda não
+      iniciado. `getPresence` fica fora do escopo (estruturalmente assíncrono/webhook para 4 dos 5
+      providers, incremento futuro à parte).
 
 ## Marcos de release (v0.x)
 

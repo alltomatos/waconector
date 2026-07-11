@@ -186,3 +186,40 @@ export interface JoinGroupInviteInput {
   /** Código do convite OU link completo (`https://chat.whatsapp.com/<código>`) — ambos aceitos. */
   invite: string;
 }
+
+/**
+ * Contato normalizado (ver ADR-0010). `id` é o MESMO chatId canônico usado por `messages.*`
+ * (telefone E.164 ou JID explícito) — diferente de `GroupInfo.id`, não é opaco por provider.
+ * Todos os campos de detalhe são opcionais: nenhum provider pesquisado confirma todos ao mesmo
+ * tempo numa única chamada (ex.: Evolution GO/Wuzapi não devolvem nome de exibição no endpoint
+ * mais próximo de "getContact"). O adapter NUNCA compõe múltiplas requisições para preencher os
+ * campos ausentes — mapeia o melhor match de uma única chamada e deixa o resto `undefined`.
+ */
+export interface Contact {
+  id: string;
+  name?: string;
+  about?: string;
+  profilePictureUrl?: string;
+  hasWhatsApp?: boolean;
+  isBlocked?: boolean;
+  raw: unknown;
+}
+
+export interface CheckExistsResult {
+  exists: boolean;
+  /** chatId canônico resolvido pelo provider — nem todos devolvem isso quando `exists` é `false`. */
+  chatId?: string;
+  raw: unknown;
+}
+
+export interface ContactProfilePicture {
+  /** Ausente quando o contato não tem foto ou a privacidade dele não permite. */
+  url?: string;
+  raw: unknown;
+}
+
+export interface ContactAbout {
+  /** Ausente quando o contato não tem recado definido ou a privacidade dele não permite. */
+  about?: string;
+  raw: unknown;
+}

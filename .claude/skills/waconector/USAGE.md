@@ -77,6 +77,17 @@ if (wa.supports('groups.getInviteLink')) {
   await wa.groups.joinViaInviteLink({ invite: link }); // ou só o código
   await wa.groups.leaveGroup('grupo-1');
 }
+
+// Opcional (ADR-0010) — contatos: descoberta + perfil. chatId NÃO é opaco (diferente de
+// groupId) — é o mesmo chatId de mensagens. Campos de Contact são opcionais: nem todo
+// provider confirma tudo numa única chamada (ex.: nome de exibição pode vir undefined).
+if (wa.supports('contacts.checkExists')) {
+  const { exists } = await wa.contacts.checkExists('5585999999999');
+  if (exists && wa.supports('contacts.get')) {
+    const contact = await wa.contacts.get('5585999999999');
+    console.log(contact.name, contact.about, contact.profilePictureUrl);
+  }
+}
 ```
 
 **3. Receber, em qualquer framework HTTP**

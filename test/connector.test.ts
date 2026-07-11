@@ -75,6 +75,17 @@ describe('capabilities no conector', () => {
     expect(joinFailure).toBeInstanceOf(UnsupportedCapabilityError);
     const leaveFailure = await reject(wa.groups.leaveGroup('grupo-1'));
     expect(leaveFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const listContactsFailure = await reject(wa.contacts.list());
+    expect(listContactsFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const getContactFailure = await reject(wa.contacts.get('5585999999999'));
+    expect(getContactFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const checkExistsFailure = await reject(wa.contacts.checkExists('5585999999999'));
+    expect(checkExistsFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const getProfilePictureFailure = await reject(wa.contacts.getProfilePicture('5585999999999'));
+    expect(getProfilePictureFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const getAboutFailure = await reject(wa.contacts.getAbout('5585999999999'));
+    expect(getAboutFailure).toBeInstanceOf(UnsupportedCapabilityError);
   });
 
   it('adapter que declara messages.sendReaction sem implementar o método falha com PROVIDER_ERROR (bug do adapter, não entrada inválida)', async () => {
@@ -100,6 +111,16 @@ describe('capabilities no conector', () => {
     const failure = await reject(
       wa.groups.create({ subject: 'Grupo', participants: ['5585999999999'] }),
     );
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('adapter que declara contacts.get sem implementar o método falha com PROVIDER_ERROR', async () => {
+    const adapter = new MockAdapter({ capabilities: ['contacts.get', 'webhooks.parse'] });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (capability declarada sem método) para testar o guard-rail do conector.
+    (adapter.contacts as any).get = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.contacts.get('5585999999999'));
     expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
 });
@@ -218,6 +239,78 @@ describe('validação e normalização de groups.*', () => {
     const info = await wa.groups.getInfo(group.id);
     expect(info.id).toBe(group.id);
     expect(info.participants.some((p) => p.id === '5585988888888')).toBe(true);
+  });
+});
+
+describe('validação e normalização de contacts.*', () => {
+  it('rejeita chatId vazio em contacts.get/getProfilePicture/getAbout com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const getFailure = await reject(wa.contacts.get(''));
+    expect(isWaConnectorError(getFailure) && getFailure.code === 'INVALID_INPUT').toBe(true);
+    const pictureFailure = await reject(wa.contacts.getProfilePicture(''));
+    expect(isWaConnectorError(pictureFailure) && pictureFailure.code === 'INVALID_INPUT').toBe(
+      true,
+    );
+    const aboutFailure = await reject(wa.contacts.getAbout(''));
+    expect(isWaConnectorError(aboutFailure) && aboutFailure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('rejeita phone inválido em contacts.checkExists com INVALID_RECIPIENT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const failure = await reject(wa.contacts.checkExists('abc'));
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_RECIPIENT').toBe(true);
+  });
+
+  it('normaliza chatId (telefone vira só-dígitos, JID passa intacto) antes de entregar ao adapter — diferente do groupId opaco', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    adapter.simulateContact({
+      id: '5585999999999',
+      name: 'Fulano',
+      about: 'Ocupado',
+      profilePictureUrl: 'http://x/foto.png',
+      raw: { mock: true },
+    });
+    const wa = createConnector(adapter);
+
+    const contact = await wa.contacts.get('+55 (85) 99999-9999');
+    expect(contact.id).toBe('5585999999999');
+    expect(contact.name).toBe('Fulano');
+
+    const picture = await wa.contacts.getProfilePicture('+55 (85) 99999-9999');
+    expect(picture.url).toBe('http://x/foto.png');
+
+    const about = await wa.contacts.getAbout('+55 (85) 99999-9999');
+    expect(about.about).toBe('Ocupado');
+
+    const check = await wa.contacts.checkExists('+55 (85) 99999-9999');
+    expect(check.exists).toBe(true);
+    expect(check.chatId).toBe('5585999999999');
+  });
+
+  it('list retorna os contatos conhecidos pelo MockAdapter', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    adapter.simulateContact({ id: '5585999999999', name: 'Fulano', raw: { mock: true } });
+    adapter.simulateContact({ id: '5585988888888', name: 'Beltrano', raw: { mock: true } });
+    const wa = createConnector(adapter);
+
+    const contacts = await wa.contacts.list();
+    expect(contacts).toHaveLength(2);
+    expect(contacts.map((c) => c.id).sort()).toEqual(['5585988888888', '5585999999999']);
+  });
+
+  it('get de um contato não conhecido devolve um Contact mínimo em vez de lançar', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const contact = await wa.contacts.get('5585999999999');
+    expect(contact.id).toBe('5585999999999');
+    expect(contact.name).toBeUndefined();
   });
 });
 

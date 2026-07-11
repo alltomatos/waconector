@@ -85,6 +85,11 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 | `groups.updateSubject` | `POST /group/name` | Ver seção "Grupos (núcleo)" abaixo. |
 | `groups.updateDescription` | `POST /group/description` | Ver seção "Grupos (núcleo)" abaixo. |
 | `groups.updatePicture` | `POST /group/photo` | Ver seção "Grupos (núcleo)" abaixo. |
+| `contacts.list` | `GET /user/contacts` | Ver seção "Contatos" abaixo. |
+| `contacts.get` | `POST /user/info` | Ver seção "Contatos" abaixo. |
+| `contacts.checkExists` | `POST /user/check` | Ver seção "Contatos" abaixo. |
+| `contacts.getProfilePicture` | `POST /user/avatar` | Ver seção "Contatos" abaixo. |
+| `contacts.getAbout` | `POST /user/info` | Mesmo endpoint de `contacts.get` — ver seção "Contatos" abaixo. |
 
 ## Reações
 
@@ -245,6 +250,85 @@ diferente das fixtures de webhook de mensagem/ack/conexão, copiadas literalment
 - Corpo: `{groupJid: string}` — mesma conversão opaca de `toProviderGroupJid` usada pelo resto de
   `groups.*`. Resposta: `{"message":"success"}`, sem `data`. `Promise<void>`, mesmo padrão de
   `updateSubject`/`updateDescription`.
+
+## Contatos
+
+As 5 operações de `contacts.*` cobertas pelo PR1 do ADR-0010 (`list`, `get`, `checkExists`,
+`getProfilePicture`, `getAbout`) são suportadas por este adapter — todas confirmadas via
+código-fonte Go (`pkg/user/handler` + `pkg/user/service`, não documentadas no site oficial
+`docs.evolutionfoundation.com.br`). Mesmo padrão de confiança já usado na seção "Grupos (núcleo)":
+alta confiança (fonte primária é o código do provider), mas sem captura "ao vivo" de payload real.
+
+**Regra de ouro (ADR-0010)**: cada operação mapeia para exatamente UMA chamada HTTP ao provider —
+nunca compomos 2+ chamadas por trás de uma única operação canônica, mesmo quando isso deixaria
+campos do `Contact` mais completos. Os campos que o endpoint mais próximo não confirma ficam
+`undefined` — documentado abaixo, não é bug do adapter.
+
+### `contacts.list` — `GET /user/contacts`
+
+- Sem corpo. Resposta: `{"message":"success","data": ContactInfo[]}`, onde `ContactInfo = {Jid,
+  Found, FirstName, FullName, PushName, BusinessName}`. Este é o **contact store local do
+  whatsmeow** (contatos já conhecidos pela sessão), não uma busca "ao vivo" no WhatsApp.
+- Mapeamento: `Jid → id`; `name` escolhido pela ordem de preferência `FullName` > `FirstName` >
+  `PushName` (o primeiro campo populado, nessa ordem, vence).
+- **Sem `about`/`profilePictureUrl`/`hasWhatsApp`**: este endpoint não devolve nenhum dos três.
+  Em particular, `hasWhatsApp` fica `undefined` em vez de assumir `true` — todo item da lista já é
+  um contato conhecido da sessão, mas isso não é o mesmo que uma confirmação explícita de "tem
+  WhatsApp" (essa confirmação vem de `contacts.checkExists`).
+- Cada item do array carrega seu próprio `raw` (o registro individual, não o envelope inteiro) —
+  mesmo padrão de `groups.list`.
+
+### `contacts.get` — `POST /user/info`
+
+- **Não existe um endpoint único "getContact" ideal** no Evolution GO — este é o melhor match
+  disponível de uma única chamada (ver ADR-0010, achado "`getContact` não é uma única chamada
+  completa em 3 dos 5 providers").
+- Corpo: `{number: [chatId], formatJid: true}` — **atenção**: `number` é um **array** aqui (mesmo
+  para consultar um único contato), diferente do campo `number` (string única) de `/send/text`
+  e de `/user/avatar`.
+- Resposta: `{"message":"success","data":{"Users": {"<jid>": {"VerifiedName", "Status",
+  "PictureID", "Devices", "LID"}}}}` — **`Users` é um MAP indexado por JID** aqui (diferente de
+  `contacts.checkExists`, onde `Users` é um array). Como o corpo só pede um número, o adapter
+  extrai a primeira (e única) entrada do mapa; a própria chave do mapa é o JID já resolvido pelo
+  servidor (via `formatJid`), usado como `Contact.id` (com fallback defensivo para o `chatId` de
+  entrada caso o mapa venha vazio).
+- **Limitações documentadas** (não são bugs — a resposta do provider genuinamente não traz esses
+  dados):
+  - **`name` fica sempre `undefined`**: a resposta não inclui nenhum nome de exibição comum (nem
+    `PushName` nem `FullName`) — quem precisar do nome deve chamar `contacts.list()` em vez de
+    `contacts.get()`.
+  - **`profilePictureUrl` fica sempre `undefined`**: `PictureID` é só um id/hash interno da foto
+    atual do contato, **não uma URL utilizável** — popular `profilePictureUrl` a partir dele seria
+    inventar um dado que a resposta não contém (violaria a regra de ouro do ADR-0010). Quem
+    precisar da URL deve chamar `contacts.getProfilePicture` separadamente.
+  - `VerifiedName` (quando presente) só é preenchido para contas Business **verificadas** — não é
+    o nome comum de exibição de um contato qualquer, por isso não é usado como fallback de `name`.
+  - `about` **é** populado a partir de `Status`.
+
+### `contacts.getAbout` — `POST /user/info` (mesmo endpoint de `contacts.get`)
+
+- Reaproveita a MESMA chamada/função interna de `contacts.get` (`fetchUserInfo`) — nenhuma
+  requisição adicional é disparada. `data.Users[jid].Status → about`.
+
+### `contacts.checkExists` — `POST /user/check`
+
+- Corpo: `{number: [phone], formatJid: true}` — `number` também é array aqui.
+- Resposta: `{"message":"success","data":{"Users": [{"Query", "IsInWhatsapp", "JID", "RemoteJID",
+  "LID", "VerifiedName"}]}}` — **`Users` é um ARRAY** aqui (diferente de `contacts.get`, onde
+  `Users` é um mapa por JID) — atenção a essa inversão de shape entre os dois endpoints do mesmo
+  pacote `pkg/user/*`. O adapter pega o primeiro item do array (o corpo só pede um número).
+- Mapeamento: `IsInWhatsapp → exists`; `JID → chatId` (o JID resolvido pelo servidor — útil para o
+  chamador encadear `messages.sendText`/`contacts.get` sem precisar renormalizar o telefone).
+
+### `contacts.getProfilePicture` — `POST /user/avatar`
+
+- Corpo: `{number: chatId, preview: false}` — **diferente** de `contacts.get`/`contacts.checkExists`,
+  aqui `number` é uma **string única**, não um array.
+- Resposta: `{"message":"success","data":{"ID", "URL", "Type", "DirectPath", "Hash"}}`;
+  `URL → url`.
+- Se o contato não tiver foto definida (`ErrProfilePictureNotSet` no whatsmeow), o servidor
+  normalmente responde com erro HTTP 4xx/5xx — o adapter **não captura nem mascara** esse erro;
+  ele propaga como qualquer outra falha HTTP deste adapter (vira `PROVIDER_ERROR` via `HttpClient`).
 
 ## Webhooks
 
