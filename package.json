@@ -1,6 +1,6 @@
 {
   "name": "waconector",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Conector universal para APIs não-oficiais de WhatsApp — um contrato único, um adapter por provider.",
   "keywords": [
     "whatsapp",
