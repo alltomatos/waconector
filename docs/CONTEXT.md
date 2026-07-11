@@ -65,7 +65,7 @@ significar trocar apenas a configuração.
 
 - **F0 — Fundação** ✅ (2026-07-10): scaffold, core completo, MockAdapter, suite de contrato, CI/release.
 - **F1 — Prova da abstração** ✅ (2026-07-11): adapters WAHA + Evolution GO (`instance.connect/status/logout`, `messages.sendText/sendMedia`, `webhooks.parse`), dossiês em `docs/providers/`, fixtures e testes de contrato próprios, auditados adversarialmente contra a documentação/código-fonte oficial de cada provider. `instance.pairingCode` deliberadamente fora do escopo (contrato `InstanceApi.connect()` não recebe telefone). `v0.1.0` publicado no npm.
-- **F2 — Largura** 🔶 (2026-07-11): adapters uazapi, Z-API e Wuzapi implementados e auditados adversarialmente (mesmo rigor da F1). Pendente: capabilities novas (grupos, contatos, reply/quote, reactions) e publicar `v0.2.0`.
+- **F2 — Largura** 🔶 (2026-07-11): adapters uazapi, Z-API e Wuzapi implementados e auditados adversarialmente (mesmo rigor da F1). `v0.2.0` publicado no npm. Pendente: capabilities novas (grupos, contatos, reply/quote, reactions).
 - **F3 — Profundidade e DX**: Whapi, Zapo, QuePasa; docs site com matriz de capabilities gerada do código; exemplos; `npx waconector doctor`.
 - **v1.0**: 3+ adapters passando 100% da suite e API pública estável.
 
