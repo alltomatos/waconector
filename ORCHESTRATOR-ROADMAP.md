@@ -68,6 +68,7 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       chatId de mensagem o corromperiam se reaproveitados cegamente). Bug real encontrado e
       corrigido na revisão própria (não pela verificação adversarial): os métodos `wa.groups.*` do
       conector lançavam sincronamente em vez de rejeitar a Promise em falhas de validação.
+      Mergeado via [PR #17](https://github.com/alltomatos/waconector/pull/17).
 - [ ] Capability `groups.*` — PR2 (configurações: subject/description/picture) e PR3 (convites +
       saída: invite link/join/leave), planejados, ainda não iniciados
 - [ ] Capability `contacts.*` (escopo grande, ainda não iniciado)
