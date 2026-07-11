@@ -1,9 +1,9 @@
-import type { InstanceApi, MessagesApi, WaAdapter, WebhookInput } from './adapter';
+import type { InstanceApi, WaAdapter, WebhookInput } from './adapter';
 import { type Capability, type CapabilitySet, hasCapability } from './capabilities';
 import { normalizeChatId } from './chat-id';
 import { UnsupportedCapabilityError, WaConnectorError } from './errors';
 import type { CanonicalEvent, CanonicalEventType, EventOf, UnknownEvent } from './events';
-import type { SendMediaInput, SendTextInput } from './types';
+import type { SendMediaInput, SendReactionInput, SendTextInput, SentMessage } from './types';
 
 export type WaEventListener<T extends CanonicalEventType | '*'> = (
   event: T extends '*' ? CanonicalEvent : EventOf<Exclude<T, '*'>>,
@@ -19,6 +19,18 @@ export interface WebhooksApi {
 }
 
 /**
+ * `MessagesApi` exposta pelo conector: diferente da interface que o adapter implementa
+ * (`sendReaction` é opcional lá, já que nem todo provider suporta), aqui todo método está sempre
+ * presente — chamar uma capability não suportada lança `UnsupportedCapabilityError` de forma
+ * uniforme, em vez de o consumidor precisar checar `typeof wa.messages.sendReaction === 'function'`.
+ */
+export interface ConnectorMessagesApi {
+  sendText(input: SendTextInput): Promise<SentMessage>;
+  sendMedia(input: SendMediaInput): Promise<SentMessage>;
+  sendReaction(input: SendReactionInput): Promise<SentMessage>;
+}
+
+/**
  * Camada de ergonomia e política sobre um adapter: checagem de capabilities,
  * validação e normalização de entrada, eventos e parsing seguro de webhooks.
  */
@@ -27,7 +39,7 @@ export class WaConnector {
   readonly provider: string;
   readonly capabilities: CapabilitySet;
   readonly instance: InstanceApi;
-  readonly messages: MessagesApi;
+  readonly messages: ConnectorMessagesApi;
   readonly webhooks: WebhooksApi;
 
   private readonly listeners = new Map<string, Set<AnyListener>>();
@@ -60,6 +72,18 @@ export class WaConnector {
       sendMedia: async (input) => {
         this.assertCapability('messages.sendMedia');
         return adapter.messages.sendMedia(this.prepareSendMedia(input));
+      },
+      sendReaction: async (input) => {
+        this.assertCapability('messages.sendReaction');
+        if (!adapter.messages.sendReaction) {
+          throw new WaConnectorError(
+            'PROVIDER_ERROR',
+            `Adapter "${this.provider}" declara a capability "messages.sendReaction" mas não ` +
+              'implementa messages.sendReaction — isso é um bug no adapter, não uma entrada inválida.',
+            { provider: this.provider },
+          );
+        }
+        return adapter.messages.sendReaction(this.prepareSendReaction(input));
       },
     };
 
@@ -121,6 +145,22 @@ export class WaConnector {
         {
           provider: this.provider,
         },
+      );
+    }
+    return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
+  }
+
+  private prepareSendReaction(input: SendReactionInput): SendReactionInput {
+    if (typeof input.messageId !== 'string' || input.messageId.length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'sendReaction exige "messageId" não vazio.', {
+        provider: this.provider,
+      });
+    }
+    if (typeof input.emoji !== 'string') {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'sendReaction exige "emoji" (string vazia remove uma reação anterior).',
+        { provider: this.provider },
       );
     }
     return { ...input, to: normalizeChatId(this.requireTo(input.to)) };

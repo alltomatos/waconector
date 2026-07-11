@@ -13,6 +13,7 @@ export const CAPABILITIES = [
   'instance.logout',
   'messages.sendText',
   'messages.sendMedia',
+  'messages.sendReaction',
   'webhooks.parse',
 ] as const;
 

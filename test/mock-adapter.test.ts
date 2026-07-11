@@ -60,6 +60,27 @@ describe('MockAdapter: outbox', () => {
     expect(adapter.outbox[0]?.message).toBe(sent);
     expect(adapter.outbox[0]?.input.to).toBe('5585999999999');
   });
+
+  it('sendReaction entrega e registra no outbox quando a instância está conectada', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendReaction({
+      to: '5585999999999',
+      messageId: 'msg-1',
+      emoji: '👍',
+    });
+
+    expect(sent.chatId).toBe('5585999999999');
+    expect(sent.id).toBeTruthy();
+    expect(adapter.outbox).toHaveLength(1);
+    expect(adapter.outbox[0]?.input).toEqual({
+      to: '5585999999999',
+      messageId: 'msg-1',
+      emoji: '👍',
+    });
+  });
 });
 
 describe('MockAdapter: webhooks sintéticos', () => {
@@ -92,6 +113,18 @@ describe('MockAdapter: webhooks sintéticos', () => {
       body: { event: 'message', from: '5585999999999', text: 'eco', fromMe: true },
     });
     expect(events[0]?.type).toBe('message.sent');
+  });
+
+  it('buildReaction vira message.received com kind "reaction" e ReactionInfo', () => {
+    const adapter = new MockAdapter();
+    const events = adapter.parseWebhook(adapter.buildReaction('5585999999999', 'msg-1', '❤️'));
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event?.type).toBe('message.received');
+    if (event?.type === 'message.received') {
+      expect(event.message.kind).toBe('reaction');
+      expect(event.message.reaction).toEqual({ emoji: '❤️', targetMessageId: 'msg-1' });
+    }
   });
 
   it('valores fora do domínio caem em padrões seguros', () => {

@@ -32,6 +32,25 @@ describe('capabilities no conector', () => {
       }),
     );
     expect(mediaFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const reactionFailure = await reject(
+      wa.messages.sendReaction({ to: '5585999999999', messageId: 'm1', emoji: '👍' }),
+    );
+    expect(reactionFailure).toBeInstanceOf(UnsupportedCapabilityError);
+  });
+
+  it('adapter que declara messages.sendReaction sem implementar o método falha com PROVIDER_ERROR (bug do adapter, não entrada inválida)', async () => {
+    const adapter = new MockAdapter({
+      capabilities: ['messages.sendReaction', 'webhooks.parse'],
+    });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (capability declarada sem método) para testar o guard-rail do conector.
+    (adapter.messages as any).sendReaction = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(
+      wa.messages.sendReaction({ to: '5585999999999', messageId: 'm1', emoji: '👍' }),
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
 });
 

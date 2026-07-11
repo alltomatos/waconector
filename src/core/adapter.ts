@@ -4,6 +4,7 @@ import type {
   ConnectResult,
   InstanceStatus,
   SendMediaInput,
+  SendReactionInput,
   SendTextInput,
   SentMessage,
 } from './types';
@@ -38,6 +39,11 @@ export interface InstanceApi {
 export interface MessagesApi {
   sendText(input: SendTextInput): Promise<SentMessage>;
   sendMedia(input: SendMediaInput): Promise<SentMessage>;
+  /**
+   * Opcional: só precisa ser implementado por adapters que declaram a capability
+   * `messages.sendReaction` (nem todo provider expõe reação programática). Ver ADR-0008.
+   */
+  sendReaction?(input: SendReactionInput): Promise<SentMessage>;
 }
 
 /**

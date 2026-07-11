@@ -89,6 +89,23 @@ export function describeAdapterContract(harness: AdapterContractHarness): void {
       }
     });
 
+    it('se declarar messages.sendReaction, envia reação e retorna SentMessage normalizado', async (ctxTest) => {
+      if (!ctx.adapter.capabilities.includes('messages.sendReaction')) {
+        ctxTest.skip();
+        return;
+      }
+      await ctx.ready();
+      const wa = createConnector(ctx.adapter);
+      const sent = await wa.messages.sendReaction({
+        to: ctx.recipient,
+        messageId: 'contrato-msg-1',
+        emoji: '👍',
+      });
+      expect(sent.id.length).toBeGreaterThan(0);
+      expect(sent.chatId.length).toBeGreaterThan(0);
+      expect(sent).toHaveProperty('raw');
+    });
+
     it('não explode com webhook não reconhecido (vira evento unknown)', () => {
       const wa = createConnector(ctx.adapter);
       const events = wa.webhooks.parse({ body: { formato: 'totalmente-desconhecido' } });
