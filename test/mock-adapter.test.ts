@@ -19,6 +19,14 @@ describe('MockAdapter: ciclo de vida da instância', () => {
     await wa.instance.logout();
     expect((await wa.instance.status()).state).toBe('disconnected');
   });
+
+  it('simulateState força um estado arbitrário (ex.: qr) sem passar pelo fluxo connect()', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+
+    adapter.simulateState('qr');
+    expect((await wa.instance.status()).state).toBe('qr');
+  });
 });
 
 describe('MockAdapter: outbox', () => {
@@ -33,6 +41,24 @@ describe('MockAdapter: outbox', () => {
     expect(first.id).not.toBe(second.id);
     expect(adapter.outbox).toHaveLength(2);
     expect(adapter.outbox[1]?.message.chatId).toBe('5585999999999');
+  });
+
+  it('sendMedia entrega e registra no outbox quando a instância está conectada', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendMedia({
+      to: '5585999999999',
+      media: { kind: 'image', url: 'http://example.com/foto.png' },
+      caption: 'legenda',
+    });
+
+    expect(sent.chatId).toBe('5585999999999');
+    expect(sent.id).toBeTruthy();
+    expect(adapter.outbox).toHaveLength(1);
+    expect(adapter.outbox[0]?.message).toBe(sent);
+    expect(adapter.outbox[0]?.input.to).toBe('5585999999999');
   });
 });
 

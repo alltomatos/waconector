@@ -43,6 +43,13 @@ novo ADR em vez de simplesmente divergir no código.
 - **Adapter é "burro".** Ele só traduz de/para o provider (`map-out`/`map-in`). Validação de
   entrada, checagem de capabilities, retry e emissão de eventos são responsabilidade do conector
   (`src/core/connector.ts`) — não duplique essa lógica dentro de um adapter.
+  **Exceção explícita:** uma função fábrica de adapter (ex.: `waha()`, `evolution()`) pode incluir
+  uma checagem de último recurso equivalente à do conector (ex.: exigir `media.url` ou
+  `media.base64` antes de montar o request de `sendMedia`) — é o cinto de segurança para quem
+  instancia o adapter diretamente, sem passar por `createConnector`. Isso só é aceitável quando o
+  código/mensagem de erro forem consistentes com o que o conector já valida (mesmo
+  `WaConnectorError` code, mensagem equivalente) — não é uma licença para o adapter inventar sua
+  própria política de validação.
 - **`raw` sempre presente.** Todo objeto normalizado que o adapter retorna carrega o payload
   original do provider em `raw`.
 - **`parseWebhook` nunca lança.** Payload não reconhecido (ou uma exceção interna) vira um evento

@@ -18,7 +18,12 @@ export interface HttpClientOptions {
   headers?: Record<string, string>;
   /** Timeout por tentativa, em ms (padrão: 30_000). */
   timeoutMs?: number;
-  /** Retentativas para 429/5xx/erros de rede, com backoff exponencial (padrão: 2). */
+  /**
+   * Retentativas para 429/5xx/erros de rede, com backoff exponencial (padrão: 2). Só se aplicam a
+   * métodos idempotentes: GET/HEAD sempre, os demais (POST/PUT/PATCH/DELETE) só com
+   * `idempotent: true` explícito em `HttpRequestOptions` (ver ADR-0007). Quando a resposta 429/503
+   * traz o header `retry-after` numérico, ele tem precedência sobre o backoff calculado.
+   */
   retries?: number;
   /** Valores sensíveis (tokens) redigidos em toda mensagem de erro. */
   secrets?: readonly string[];
@@ -28,20 +33,29 @@ export interface HttpClientOptions {
 }
 
 export interface HttpRequestOptions {
-  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
   query?: Record<string, string | number | boolean | undefined>;
   headers?: Record<string, string>;
   /** Serializado como JSON quando presente. */
   body?: unknown;
+  /**
+   * Marca a requisição como idempotente (reenviá-la não duplica efeito colateral no provider).
+   * GET/HEAD já são tratados como idempotentes por natureza; para POST/PUT/PATCH/DELETE, sem essa
+   * flag em `true`, o retry NUNCA acontece (nem em NETWORK_ERROR, nem em 429/5xx) — evita reenviar
+   * um `sendText`/`sendMedia` que o provider já processou antes da conexão cair (ver ADR-0007).
+   */
+  idempotent?: boolean;
 }
 
 const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+/** Teto de segurança para o delay vindo do header `Retry-After`, em ms. */
+const RETRY_AFTER_MAX_MS = 30_000;
 
 /**
  * Client HTTP mínimo sobre `fetch` nativo, compartilhado pelos adapters:
- * timeout, retry com backoff, mapeamento de status para erros tipados e
- * redação de segredos. Zero dependências de runtime.
+ * timeout, retry idempotente com backoff (ou `Retry-After` do provider quando presente),
+ * mapeamento de status para erros tipados e redação de segredos. Zero dependências de runtime.
  */
 export class HttpClient {
   private readonly baseUrl: string;
@@ -64,11 +78,16 @@ export class HttpClient {
 
   async request<T = unknown>(options: HttpRequestOptions): Promise<T> {
     const url = this.buildUrl(options);
+    const method = resolveMethod(options);
+    // GET/HEAD são idempotentes por natureza; os demais métodos só entram no laço de retry com
+    // `idempotent: true` explícito (GAP4 — evita duplicar sendText/sendMedia após NETWORK_ERROR).
+    const canRetry = method === 'GET' || method === 'HEAD' || options.idempotent === true;
     let lastError: WaConnectorError | undefined;
 
     for (let attempt = 0; attempt <= this.retries; attempt++) {
       if (attempt > 0) {
-        await sleep(backoffMs(attempt));
+        // `Retry-After` do provider (429/503) tem precedência sobre o backoff calculado.
+        await sleep(lastError?.retryAfterMs ?? backoffMs(attempt));
       }
       try {
         return await this.attempt<T>(url, options);
@@ -78,8 +97,9 @@ export class HttpClient {
         }
         lastError = error;
         const retryable =
-          error.code === 'NETWORK_ERROR' ||
-          (error.status !== undefined && RETRYABLE_STATUSES.has(error.status));
+          canRetry &&
+          (error.code === 'NETWORK_ERROR' ||
+            (error.status !== undefined && RETRYABLE_STATUSES.has(error.status)));
         if (!retryable) {
           throw error;
         }
@@ -97,7 +117,7 @@ export class HttpClient {
   private async attempt<T>(url: string, options: HttpRequestOptions): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    const method = options.method ?? (options.body !== undefined ? 'POST' : 'GET');
+    const method = resolveMethod(options);
 
     try {
       const hasJsonBody = options.body !== undefined;
@@ -114,12 +134,18 @@ export class HttpClient {
 
       if (!response.ok) {
         const bodyText = await safeText(response);
+        // Só 429/503 costumam vir com `Retry-After` acionável; 502/504 raramente o incluem e o
+        // backoff calculado já cobre esse caso.
+        const retryAfterMs =
+          response.status === 429 || response.status === 503
+            ? parseRetryAfterMs(response.headers.get('retry-after'))
+            : undefined;
         throw new WaConnectorError(
           statusToErrorCode(response.status),
           this.redact(
             `HTTP ${response.status} em ${method} ${options.path}: ${truncate(bodyText, 400)}`,
           ),
-          { provider: this.provider, status: response.status },
+          { provider: this.provider, status: response.status, retryAfterMs },
         );
       }
 
@@ -176,12 +202,35 @@ export class HttpClient {
   }
 }
 
+function resolveMethod(options: HttpRequestOptions): NonNullable<HttpRequestOptions['method']> {
+  return options.method ?? (options.body !== undefined ? 'POST' : 'GET');
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function backoffMs(attempt: number): number {
   return Math.min(4_000, 300 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 100);
+}
+
+/**
+ * Só suporta o formato numérico (segundos) do header `Retry-After` — o formato de data HTTP
+ * (`Retry-After: Wed, 21 Oct 2026 07:28:00 GMT`) não é necessário para os providers-alvo; se o
+ * header estiver ausente ou não for um inteiro simples, o backoff calculado é usado (sem mudança
+ * de comportamento). Sem regex por consistência com `stripTrailingSlashes` acima (evita qualquer
+ * dúvida sobre custo de matching em headers vindos de fora).
+ */
+function parseRetryAfterMs(headerValue: string | null): number | undefined {
+  if (headerValue === null) return undefined;
+  const trimmed = headerValue.trim();
+  if (trimmed.length === 0) return undefined;
+  for (let i = 0; i < trimmed.length; i++) {
+    const code = trimmed.charCodeAt(i);
+    if (code < 48 || code > 57) return undefined;
+  }
+  const seconds = Number(trimmed);
+  return Math.min(RETRY_AFTER_MAX_MS, seconds * 1000);
 }
 
 async function safeText(response: Response): Promise<string> {

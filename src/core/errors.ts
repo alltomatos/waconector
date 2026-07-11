@@ -16,6 +16,12 @@ export interface WaConnectorErrorOptions {
   provider?: string;
   status?: number;
   cause?: unknown;
+  /**
+   * Delay (em ms) sugerido pelo provider via header `Retry-After` para a próxima tentativa.
+   * Preenchido só por `HttpClient` em respostas 429/503 com o header numérico presente; usado
+   * pelo laço de retry no lugar do backoff calculado (ver ADR-0007).
+   */
+  retryAfterMs?: number;
 }
 
 export class WaConnectorError extends Error {
@@ -24,6 +30,7 @@ export class WaConnectorError extends Error {
   readonly code: WaErrorCode;
   readonly provider?: string;
   readonly status?: number;
+  readonly retryAfterMs?: number;
 
   constructor(code: WaErrorCode, message: string, options: WaConnectorErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
@@ -31,6 +38,7 @@ export class WaConnectorError extends Error {
     this.code = code;
     this.provider = options.provider;
     this.status = options.status;
+    this.retryAfterMs = options.retryAfterMs;
   }
 }
 

@@ -1,0 +1,11 @@
+{
+  "project": "waconector",
+  "type": "npm-package",
+  "packageManager": "npm",
+  "language": "typescript",
+  "orchestrator": {
+    "initialized": true,
+    "initializedAt": "2026-07-10",
+    "note": "F0/F1 já existiam antes deste bootstrap; ver docs/CONTEXT.md e docs/adr/ como fonte da verdade do domínio, não este arquivo."
+  }
+}

@@ -17,6 +17,16 @@ export interface WebhookInput {
   headers?: Record<string, string | string[] | undefined>;
   query?: Record<string, string | string[] | undefined>;
   body: unknown;
+  /**
+   * Corpo bruto do request (string, capturado ANTES do body-parser do framework rodar
+   * `JSON.parse`). Opcional e aditivo: existe apenas para adapters que precisam verificar uma
+   * assinatura (HMAC ou similar) calculada pelo provider sobre os bytes originais do payload.
+   * `JSON.stringify(body)` NÃO é garantidamente idêntico byte-a-byte ao request original (ordem
+   * de chaves, espaçamento, escaping podem diferir), então não serve para essa comparação — só o
+   * `rawBody` capturado pelo consumidor é confiável. Adapters/consumidores que não fazem
+   * verificação de assinatura podem ignorar este campo com segurança.
+   */
+  rawBody?: string;
 }
 
 export interface InstanceApi {

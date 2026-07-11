@@ -220,6 +220,8 @@ async function sendText(http: HttpClient, input: SendTextInput): Promise<SentMes
 }
 
 async function sendMedia(http: HttpClient, input: SendMediaInput): Promise<SentMessage> {
+  // Checagem de último recurso (o conector já valida isso) para quem instancia o adapter sem
+  // createConnector — ver CONTRIBUTING.md, seção "Convenções inegociáveis".
   // pkg/sendMessage/handler/send_handler.go (variante JSON de POST /send/media): quando
   // `data.Url` NÃO começa com "http://"/"https://", o servidor faz
   // `base64.StdEncoding.DecodeString(data.Url)` e envia via SendMediaFile — ou seja, o mesmo
