@@ -10,9 +10,9 @@ abaixo. O dossiê é a fonte de verdade do adapter; os payloads capturados viram
 | --- | --- | --- | --- |
 | WAHA | <https://waha.devlike.pro/swagger/> | self-hosted (Docker) | F1 — feito, ver [waha.md](waha.md) |
 | Evolution GO | <https://docs.evolutionfoundation.com.br/evolution-go> | self-hosted | F1 — feito, ver [evolution.md](evolution.md) |
-| uazapi | <https://docs.uazapi.com/> | SaaS/self | F2 |
-| Z-API | <https://developer.z-api.io/api-reference/introduction> | SaaS | F2 |
-| Wuzapi | <https://github.com/asternic/wuzapi/blob/main/API.md> | self-hosted | F2 |
+| uazapi | <https://docs.uazapi.com/> | SaaS/self | F2 — feito, ver [uazapi.md](uazapi.md) |
+| Z-API | <https://developer.z-api.io/api-reference/introduction> | SaaS | F2 — feito, ver [zapi.md](zapi.md) |
+| Wuzapi | <https://github.com/asternic/wuzapi/blob/main/API.md> | self-hosted | F2 — feito, ver [wuzapi.md](wuzapi.md) |
 | Whapi | <https://whapi.readme.io/> | SaaS | F3 |
 | Zapo | <https://zapo.to/en/introduction> | SaaS | F3 |
 | QuePasa | <https://docs.quepasa.ai/reference> | self-hosted | F3 |

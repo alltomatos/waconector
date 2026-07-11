@@ -1,5 +1,25 @@
 # waconector
 
+## 0.2.0
+
+### Minor Changes
+
+- 3b82fa6: Adapter **uazapi** (`waconector/uazapi`) — primeiro provider da fase F2, SaaS multi-tenant
+  (auth via header `token` de instância). Implementa `instance.connect/status/logout`,
+  `messages.sendText/sendMedia` e `webhooks.parse`, com dossiê próprio em `docs/providers/uazapi.md`
+  e testes de contrato. Ver o dossiê para suposições não validadas contra uma instância real
+  (formato exato do envelope de webhook e do campo `messageType`).
+- 672e035: Adapter **Wuzapi** (`waconector/wuzapi`) — terceiro e último provider planejado da fase F2,
+  self-hosted (construído sobre `tulir/whatsmeow`, mesma lib do Evolution GO). Implementa
+  `instance.connect/status/logout`, `messages.sendText/sendMedia` e `webhooks.parse`, com dossiê
+  próprio em `docs/providers/wuzapi.md` (pesquisado direto no código-fonte Go, com várias
+  divergências doc-vs-código documentadas) e testes de contrato.
+- 8d93b82: Adapter **Z-API** (`waconector/zapi`) — segundo provider da fase F2, SaaS brasileiro (auth via
+  `instanceId`+`token` embutidos na URL, sem `Authorization: Bearer`). Implementa
+  `instance.connect/status/logout`, `messages.sendText/sendMedia` (incluindo `sticker`) e
+  `webhooks.parse`, com dossiê próprio em `docs/providers/zapi.md` e testes de contrato. Sem
+  endpoint de criação de instância documentado (provisionamento é só via painel).
+
 ## 0.1.0
 
 ### Minor Changes
