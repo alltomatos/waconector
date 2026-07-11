@@ -150,12 +150,23 @@ Estado: **in_progress**
       groups/contacts/sendReaction — na verdade existe uma API v5 mais recente do provider, mas
       gated por sessão JWT incompatível com o token por instância). Mergeado via
       [PR #25](https://github.com/alltomatos/waconector/pull/25).
-- [ ] Adapter WPPConnect Server (self-hosted, Docker) — substitui Zapo na lista de providers-alvo
+- [x] Adapter WPPConnect Server (self-hosted, Docker) — substitui Zapo na lista de providers-alvo
       F3: Zapo (`zapo-js`) é uma biblioteca cliente Node importada diretamente, não uma API HTTP —
       incompatível com o modelo de adapter do waconector (`HttpClient`), confirmado pelo usuário.
       WPPConnect Server já trocado em `docs/providers/README.md`, `docs/CONTEXT.md`,
       `docs/adr/0009-capability-groups.md`, `package.json` (keywords) e `USAGE.md` via
-      [PR #23](https://github.com/alltomatos/waconector/pull/23).
+      [PR #23](https://github.com/alltomatos/waconector/pull/23). Dossiê e implementação: sourcing
+      limpo (docs Swagger acessíveis, repo oficial ativo — verificado antes de qualquer suposição,
+      diferente do QuePasa). Capabilities amplas: `instance.connect/status/logout`,
+      `messages.sendText/sendMedia/sendReaction`, 13 operações de `groups.*`,
+      `contacts.checkExists/block/unblock/listBlocked`, `webhooks.parse`. Auditoria adversarial
+      encontrou e corrigiu 2 bugs reais de corrupção silenciosa de dados (sem lançar exceção, só
+      perdendo o id real): `/send-message` e endpoints de mídia devolvem `response` como array de
+      um elemento, não objeto bare; `/create-group` aninha `id`/`name` em `groupInfo[0]`. Ambos
+      mascarados pelos stubs de fetch originais da suite de contrato — corrigidos com testes de
+      regressão explícitos. Mergeado via
+      [PR #26](https://github.com/alltomatos/waconector/pull/26). **Fecha os 3 adapters
+      originalmente escopados para F3 (Whapi/QuePasa/WPPConnect).**
 - [ ] Site de docs com matriz de capabilities gerada do código
 - [ ] Exemplos de bot (Express/Next), `npx waconector doctor`
 
