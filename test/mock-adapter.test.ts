@@ -161,6 +161,43 @@ describe('MockAdapter: groups', () => {
     info = await wa.groups.getInfo(group.id);
     expect(info.participants[0]?.isAdmin).toBe(false);
   });
+
+  it('updateSubject/updateDescription atualizam os campos do grupo', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({ subject: 'Time', participants: ['5585999999999'] });
+
+    await wa.groups.updateSubject({ groupId: group.id, subject: 'Time Renomeado' });
+    let info = await wa.groups.getInfo(group.id);
+    expect(info.subject).toBe('Time Renomeado');
+
+    await wa.groups.updateDescription({ groupId: group.id, description: 'Nova descrição' });
+    info = await wa.groups.getInfo(group.id);
+    expect(info.description).toBe('Nova descrição');
+  });
+
+  it('updatePicture exige instância conectada e grupo existente, mas não altera GroupInfo (MockAdapter não modela foto)', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({ subject: 'Time', participants: ['5585999999999'] });
+
+    await expect(
+      wa.groups.updatePicture({
+        groupId: group.id,
+        media: { kind: 'image', url: 'http://x/y.png' },
+      }),
+    ).resolves.toBeUndefined();
+
+    const failure = await reject(
+      wa.groups.updatePicture({
+        groupId: 'nao-existe',
+        media: { kind: 'image', url: 'http://x/y.png' },
+      }),
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
 });
 
 describe('MockAdapter: webhooks sintéticos', () => {

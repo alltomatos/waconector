@@ -69,8 +69,14 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       corrigido na revisão própria (não pela verificação adversarial): os métodos `wa.groups.*` do
       conector lançavam sincronamente em vez de rejeitar a Promise em falhas de validação.
       Mergeado via [PR #17](https://github.com/alltomatos/waconector/pull/17).
-- [ ] Capability `groups.*` — PR2 (configurações: subject/description/picture) e PR3 (convites +
-      saída: invite link/join/leave), planejados, ainda não iniciados
+- [x] Capability `groups.*` — PR2: configurações (`updateSubject`/`updateDescription`/
+      `updatePicture`) nos 5 adapters, reaproveitando o `MediaRef` de `messages.sendMedia` para
+      foto (com `media.kind` obrigatoriamente `'image'`). Cada adapter converteu para o formato
+      de imagem exigido pelo provider — nem todos aceitam o mesmo formato de `sendMedia` (ex.:
+      Evolution GO/Wuzapi exigem data-URI com prefixo explícito; Wuzapi só aceita JPEG de fato,
+      verificado por magic bytes no servidor).
+- [ ] Capability `groups.*` — PR3 (convites + saída: invite link/join/leave), planejado, ainda
+      não iniciado
 - [ ] Capability `contacts.*` (escopo grande, ainda não iniciado)
 
 ## Marcos de release (v0.x)

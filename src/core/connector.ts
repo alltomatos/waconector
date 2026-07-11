@@ -7,10 +7,14 @@ import type {
   CreateGroupInput,
   GroupInfo,
   GroupParticipantsInput,
+  MediaRef,
   SendMediaInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  UpdateGroupDescriptionInput,
+  UpdateGroupPictureInput,
+  UpdateGroupSubjectInput,
 } from './types';
 
 export type WaEventListener<T extends CanonicalEventType | '*'> = (
@@ -51,6 +55,9 @@ export interface ConnectorGroupsApi {
   removeParticipants(input: GroupParticipantsInput): Promise<void>;
   promoteParticipants(input: GroupParticipantsInput): Promise<void>;
   demoteParticipants(input: GroupParticipantsInput): Promise<void>;
+  updateSubject(input: UpdateGroupSubjectInput): Promise<void>;
+  updateDescription(input: UpdateGroupDescriptionInput): Promise<void>;
+  updatePicture(input: UpdateGroupPictureInput): Promise<void>;
 }
 
 /**
@@ -136,6 +143,18 @@ export class WaConnector {
       demoteParticipants: (input) =>
         this.callGroupsMethod('demoteParticipants', 'groups.demoteParticipants', (fn) =>
           fn(this.prepareGroupParticipants(input)),
+        ),
+      updateSubject: (input) =>
+        this.callGroupsMethod('updateSubject', 'groups.updateSubject', (fn) =>
+          fn(this.prepareUpdateGroupSubject(input)),
+        ),
+      updateDescription: (input) =>
+        this.callGroupsMethod('updateDescription', 'groups.updateDescription', (fn) =>
+          fn(this.prepareUpdateGroupDescription(input)),
+        ),
+      updatePicture: (input) =>
+        this.callGroupsMethod('updatePicture', 'groups.updatePicture', (fn) =>
+          fn(this.prepareUpdateGroupPicture(input)),
         ),
     };
 
@@ -255,6 +274,54 @@ export class WaConnector {
       groupId: this.requireGroupId(input.groupId),
       participants: this.normalizeParticipants(input.participants),
     };
+  }
+
+  private prepareUpdateGroupSubject(input: UpdateGroupSubjectInput): UpdateGroupSubjectInput {
+    if (typeof input.subject !== 'string' || input.subject.length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'groups.updateSubject exige "subject" não vazio.',
+        { provider: this.provider },
+      );
+    }
+    return { groupId: this.requireGroupId(input.groupId), subject: input.subject };
+  }
+
+  /** Descrição vazia é válida: limpa a descrição do grupo (suportado por todos os providers pesquisados). */
+  private prepareUpdateGroupDescription(
+    input: UpdateGroupDescriptionInput,
+  ): UpdateGroupDescriptionInput {
+    if (typeof input.description !== 'string') {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'groups.updateDescription exige "description" (string vazia limpa a descrição).',
+        { provider: this.provider },
+      );
+    }
+    return { groupId: this.requireGroupId(input.groupId), description: input.description };
+  }
+
+  private prepareUpdateGroupPicture(input: UpdateGroupPictureInput): UpdateGroupPictureInput {
+    const media = this.requireImageMedia(input.media);
+    return { groupId: this.requireGroupId(input.groupId), media };
+  }
+
+  private requireImageMedia(media: MediaRef): MediaRef {
+    if (media?.kind !== 'image') {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'groups.updatePicture exige "media.kind" igual a "image".',
+        { provider: this.provider },
+      );
+    }
+    if (media.url === undefined && media.base64 === undefined) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'groups.updatePicture exige "media.url" ou "media.base64".',
+        { provider: this.provider },
+      );
+    }
+    return media;
   }
 
   private normalizeParticipants(participants: unknown): string[] {

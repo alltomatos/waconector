@@ -114,6 +114,20 @@ export class MockAdapter implements WaAdapter {
         this.assertConnected();
         this.setAdminFlag(groupId, participants, false);
       },
+      updateSubject: async ({ groupId, subject }) => {
+        this.assertConnected();
+        const group = this.requireGroup(groupId);
+        this.groupsById.set(groupId, { ...group, subject });
+      },
+      updateDescription: async ({ groupId, description }) => {
+        this.assertConnected();
+        const group = this.requireGroup(groupId);
+        this.groupsById.set(groupId, { ...group, description });
+      },
+      updatePicture: async ({ groupId }) => {
+        this.assertConnected();
+        this.requireGroup(groupId);
+      },
     };
   }
 

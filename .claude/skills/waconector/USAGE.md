@@ -57,6 +57,17 @@ if (wa.supports('groups.create')) {
   await wa.groups.addParticipants({ groupId: group.id, participants: ['5585988888888'] });
   await wa.groups.promoteParticipants({ groupId: group.id, participants: ['5585988888888'] });
 }
+
+// Opcional (ADR-0009) — configurações de grupo. description vazia limpa a descrição;
+// updatePicture exige media.kind === 'image'.
+if (wa.supports('groups.updateSubject')) {
+  await wa.groups.updateSubject({ groupId: 'grupo-1', subject: 'Novo nome' });
+  await wa.groups.updateDescription({ groupId: 'grupo-1', description: 'Nova descrição' });
+  await wa.groups.updatePicture({
+    groupId: 'grupo-1',
+    media: { kind: 'image', url: 'https://...' },
+  });
+}
 ```
 
 **3. Receber, em qualquer framework HTTP**

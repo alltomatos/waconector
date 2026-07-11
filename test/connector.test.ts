@@ -50,6 +50,22 @@ describe('capabilities no conector', () => {
       wa.groups.addParticipants({ groupId: 'grupo-1', participants: ['5585999999999'] }),
     );
     expect(addFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const updateSubjectFailure = await reject(
+      wa.groups.updateSubject({ groupId: 'grupo-1', subject: 'Novo nome' }),
+    );
+    expect(updateSubjectFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const updateDescriptionFailure = await reject(
+      wa.groups.updateDescription({ groupId: 'grupo-1', description: 'nova descrição' }),
+    );
+    expect(updateDescriptionFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const updatePictureFailure = await reject(
+      wa.groups.updatePicture({
+        groupId: 'grupo-1',
+        media: { kind: 'image', url: 'http://x/y.png' },
+      }),
+    );
+    expect(updatePictureFailure).toBeInstanceOf(UnsupportedCapabilityError);
   });
 
   it('adapter que declara messages.sendReaction sem implementar o método falha com PROVIDER_ERROR (bug do adapter, não entrada inválida)', async () => {
@@ -95,6 +111,39 @@ describe('validação e normalização de groups.*', () => {
     adapter.simulateConnected();
     const wa = createConnector(adapter);
     const failure = await reject(wa.groups.create({ subject: 'Grupo', participants: [] }));
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('rejeita subject vazio em groups.updateSubject com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({ subject: 'Time', participants: ['5585999999999'] });
+    const failure = await reject(wa.groups.updateSubject({ groupId: group.id, subject: '' }));
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('aceita description vazia em groups.updateDescription (limpa a descrição do grupo)', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({ subject: 'Time', participants: ['5585999999999'] });
+    await wa.groups.updateDescription({ groupId: group.id, description: '' });
+    const info = await wa.groups.getInfo(group.id);
+    expect(info.description).toBe('');
+  });
+
+  it('rejeita media.kind diferente de "image" em groups.updatePicture com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({ subject: 'Time', participants: ['5585999999999'] });
+    const failure = await reject(
+      wa.groups.updatePicture({
+        groupId: group.id,
+        media: { kind: 'video', url: 'http://x/y.mp4' },
+      }),
+    );
     expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
   });
 

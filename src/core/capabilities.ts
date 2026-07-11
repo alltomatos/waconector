@@ -21,6 +21,9 @@ export const CAPABILITIES = [
   'groups.removeParticipants',
   'groups.promoteParticipants',
   'groups.demoteParticipants',
+  'groups.updateSubject',
+  'groups.updateDescription',
+  'groups.updatePicture',
   'webhooks.parse',
 ] as const;
 

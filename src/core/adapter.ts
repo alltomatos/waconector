@@ -10,6 +10,9 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  UpdateGroupDescriptionInput,
+  UpdateGroupPictureInput,
+  UpdateGroupSubjectInput,
 } from './types';
 
 /**
@@ -62,6 +65,9 @@ export interface GroupsApi {
   removeParticipants?(input: GroupParticipantsInput): Promise<void>;
   promoteParticipants?(input: GroupParticipantsInput): Promise<void>;
   demoteParticipants?(input: GroupParticipantsInput): Promise<void>;
+  updateSubject?(input: UpdateGroupSubjectInput): Promise<void>;
+  updateDescription?(input: UpdateGroupDescriptionInput): Promise<void>;
+  updatePicture?(input: UpdateGroupPictureInput): Promise<void>;
 }
 
 /**

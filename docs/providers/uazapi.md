@@ -121,7 +121,8 @@ aceita JID) — o adapter extrai os dígitos de qualquer entrada em formato JID 
 
 Capabilities implementadas nesta fase: `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
-`groups.demoteParticipants` (ver ADR-0009). As 4 operações de participante colapsam num único
+`groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
+`groups.updatePicture` (ver ADR-0009). As 4 operações de participante colapsam num único
 endpoint do provider — ver tabela abaixo.
 
 | Operação canônica | Endpoint | Observações |
@@ -130,6 +131,9 @@ endpoint do provider — ver tabela abaixo.
 | `groups.getInfo` | `POST /group/info` | Body `{ groupjid }`. Resposta = schema `Group` verbatim na doc: `{ JID, Name, Topic (descrição), OwnerJID`/`OwnerPN (dono), GroupCreated, Participants: [{ JID, IsAdmin, IsSuperAdmin }] }`. |
 | `groups.list` | `GET /group/list` | Sem body; query params `force`/`noparticipants` são opcionais e omitidos por este adapter (`GroupsApi.list()` não recebe parâmetros). Resposta: `{ groups: Group[] }` — mesmo shape de `getGroupInfo`, um item por grupo. |
 | `groups.addParticipants` / `groups.removeParticipants` / `groups.promoteParticipants` / `groups.demoteParticipants` | `POST /group/updateParticipants` | **As 4 operações são o MESMO endpoint**, discriminado pelo campo `action: "add"\|"remove"\|"promote"\|"demote"`. Body `{ groupjid, action, participants }`. Diferente de `/group/create`, aqui `participants` aceita telefone OU JID — reaproveita `toUazapiNumber` (identidade), a mesma função usada para o `to` de mensagens. Resposta (`{ groupUpdated: [{JID, Error}], group, needs_refresh }`) é ignorada: o contrato exige apenas `Promise<void>`. |
+| `groups.updateSubject` | `POST /group/updateName` | Body `{ groupjid, name }` — `name` recebe `UpdateGroupSubjectInput.subject` sem transformação. Limite documentado pelo próprio WhatsApp (1-25 caracteres), **não validado por este adapter** (nem pelo conector — ver `prepareUpdateGroupSubject` em `src/core/connector.ts`, que só exige não-vazio). Resposta (`{ response: "Group name updated successfully", group, needs_refresh }`) é ignorada: `Promise<void>`. |
+| `groups.updateDescription` | `POST /group/updateDescription` | Body `{ groupjid, description }` — `description` vazia é permitida e limpa a descrição do grupo (caso válido, não erro; o conector só rejeita valores que não sejam string). Limite documentado de 512 caracteres, **não validado por este adapter**. Resposta (`{ response: "Group description updated successfully", group, needs_refresh }`) ignorada: `Promise<void>`. |
+| `groups.updatePicture` | `POST /group/updateImage` | Body `{ groupjid, image }`. `image` aceita URL, uma data-URI base64, ou os literais `"remove"`/`"delete"` para apagar a foto (não usados por esta capability, que só cobre "definir"). Construído a partir de `MediaRef` via `toUazapiGroupImage`: `media.url` tem prioridade quando presente; sem `url`, monta `data:<mimeType>;base64,<base64>` com `mimeType` default `image/jpeg` quando `MediaRef.mimeType` está ausente. Requisito do próprio WhatsApp (não imposto pelo adapter): formato JPEG, resolução máxima 640x640. Resposta (`{ response, group, needs_refresh }`) ignorada: `Promise<void>`. |
 
 ### `groupId` opaco e mapeamento de participantes
 
@@ -172,6 +176,27 @@ confirmado para `POST /group/create`), o adapter cai de volta para os IDs de ent
 como inferir status de admin de uma lista de participantes recém-convidados sem a resposta do
 provider). **A confirmar contra uma instância real** — mesmo aviso de confiança já registrado para
 `mapSentMessage` no restante deste dossiê.
+
+### `updateSubject`/`updateDescription`/`updatePicture` — assunções não validadas
+
+As três rotas (`/group/updateName`, `/group/updateDescription`, `/group/updateImage`) foram
+pesquisadas na documentação/OpenAPI, mas **nenhuma foi exercitada contra uma instância uazapi
+real** neste dossiê — mesma ressalva já registrada para `groups.create`/`sendText`/`sendMedia`
+neste documento. Pontos específicos a validar:
+
+- O nome exato do campo de resposta (`response`) e se `group`/`needs_refresh` realmente vêm
+  populados nos três casos — o adapter ignora a resposta por completo (`Promise<void>`), então um
+  formato de resposta diferente do documentado não quebraria nada em runtime, mas também não foi
+  confirmado.
+- Se `POST /group/updateImage` de fato aceita uma data-URI (`data:image/jpeg;base64,...`) no campo
+  `image`, ou se espera só o base64 cru sem prefixo — a doc não mostra um exemplo de request
+  literal para o caso de definir uma nova foto (só o comportamento de `"remove"`/`"delete"` está
+  documentado com clareza). **Assunção do adapter**: data-URI com prefixo, por analogia com o
+  padrão de outros providers que aceitam esse formato. Se a instância real rejeitar, o fallback é
+  enviar `media.base64` cru (sem prefixo) — mudança pontual em `toUazapiGroupImage`.
+- Se `POST /group/updateName` de fato trunca/rejeita nomes fora do intervalo 1-25 caracteres, e
+  qual `code`/mensagem de erro devolve nesse caso (o adapter não valida o tamanho, delega ao
+  provider — um 4xx do provider vira `PROVIDER_ERROR` via `HttpClient`, não `INVALID_INPUT`).
 
 ## Webhooks
 

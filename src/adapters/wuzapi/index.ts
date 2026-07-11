@@ -30,6 +30,9 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  UpdateGroupDescriptionInput,
+  UpdateGroupPictureInput,
+  UpdateGroupSubjectInput,
   WaMessage,
 } from '../../core/types';
 
@@ -91,6 +94,9 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'groups.removeParticipants',
   'groups.promoteParticipants',
   'groups.demoteParticipants',
+  'groups.updateSubject',
+  'groups.updateDescription',
+  'groups.updatePicture',
   'webhooks.parse',
 ];
 
@@ -127,6 +133,9 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     removeParticipants: (input) => updateGroupParticipants(http, input, 'remove'),
     promoteParticipants: (input) => updateGroupParticipants(http, input, 'promote'),
     demoteParticipants: (input) => updateGroupParticipants(http, input, 'demote'),
+    updateSubject: (input) => updateGroupSubject(http, input),
+    updateDescription: (input) => updateGroupDescription(http, input),
+    updatePicture: (input) => updateGroupPicture(http, input),
   };
 
   return {
@@ -458,6 +467,99 @@ async function updateGroupParticipants(
     path: '/group/updateparticipants',
     body: { GroupJID: input.groupId, Phone: phones, Action: action },
   });
+}
+
+/**
+ * `POST /group/name` — confirmado no código-fonte. Body `{GroupJID, Name}`. `GroupJID` é
+ * repassado intacto (opaco, mesmo tratamento de `updateGroupParticipants`/`getGroupInfo`);
+ * `subject` (já validado não-vazio pelo conector) vai direto em `Name`. Resposta: `{Details:
+ * "Group Name set successfully"}` — sem detalhe adicional, por isso `Promise<void>` (resposta
+ * apenas descartada, mesmo padrão de `updateGroupParticipants`).
+ */
+async function updateGroupSubject(http: HttpClient, input: UpdateGroupSubjectInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/name',
+    body: { GroupJID: input.groupId, Name: input.subject },
+  });
+}
+
+/**
+ * `POST /group/topic` — confirmado no código-fonte. Body `{GroupJID, Topic}`. `Topic` vazio é
+ * permitido pelo servidor (limpa a descrição do grupo — internamente o provider passa
+ * previousID/newID vazios ao whatsmeow); o conector já valida que `description` é uma string
+ * (vazia ou não) antes de chamar o adapter, então nenhuma validação adicional é feita aqui.
+ * Resposta: `{Details: "Group Topic set successfully"}` — `Promise<void>`, mesmo padrão de
+ * `updateGroupSubject`.
+ */
+async function updateGroupDescription(
+  http: HttpClient,
+  input: UpdateGroupDescriptionInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/topic',
+    body: { GroupJID: input.groupId, Topic: input.description },
+  });
+}
+
+/**
+ * `POST /group/photo` — confirmado no código-fonte. Body `{GroupJID, Image}`. `GroupJID` é
+ * repassado intacto (opaco).
+ *
+ * **`Image` só aceita JPEG de fato**: o handler do servidor confere tanto o prefixo
+ * `"data:image/"` quanto os magic bytes reais (`0xFF 0xD8 0xFF`) e rejeita com 400 qualquer outro
+ * formato — apesar de uma mensagem de erro (não relacionada a esse check específico) sugerir que
+ * png/gif/webp também seriam aceitos, o que é enganoso (confirmado lendo o código-fonte, não
+ * apenas a prosa da mensagem de erro). Ver `toWuzapiGroupPhoto` e docs/providers/wuzapi.md.
+ *
+ * Resposta: `{Details: "Group Photo set successfully", PictureID}` — `PictureID` é ignorado
+ * (contrato retorna `Promise<void>`, mesmo padrão das demais operações de grupo sem retorno).
+ */
+async function updateGroupPicture(http: HttpClient, input: UpdateGroupPictureInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/photo',
+    body: { GroupJID: input.groupId, Image: toWuzapiGroupPhoto(input.media) },
+  });
+}
+
+/**
+ * Constrói o valor do campo `Image` de `POST /group/photo`. Diferente de `resolveMediaValue`
+ * (usado por `messages.sendMedia`, que aceita qualquer `MediaKind`/formato), este endpoint só
+ * aceita JPEG de fato — o conector já garante `media.kind === 'image'` e `media.url`/`media.base64`
+ * (`requireImageMedia`), mas não força o formato real dos bytes.
+ *
+ * - Se `media.base64` está presente: monta a data URI **forçando** `image/jpeg`
+ *   (`data:image/jpeg;base64,<...>`), independente de `media.mimeType` — assume/força que o
+ *   chamador forneça bytes JPEG, já que é a única coisa que o servidor aceita de fato (assunção
+ *   documentada em docs/providers/wuzapi.md). Se `media.base64` já vier como data URI (qualquer
+ *   mimetype), extrai só a porção base64 após a vírgula antes de remontar com o prefixo forçado —
+ *   evita produzir uma data URI com dois cabeçalhos concatenados.
+ * - Se só `media.url` está presente (sem `media.base64`): repassada como está, sem conversão — o
+ *   projeto não baixa/reencoda mídia (ADR-0004, zero dependências de runtime). **Não há
+ *   confirmação, na pesquisa original, de que este endpoint aceite uma URL `http(s)` crua**
+ *   (diferente de `messages.sendMedia`, que confirma isso) — assunção não validada contra
+ *   instância real, documentada em docs/providers/wuzapi.md.
+ */
+function toWuzapiGroupPhoto(media: MediaRef): string {
+  if (media.base64) {
+    const commaIndex = media.base64.indexOf(',');
+    const raw =
+      media.base64.startsWith('data:') && commaIndex >= 0
+        ? media.base64.slice(commaIndex + 1)
+        : media.base64;
+    return `data:image/jpeg;base64,${raw}`;
+  }
+  if (media.url) return media.url;
+  // Defensivo: o conector já garante media.url ou media.base64 presente (`requireImageMedia`)
+  // antes de chegar aqui — mesmo padrão de `resolveMediaValue` (sendMedia), que também lança em
+  // vez de silenciosamente aceitar um valor vazio.
+  throw new WaConnectorError(
+    'INVALID_INPUT',
+    'Wuzapi: groups.updatePicture exige "media.url" ou "media.base64".',
+    { provider: PROVIDER },
+  );
 }
 
 interface GroupInfoFallback {

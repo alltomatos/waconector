@@ -72,7 +72,8 @@ presa permanentemente a um número). Não há conceito de "sessão" separado do 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
 `messages.sendMedia`, `messages.sendReaction`, `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
-`groups.demoteParticipants`, `webhooks.parse`.
+`groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
+`groups.updatePicture`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada: embora a Z-API suporte pareamento por código
 (`GET /phone-code/{phone}`), `InstanceApi.connect()` não recebe telefone como parâmetro nesta
@@ -182,6 +183,17 @@ comportam como um `to` de mensagem comum — por isso reaproveitam `toZapiPhone`
 | `groups.removeParticipants` | `POST /remove-participant` | Singular, mesmo desvio de nome. Body `{ groupId, phones }` (sem `autoInvite`, que não se aplica a remoção). |
 | `groups.promoteParticipants` | `POST /add-admin` | Nome do endpoint **não** é `/promote-participant(s)` — desvio de nome confirmado na pesquisa. Body `{ groupId, phones }`. |
 | `groups.demoteParticipants` | `POST /remove-admin` | Nome do endpoint **não** é `/demote-participant(s)` — desvio de nome confirmado na pesquisa. Body `{ groupId, phones }`. |
+| `groups.updateSubject` | `POST /update-group-name` | Body `{ groupId, groupName }` — `subject` de entrada (já validado não-vazio pelo conector) mapeado para `groupName` (nome de campo **não** é `subject`/`groupSubject`, desvio confirmado na pesquisa). `groupId` no **corpo**, verbatim. Resposta `{ value: true }` — `void`. |
+| `groups.updateDescription` | `POST /update-group-description` | Body `{ groupId, groupDescription }` — `description` mapeado para `groupDescription` (não `description`). String vazia é aceita e limpa a descrição do grupo (comportamento assumido pela pesquisa como suportado por todos os providers do pacote; não testado contra uma instância Z-API real). Resposta `{ value: true }` — `void`. |
+| `groups.updatePicture` | `POST /update-group-photo` | Body `{ groupId, groupPhoto }` — `groupPhoto` reaproveita `resolveMediaValue` (mesma função usada por `messages.sendMedia`): aceita `media.url` diretamente ou monta uma data URI `data:<mime>;base64,...` a partir de `media.base64` (usando `media.mimeType` ou o mimetype-padrão de imagem quando ausente). `media.kind === 'image'` já é garantido pelo conector antes de chegar ao adapter. Resposta `{ value: true }` — `void`. |
+
+**Assunção não validada contra uma instância real (as três operações acima)**: rotas, nomes de
+campo (`groupName`/`groupDescription`/`groupPhoto`) e shape de resposta (`{ value: true }`) vêm da
+pesquisa da documentação oficial da Z-API para esta adição — nenhuma chamada real foi feita contra
+`api.z-api.io/.../update-group-*` durante o levantamento (sem credenciais). Em particular, não foi
+confirmado se `groupPhoto` aceita OS DOIS formatos (URL e data URI base64) com a mesma flexibilidade
+documentada para os campos de mídia de `send-image`/`send-video`/etc., nem se a Z-API teria alguma
+exigência adicional (dimensão, proporção, tamanho máximo) para a foto de grupo.
 
 ### Limitações e assunções não confirmadas contra uma instância real
 

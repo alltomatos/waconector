@@ -150,3 +150,23 @@ export interface GroupParticipantsInput {
   /** Telefones E.164 (com ou sem `+`/pontuação) ou JIDs explícitos dos participantes-alvo. */
   participants: string[];
 }
+
+export interface UpdateGroupSubjectInput {
+  /** ID opaco do grupo — ver `GroupInfo.id`. */
+  groupId: string;
+  subject: string;
+}
+
+export interface UpdateGroupDescriptionInput {
+  /** ID opaco do grupo — ver `GroupInfo.id`. */
+  groupId: string;
+  /** String vazia limpa a descrição do grupo (suportado por todos os providers pesquisados). */
+  description: string;
+}
+
+export interface UpdateGroupPictureInput {
+  /** ID opaco do grupo — ver `GroupInfo.id`. */
+  groupId: string;
+  /** `media.kind` deve ser `'image'` — grupos só aceitam foto, não vídeo/áudio/documento/figurinha. */
+  media: MediaRef;
+}

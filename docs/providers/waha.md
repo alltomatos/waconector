@@ -88,6 +88,10 @@ As 7 capabilities de `GroupsApi` (`groups.create`, `groups.getInfo`, `groups.lis
 (ADR-0009 — núcleo + participantes de grupo entraram no core nesta fase; ver `docs/CONTEXT.md`).
 Suportado: ver seção "Grupos (núcleo)" abaixo.
 
+Mais 3 capabilities de configuração de grupo (`groups.updateSubject`, `groups.updateDescription`,
+`groups.updatePicture`) foram adicionadas num retrofit posterior. Suportado: ver seção "Grupos:
+configuração (updateSubject/updateDescription/updatePicture)" abaixo.
+
 ## Operações core
 
 | Operação canônica | Endpoint | Observações |
@@ -187,6 +191,36 @@ formato nativo de grupo é um JID **`<dígitos>@g.us`** — o mesmo domínio `@g
 (`toWahaGroupId`), não `toWahaChatId`: `toWahaChatId` assume `@c.us` como domínio padrão para
 entradas sem `@`, o que produziria `<dígitos>@c.us` (incorreto) para um grupo. `toWahaGroupId`
 passa a entrada intacta se já tiver `@`, senão acrescenta `@g.us`.
+
+## Grupos: configuração (`updateSubject`/`updateDescription`/`updatePicture`)
+
+3 operações opcionais de `GroupsApi` que alteram metadados de um grupo já existente. Diferente das
+7 operações de "Grupos (núcleo)" acima, a pesquisa para estas 3 não foi validada contra uma
+instância WAHA real — baseada só no `openapi.json` oficial (tag "📁 Groups"). Todas as 3 retornam
+`Promise<void>`: o adapter dispara a chamada HTTP e não processa a resposta.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `groups.updateSubject` | `PUT /api/{session}/groups/{id}/subject` | Body: `{ subject }`. Resposta **sem schema declarado** na doc oficial (mesmo gap já visto em `groups.create`) — não processada. |
+| `groups.updateDescription` | `PUT /api/{session}/groups/{id}/description` | Body: `{ description }`. Mesma observação de resposta sem schema. `description: ''` é um caso válido (limpa a descrição do grupo) — já validado pelo conector (`UpdateGroupDescriptionInput.description` aceita string vazia), o adapter apenas repassa. |
+| `groups.updatePicture` | `PUT /api/{session}/groups/{id}/picture` | Body: `ProfilePictureRequest = { file }`, onde `file` é um `RemoteFile { mimetype, filename?, url }` ou `BinaryFile { mimetype, filename?, data (base64) }` — o mesmo shape de `file` já usado por `messages.sendMedia` (`buildWahaFile`), reaproveitado com um mimetype-padrão diferente: `'image/jpeg'` em vez de `'application/octet-stream'`, já que grupos só aceitam foto (`UpdateGroupPictureInput.media.kind` é sempre `'image'`, garantido pelo conector). Resposta documentada como `Result = { success: boolean }` — **ignorada de propósito**: o contrato retorna `void` e a doc não deixa claro o que fazer quando `success: false`; tratado como sucesso silencioso, mesmo padrão de "pode retornar `false` silenciosamente" já observado em `updateSubject`/`updateDescription` (nenhum dos dois declara um campo de sucesso/erro no schema de resposta). |
+
+`{id}` no path segue exatamente o mesmo mapeamento de `groupId` já usado pelas 7 operações núcleo
+(`toWahaGroupId`, ver seção "Mapeamento de `groupId`" acima) — nenhuma conversão nova foi
+introduzida. O path é montado pela mesma função auxiliar já usada por
+`addParticipants`/`removeParticipants`/`promoteParticipants`/`demoteParticipants`
+(`groupParticipantsPath`, que apesar do nome é genérica o bastante para qualquer suffix sob
+`/groups/{id}/`).
+
+**Não confirmado nesta pesquisa** (a validar contra uma instância WAHA real):
+
+- Se `PUT .../subject`/`PUT .../description` exigem que o bot seja admin do grupo (comportamento
+  esperado do WhatsApp, mas não documentado explicitamente pelo WAHA).
+- O shape exato da resposta de sucesso de `subject`/`description` (a doc não declara schema) — o
+  adapter assume que qualquer `2xx` sem corpo relevante é sucesso, na falta de informação melhor.
+- Se há um limite de tamanho de imagem para `updatePicture` (o WhatsApp historicamente exige
+  imagens quadradas/recortadas; o adapter não faz nenhuma validação ou transformação de imagem,
+  apenas repassa `media` como veio).
 
 ### Mapeamento de participantes
 

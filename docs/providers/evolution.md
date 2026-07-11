@@ -82,6 +82,9 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 | `groups.getInfo` | `POST /group/info` | Ver seção "Grupos (núcleo)" abaixo. |
 | `groups.list` | `GET /group/list` | Ver seção "Grupos (núcleo)" abaixo. |
 | `groups.addParticipants` / `groups.removeParticipants` / `groups.promoteParticipants` / `groups.demoteParticipants` | `POST /group/participant` | Mesmo endpoint para as 4 operações; só o campo `action` muda. Ver seção "Grupos (núcleo)" abaixo. |
+| `groups.updateSubject` | `POST /group/name` | Ver seção "Grupos (núcleo)" abaixo. |
+| `groups.updateDescription` | `POST /group/description` | Ver seção "Grupos (núcleo)" abaixo. |
+| `groups.updatePicture` | `POST /group/photo` | Ver seção "Grupos (núcleo)" abaixo. |
 
 ## Reações
 
@@ -118,9 +121,10 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 
 ## Grupos (núcleo)
 
-As 7 operações de `groups.*` (ver ADR-0009) são suportadas por este adapter. **Nenhuma das 4
-operações de participantes (`add`/`remove`/`promote`/`demote`) nem `POST /group/create` aparece
-na documentação oficial do site (`docs.evolutionfoundation.com.br`)** — foram confirmadas apenas
+As 10 operações de `groups.*` (ver ADR-0009) são suportadas por este adapter. **Nenhuma das 4
+operações de participantes (`add`/`remove`/`promote`/`demote`), nem `POST /group/create`, nem as 3
+operações de configuração (`updateSubject`/`updateDescription`/`updatePicture`) aparecem na
+documentação oficial do site (`docs.evolutionfoundation.com.br`)** — foram confirmadas apenas
 lendo o código-fonte Go (`pkg/group/handler` + `pkg/group/service`). `getGroupInfo`/`listGroups`
 seguem o mesmo padrão de já-verificado-no-código usado no resto deste dossiê. Tratamos como alta
 confiança mesmo assim (fonte primária: o código do provider), mas sem uma captura "ao vivo" —
@@ -176,6 +180,39 @@ diferente das fixtures de webhook de mensagem/ack/conexão, copiadas literalment
   informação internamente; não é uma limitação deste adapter). As 4 operações canônicas retornam
   `Promise<void>` (não precisam devolver o grupo atualizado), então o adapter só dispara a chamada
   e não extrai nada da resposta além de deixar o `HttpClient` lançar em caso de erro HTTP.
+
+### `groups.updateSubject` — `POST /group/name`
+
+- Corpo: `{groupJid: string, name: string}` (`SetGroupNameStruct`). **Atenção de nomenclatura**: o
+  campo é `name`, não `subject` — o adapter traduz `UpdateGroupSubjectInput.subject` → `name`.
+  `groupJid` segue a mesma conversão opaca de `toProviderGroupJid` usada pelo resto de `groups.*`.
+- Resposta: `{"message":"success"}`, sem `data`. A operação canônica retorna `Promise<void>`,
+  então o adapter só dispara a chamada.
+
+### `groups.updateDescription` — `POST /group/description`
+
+- Corpo: `{groupJid: string, description: string}`. `description` **pode ser string vazia** para
+  limpar a descrição do grupo — o handler permite isso explicitamente, sem validação de tamanho
+  mínimo no servidor (e o conector também trata string vazia como entrada válida, não erro — ver
+  `WaConnector.prepareUpdateGroupDescription`).
+- Resposta: `{"message":"success"}`, sem `data`. `Promise<void>`, mesmo padrão de
+  `updateSubject`.
+
+### `groups.updatePicture` — `POST /group/photo`
+
+- Corpo: `{groupJid: string, image: string}`. **Divergência importante de formato** em relação a
+  `messages.sendMedia`/`POST /send/media` (que aceita base64 **cru**, sem prefixo, no campo
+  `url` — ver seção `messages.sendMedia` acima): o campo `image` deste endpoint só reconhece OU uma
+  URL `http(s)://...` OU uma **data-URI com prefixo exato** `data:image/jpeg;base64,` ou
+  `data:image/png;base64,`. Base64 cru sem esse prefixo não é aceito aqui. O adapter
+  (`toGroupPictureImage`) repassa `media.url` diretamente quando presente; caso contrário monta a
+  data-URI a partir de `media.base64`, escolhendo o prefixo por `media.mimeType`
+  (`image/png` → prefixo PNG; qualquer outro valor, incluindo ausente/`image/jpeg`, → prefixo
+  JPEG). **Suposição não validada contra uma instância real**: o default para JPEG quando
+  `mimeType` está ausente ou não é reconhecido; se o servidor rejeitar um base64 que na verdade não
+  é JPEG com esse prefixo, isso é uma limitação conhecida deste adapter a revisar.
+- Resposta: `{"message":"success","data":"<novo pictureID string>"}` — o `pictureID` retornado é
+  ignorado (a operação canônica `groups.updatePicture` retorna `Promise<void>`).
 
 ## Webhooks
 
