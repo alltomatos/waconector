@@ -119,6 +119,30 @@ function createFetchStub(): typeof globalThis.fetch {
       ]);
     }
 
+    if (method === 'GET' && pathname === `/api/${SESSION}/groups/${GROUP_ID_ENCODED}/invite-code`) {
+      // Resposta real (openapi.json): STRING PURA (schema type: string), o código bare.
+      return jsonResponse(200, 'ABCDEFGHIJKLMNOPQRSTUV');
+    }
+
+    // Checado ANTES do catch-all genérico de POST abaixo (que também bate em
+    // `/api/{session}/groups/{id}/...`) — senão invite-code/revoke e leave nunca seriam alcançados.
+    if (
+      method === 'POST' &&
+      pathname === `/api/${SESSION}/groups/${GROUP_ID_ENCODED}/invite-code/revoke`
+    ) {
+      // Mesmo shape de resposta de invite-code: string pura, o novo código bare.
+      return jsonResponse(200, 'ZYXWVUTSRQPONMLKJIHGFE');
+    }
+
+    if (method === 'POST' && pathname === `/api/${SESSION}/groups/join`) {
+      // Resposta confirmada: { id } (id do grupo ingressado) — ignorada, contrato retorna void.
+      return jsonResponse(200, { id: GROUP_ID });
+    }
+
+    if (method === 'POST' && pathname === `/api/${SESSION}/groups/${GROUP_ID_ENCODED}/leave`) {
+      return new Response(null, { status: 204 });
+    }
+
     if (method === 'POST' && pathname.startsWith(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/`)) {
       // addParticipants/removeParticipants/promoteParticipants/demoteParticipants: contrato
       // devolve Promise<void>, resposta stub genérica basta.
@@ -549,6 +573,124 @@ describe('WAHA adapter: comportamento específico do provider', () => {
     expect(calls[0]?.body).toEqual({
       file: { mimetype: 'image/jpeg', filename: undefined, data: 'ZmFrZS1pbWFnZS1ieXRlcw==' },
     });
+  });
+
+  it('groups.getInviteLink chama GET .../invite-code e monta o link completo a partir do código bare devolvido', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const invite = await wa.groups.getInviteLink(GROUP_ID);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('GET');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/invite-code`);
+
+    // O provider devolve só o código bare ("ABCDEFGHIJKLMNOPQRSTUV") -> o adapter monta o link
+    // completo (GroupInviteLink.link é sempre https://chat.whatsapp.com/<código>, ver ADR-0009).
+    expect(invite.link).toBe('https://chat.whatsapp.com/ABCDEFGHIJKLMNOPQRSTUV');
+    expect(invite).toHaveProperty('raw');
+  });
+
+  it('groups.revokeInviteLink chama POST .../invite-code/revoke e monta o link completo a partir do novo código bare', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const invite = await wa.groups.revokeInviteLink(GROUP_ID);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/invite-code/revoke`);
+    expect(invite.link).toBe('https://chat.whatsapp.com/ZYXWVUTSRQPONMLKJIHGFE');
+    expect(invite).toHaveProperty('raw');
+  });
+
+  it('groups.joinViaInviteLink envia { code } para POST /api/{session}/groups/join com o LINK COMPLETO (conector já normaliza "invite")', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    // Entrada como CÓDIGO BARE — o conector normaliza para o link completo antes de o adapter
+    // receber (WaConnector.prepareJoinViaInviteLink), e o adapter WAHA repassa o valor recebido
+    // direto em "code" (a doc aceita ambos os formatos, então não usa extractInviteCode aqui).
+    await expect(
+      wa.groups.joinViaInviteLink({ invite: 'ABCDEFGHIJKLMNOPQRSTUV' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.method).toBe('POST');
+    expect(call?.path).toBe(`/api/${SESSION}/groups/join`);
+    expect(call?.body).toEqual({
+      code: 'https://chat.whatsapp.com/ABCDEFGHIJKLMNOPQRSTUV',
+    });
+  });
+
+  it('groups.joinViaInviteLink com o link completo como entrada repassa o mesmo link (idempotente)', async () => {
+    const calls: Array<{ body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          calls.push({ body: init?.body ? JSON.parse(String(init.body)) : undefined });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.joinViaInviteLink({
+      invite: 'https://chat.whatsapp.com/ABCDEFGHIJKLMNOPQRSTUV',
+    });
+
+    expect(calls).toHaveLength(1);
+    expect((calls[0]?.body as Record<string, unknown> | undefined)?.code).toBe(
+      'https://chat.whatsapp.com/ABCDEFGHIJKLMNOPQRSTUV',
+    );
+  });
+
+  it('groups.leaveGroup chama POST /api/{session}/groups/{id}/leave sem lançar', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.groups.leaveGroup(GROUP_ID)).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/leave`);
   });
 
   it('parseWebhook normaliza "message.ack" do dossiê para MessageAckEvent', () => {

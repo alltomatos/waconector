@@ -163,6 +163,33 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { value: true });
     }
 
+    if (
+      method === 'GET' &&
+      pathname === `${PREFIX}/group-invitation-link/120363019502650977-group`
+    ) {
+      return jsonResponse(200, {
+        phone: '120363019502650977-group',
+        invitationLink: 'https://chat.whatsapp.com/fake-invite-code',
+      });
+    }
+
+    if (
+      method === 'POST' &&
+      pathname === `${PREFIX}/redefine-invitation-link/120363019502650977-group`
+    ) {
+      return jsonResponse(200, {
+        invitationLink: 'https://chat.whatsapp.com/fake-new-invite-code',
+      });
+    }
+
+    if (method === 'GET' && pathname === `${PREFIX}/accept-invite-group`) {
+      return jsonResponse(200, { success: true });
+    }
+
+    if (method === 'POST' && pathname === `${PREFIX}/leave-group`) {
+      return jsonResponse(200, { value: true });
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -994,5 +1021,142 @@ describe('zapi adapter: comportamento específico do provider', () => {
     });
 
     expect(capturedBody?.groupPhoto).toBe('data:image/png;base64,ZmFrZS1mb3RvLWdydXBv');
+  });
+
+  it('groups.getInviteLink chama GET .../group-invitation-link/{groupId} e devolve o link completo do campo "invitationLink"', async () => {
+    let requestedPath: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/group-invitation-link/120363019502650977-group`) {
+            requestedPath = url.pathname;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.getInviteLink('120363019502650977-group');
+
+    expect(requestedPath).toBe(`${PREFIX}/group-invitation-link/120363019502650977-group`);
+    expect(result.link).toBe('https://chat.whatsapp.com/fake-invite-code');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('groups.getInviteLink monta o link completo com normalizeInviteLink quando o provider devolve só o código bare', async () => {
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/group-invitation-link/120363019502650977-group`) {
+            return jsonResponse(200, {
+              phone: '120363019502650977-group',
+              invitationLink: 'apenas-o-codigo-bare',
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.getInviteLink('120363019502650977-group');
+
+    expect(result.link).toBe('https://chat.whatsapp.com/apenas-o-codigo-bare');
+  });
+
+  it('groups.revokeInviteLink chama POST .../redefine-invitation-link/{groupId} sem corpo e devolve o novo link completo', async () => {
+    let requestedPath: string | undefined;
+    let requestedMethod: string | undefined;
+    let requestedBody: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/redefine-invitation-link/120363019502650977-group`) {
+            requestedPath = url.pathname;
+            requestedMethod = (init?.method ?? 'GET').toUpperCase();
+            requestedBody = init?.body === undefined ? undefined : String(init.body);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.revokeInviteLink('120363019502650977-group');
+
+    expect(requestedPath).toBe(`${PREFIX}/redefine-invitation-link/120363019502650977-group`);
+    expect(requestedMethod).toBe('POST');
+    expect(requestedBody).toBeUndefined();
+    expect(result.link).toBe('https://chat.whatsapp.com/fake-new-invite-code');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('groups.joinViaInviteLink chama GET .../accept-invite-group com o link completo no query param "url" (não extrai o código)', async () => {
+    let requestedUrl: URL | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/accept-invite-group`) {
+            requestedUrl = url;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.joinViaInviteLink({
+      invite: 'https://chat.whatsapp.com/codigo-do-convite',
+    });
+
+    expect(requestedUrl?.searchParams.get('url')).toBe(
+      'https://chat.whatsapp.com/codigo-do-convite',
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it('groups.joinViaInviteLink normaliza um código bare de entrada para o link completo antes de enviar (o conector garante isso)', async () => {
+    let requestedUrl: URL | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/accept-invite-group`) {
+            requestedUrl = url;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.joinViaInviteLink({ invite: 'codigo-bare-do-convite' });
+
+    expect(requestedUrl?.searchParams.get('url')).toBe(
+      'https://chat.whatsapp.com/codigo-bare-do-convite',
+    );
+  });
+
+  it('groups.leaveGroup chama POST /leave-group com {groupId} no corpo (opaco, verbatim)', async () => {
+    let requestedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/leave-group`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.leaveGroup('120363019502650977-group');
+
+    expect(requestedPath).toBe(`${PREFIX}/leave-group`);
+    expect(capturedBody?.groupId).toBe('120363019502650977-group');
+    expect(result).toBeUndefined();
   });
 });

@@ -24,6 +24,10 @@ export const CAPABILITIES = [
   'groups.updateSubject',
   'groups.updateDescription',
   'groups.updatePicture',
+  'groups.getInviteLink',
+  'groups.revokeInviteLink',
+  'groups.joinViaInviteLink',
+  'groups.leaveGroup',
   'webhooks.parse',
 ] as const;
 

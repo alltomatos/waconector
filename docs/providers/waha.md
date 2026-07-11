@@ -92,6 +92,11 @@ Mais 3 capabilities de configuração de grupo (`groups.updateSubject`, `groups.
 `groups.updatePicture`) foram adicionadas num retrofit posterior. Suportado: ver seção "Grupos:
 configuração (updateSubject/updateDescription/updatePicture)" abaixo.
 
+Mais 4 capabilities de convite/saída de grupo (`groups.getInviteLink`, `groups.revokeInviteLink`,
+`groups.joinViaInviteLink`, `groups.leaveGroup`) foram adicionadas num retrofit posterior.
+Suportado: ver seção "Grupos: convite e saída
+(getInviteLink/revokeInviteLink/joinViaInviteLink/leaveGroup)" abaixo.
+
 ## Operações core
 
 | Operação canônica | Endpoint | Observações |
@@ -235,6 +240,37 @@ introduzida. O path é montado pela mesma função auxiliar já usada por
   separadamente em `pn`. O adapter prefere `pn` quando presente, caindo para `id` apenas quando
   `pn` está ausente. `role` (`'left' | 'participant' | 'admin' | 'superadmin'`) mapeia para
   `GroupParticipant.isAdmin` (`'admin'` ou `'superadmin'`) e `isSuperAdmin` (`'superadmin'`).
+
+## Grupos: convite e saída (`getInviteLink`/`revokeInviteLink`/`joinViaInviteLink`/`leaveGroup`)
+
+4 operações opcionais de `GroupsApi` (ADR-0009) para o ciclo de vida do link de convite e para
+entrar/sair de um grupo. Baseadas no `openapi.json` oficial (tag "📁 Groups") — **não validadas
+contra uma instância WAHA real**, mesmo status de confiança de "Grupos: configuração" acima.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `groups.getInviteLink` | `GET /api/{session}/groups/{id}/invite-code` | Sem body. Resposta: **STRING PURA** (schema `type: string` no openapi.json, não um objeto) — o CÓDIGO bare do convite. A doc explicita: "then you can put it in the url `https://chat.whatsapp.com/{inviteCode}`". O adapter monta o link completo com `normalizeInviteLink` antes de devolver em `GroupInviteLink.link`. |
+| `groups.revokeInviteLink` | `POST /api/{session}/groups/{id}/invite-code/revoke` | Sem body. Resposta: mesmo shape de `getInviteLink` (string pura), presumivelmente o novo código bare — mesma conversão com `normalizeInviteLink`. |
+| `groups.joinViaInviteLink` | `POST /api/{session}/groups/join` | Body: `{ code }`. A doc mostra exemplos aceitando tanto o código bare quanto o link completo (`https://chat.whatsapp.com/invitecode`) em `code`. Como o conector sempre entrega `input.invite` já normalizado como link completo (`WaConnector.prepareJoinViaInviteLink`), o adapter repassa `input.invite` direto em `code`, **sem** `extractInviteCode` — desnecessário já que o provider aceita os dois formatos. Resposta: `{ id }` (id do grupo ingressado) — ignorada, o contrato retorna `void`. |
+| `groups.leaveGroup` | `POST /api/{session}/groups/{id}/leave` | Sem body, sem schema de resposta relevante — `void`. |
+
+`{id}` em `getInviteLink`/`revokeInviteLink`/`leaveGroup` segue o mesmo mapeamento de `groupId` já
+usado pelas demais operações de grupo (`toWahaGroupId`, ver seção "Mapeamento de `groupId`"
+acima) — mesma função auxiliar `groupParticipantsPath` reaproveitada (suffixes `invite-code`,
+`invite-code/revoke`, `leave`). `groups.join` (usado por `joinViaInviteLink`) não leva `groupId` no
+path — é o único dos 4 endpoints desta seção sem `{id}`, já que o grupo é identificado pelo próprio
+código/link do convite.
+
+**Não confirmado nesta pesquisa** (a validar contra uma instância WAHA real):
+
+- O shape exato de `invite-code`/`invite-code/revoke` quando o `content-type` da resposta não é
+  `application/json` (a doc declara `type: string` no schema, mas não deixa claro se o transporte é
+  JSON-com-aspas ou texto puro) — o adapter trata os dois casos da mesma forma (`HttpClient.request`
+  já desembrulha ambos para uma `string` JS antes de chegar ao mapeamento).
+- Se `groups.join` exige que o link/código ainda seja válido (não revogado) e o comportamento
+  exato de erro quando o convite expirou ou o bot já é membro do grupo.
+- Se o bot precisa ser admin do grupo para `revokeInviteLink` (comportamento esperado do WhatsApp,
+  não documentado explicitamente pelo WAHA).
 
 ## Webhooks
 

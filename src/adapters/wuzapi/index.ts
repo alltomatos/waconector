@@ -6,6 +6,7 @@ import type {
   WebhookInput,
 } from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
+import { extractInviteCode, normalizeInviteLink } from '../../core/chat-id';
 import { WaConnectorError } from '../../core/errors';
 import type {
   CanonicalEvent,
@@ -18,10 +19,12 @@ import type {
   ConnectResult,
   CreateGroupInput,
   GroupInfo,
+  GroupInviteLink,
   GroupParticipant,
   GroupParticipantsInput,
   InstanceState,
   InstanceStatus,
+  JoinGroupInviteInput,
   MediaKind,
   MediaRef,
   MessageAck,
@@ -97,6 +100,10 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'groups.updateSubject',
   'groups.updateDescription',
   'groups.updatePicture',
+  'groups.getInviteLink',
+  'groups.revokeInviteLink',
+  'groups.joinViaInviteLink',
+  'groups.leaveGroup',
   'webhooks.parse',
 ];
 
@@ -136,6 +143,10 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     updateSubject: (input) => updateGroupSubject(http, input),
     updateDescription: (input) => updateGroupDescription(http, input),
     updatePicture: (input) => updateGroupPicture(http, input),
+    getInviteLink: (groupId) => fetchGroupInviteLink(http, groupId, false),
+    revokeInviteLink: (groupId) => fetchGroupInviteLink(http, groupId, true),
+    joinViaInviteLink: (input) => joinGroupViaInviteLink(http, input),
+    leaveGroup: (groupId) => leaveGroupCall(http, groupId),
   };
 
   return {
@@ -560,6 +571,67 @@ function toWuzapiGroupPhoto(media: MediaRef): string {
     'Wuzapi: groups.updatePicture exige "media.url" ou "media.base64".',
     { provider: PROVIDER },
   );
+}
+
+/**
+ * `getInviteLink`/`revokeInviteLink` são o MESMO endpoint `GET /group/invitelink`, variando só o
+ * parâmetro `reset` (mesmo padrão de `updateGroupParticipants` para add/remove/promote/demote).
+ * `groupJID` e `reset` vão na QUERY STRING, não no corpo — mesmo padrão já usado por `getGroupInfo`
+ * (o exemplo de `curl` da doc oficial mostra `--data`, o que é enganoso: o handler só lê a query
+ * string, confirmado no código-fonte). `reset=false` (ou omitido) busca o link atual sem invalidar
+ * o anterior; `reset=true` invalida o link atual e gera um novo.
+ *
+ * Resposta (`data`): `{InviteLink: "https://chat.whatsapp.com/<código>"}` — já vem completo. Ainda
+ * assim passa por `normalizeInviteLink` por segurança (operação idempotente quando o valor já é o
+ * link completo), caso alguma versão do servidor devolva só o código bare.
+ */
+async function fetchGroupInviteLink(
+  http: HttpClient,
+  groupId: string,
+  reset: boolean,
+): Promise<GroupInviteLink> {
+  const response = await http.request<WuzapiEnvelope>({
+    method: 'GET',
+    path: '/group/invitelink',
+    query: { groupJID: groupId, reset },
+  });
+  const data = asRecord(response.data);
+  const link = asString(data?.InviteLink) ?? '';
+  return { link: normalizeInviteLink(link), raw: response };
+}
+
+/**
+ * `POST /group/join`. Body: `{Code: string}`. **CONFIANÇA MÉDIA (não confirmado
+ * empiricamente)**: a pesquisa original não confirmou se este endpoint aceita a URL completa do
+ * convite ou só o código bare — tratado aqui como aceitando SÓ O CÓDIGO. `input.invite` já chega
+ * normalizado como link completo (o conector garante isso — ver `prepareJoinViaInviteLink` em
+ * `connector.ts`), então este adapter extrai o código com `extractInviteCode` antes de montar o
+ * corpo. Ver docs/providers/wuzapi.md para a assunção não validada.
+ *
+ * Resposta: `{Details: "Group joined successfully"}` — ignorada, contrato retorna `Promise<void>`.
+ */
+async function joinGroupViaInviteLink(
+  http: HttpClient,
+  input: JoinGroupInviteInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/join',
+    body: { Code: extractInviteCode(input.invite) },
+  });
+}
+
+/**
+ * `POST /group/leave`. Body: `{GroupJID: string}` — `groupId` é opaco, repassado intacto (mesmo
+ * tratamento de `getGroupInfo`/`updateGroupSubject`/etc.). Resposta: `{Details: "Group left
+ * successfully"}` — ignorada, contrato retorna `Promise<void>`.
+ */
+async function leaveGroupCall(http: HttpClient, groupId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/leave',
+    body: { GroupJID: groupId },
+  });
 }
 
 interface GroupInfoFallback {

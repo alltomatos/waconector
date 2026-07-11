@@ -104,6 +104,20 @@ function createFetchStub(): typeof globalThis.fetch {
     }
 
     if (method === 'POST' && pathname === '/group/info') {
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      if (body.getInviteLink === true) {
+        return jsonResponse(200, {
+          JID: '120363000000000000@g.us',
+          Name: 'Grupo de teste',
+          Topic: 'Descrição do grupo',
+          OwnerJID: '5511999999999@s.whatsapp.net',
+          GroupCreated: 1751000003,
+          invite_link: 'https://chat.whatsapp.com/ABC123FAKE',
+          Participants: [
+            { JID: '5511999999999@s.whatsapp.net', IsAdmin: true, IsSuperAdmin: true },
+          ],
+        });
+      }
       return jsonResponse(200, {
         JID: '120363000000000000@g.us',
         Name: 'Grupo de teste',
@@ -161,6 +175,26 @@ function createFetchStub(): typeof globalThis.fetch {
         group: { JID: '120363000000000000@g.us' },
         needs_refresh: false,
       });
+    }
+
+    if (method === 'POST' && pathname === '/group/resetInviteCode') {
+      return jsonResponse(200, {
+        InviteLink: 'https://chat.whatsapp.com/NEWCODE456',
+        group: { JID: '120363000000000000@g.us' },
+        needs_refresh: false,
+      });
+    }
+
+    if (method === 'POST' && pathname === '/group/join') {
+      return jsonResponse(200, {
+        response: 'Group join successful',
+        group: { JID: '120363000000000000@g.us', Name: 'Grupo de teste' },
+        needs_refresh: false,
+      });
+    }
+
+    if (method === 'POST' && pathname === '/group/leave') {
+      return jsonResponse(200, { response: 'Group leave successful' });
     }
 
     throw new Error(`fetchStub (uazapi): rota não configurada ${method} ${pathname}`);
@@ -895,6 +929,135 @@ describe('uazapi adapter: comportamento específico do provider', () => {
     });
 
     expect(capturedBody?.image).toBe('data:image/jpeg;base64,ZmFrZS1mb3RvLWdydXBv');
+  });
+
+  it('groups.getInviteLink envia { groupjid, getInviteLink: true } para POST /group/info e devolve o link completo de "invite_link"', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/info') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.getInviteLink('120363000000000000@g.us');
+
+    expect(capturedBody?.groupjid).toBe('120363000000000000@g.us');
+    expect(capturedBody?.getInviteLink).toBe(true);
+    expect(result.link).toBe('https://chat.whatsapp.com/ABC123FAKE');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('groups.getInviteLink normaliza para link completo mesmo quando o provider devolve só o código bare', async () => {
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/info') {
+            const body = init?.body
+              ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+              : {};
+            if (body.getInviteLink === true) {
+              return jsonResponse(200, {
+                JID: '120363000000000000@g.us',
+                Name: 'Grupo de teste',
+                invite_link: 'CODIGOBARE789',
+              });
+            }
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.getInviteLink('120363000000000000@g.us');
+
+    expect(result.link).toBe('https://chat.whatsapp.com/CODIGOBARE789');
+  });
+
+  it('groups.revokeInviteLink envia { groupjid } para POST /group/resetInviteCode e devolve o novo link de "InviteLink" (PascalCase)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/resetInviteCode') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.revokeInviteLink('120363000000000000@g.us');
+
+    expect(capturedBody?.groupjid).toBe('120363000000000000@g.us');
+    expect(result.link).toBe('https://chat.whatsapp.com/NEWCODE456');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('groups.joinViaInviteLink envia o link completo (já normalizado pelo conector) em "invitecode" para POST /group/join', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/join') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    // O conector normaliza um código bare para o link completo ANTES de chegar ao adapter — o
+    // adapter uazapi repassa esse valor diretamente em "invitecode" (o endpoint aceita ambos).
+    await expect(wa.groups.joinViaInviteLink({ invite: 'CODIGOBARE123' })).resolves.toBeUndefined();
+    expect(capturedBody?.invitecode).toBe('https://chat.whatsapp.com/CODIGOBARE123');
+  });
+
+  it('groups.joinViaInviteLink repassa um link já completo sem alterações em "invitecode"', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/join') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.joinViaInviteLink({ invite: 'https://chat.whatsapp.com/JALINKCOMPLETO' });
+
+    expect(capturedBody?.invitecode).toBe('https://chat.whatsapp.com/JALINKCOMPLETO');
+  });
+
+  it('groups.leaveGroup envia { groupjid } para POST /group/leave sem lançar', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/leave') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.groups.leaveGroup('120363000000000000@g.us')).resolves.toBeUndefined();
+
+    expect(capturedBody?.groupjid).toBe('120363000000000000@g.us');
   });
 
   it('envia o header "token" configurado em toda chamada', async () => {

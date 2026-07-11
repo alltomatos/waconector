@@ -6,7 +6,7 @@ import type {
   WebhookInput,
 } from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
-import { digitsOnly, isJid } from '../../core/chat-id';
+import { digitsOnly, isJid, normalizeInviteLink } from '../../core/chat-id';
 import { WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, ConnectionUpdateEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
@@ -14,10 +14,12 @@ import type {
   ConnectResult,
   CreateGroupInput,
   GroupInfo,
+  GroupInviteLink,
   GroupParticipant,
   GroupParticipantsInput,
   InstanceState,
   InstanceStatus,
+  JoinGroupInviteInput,
   MediaKind,
   MediaRef,
   MessageAck,
@@ -85,6 +87,10 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'groups.updateSubject',
   'groups.updateDescription',
   'groups.updatePicture',
+  'groups.getInviteLink',
+  'groups.revokeInviteLink',
+  'groups.joinViaInviteLink',
+  'groups.leaveGroup',
   'webhooks.parse',
 ];
 
@@ -124,6 +130,10 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     updateSubject: (input) => updateGroupSubject(http, input),
     updateDescription: (input) => updateGroupDescription(http, input),
     updatePicture: (input) => updateGroupPicture(http, input),
+    getInviteLink: (groupId) => getGroupInviteLink(http, groupId),
+    revokeInviteLink: (groupId) => revokeGroupInviteLink(http, groupId),
+    joinViaInviteLink: (input) => joinGroupViaInviteLink(http, input),
+    leaveGroup: (groupId) => leaveGroup(http, groupId),
   };
 
   return {
@@ -374,18 +384,92 @@ async function createGroup(http: HttpClient, input: CreateGroupInput): Promise<G
 }
 
 /**
- * `POST /group/info`: body `{ groupjid }`. Resposta = schema `Group` verbatim na doc: `{ JID, Name,
- * Topic (descrição), OwnerJID`/`OwnerPN (dono), GroupCreated, Participants: [{ JID, IsAdmin,
- * IsSuperAdmin }] }`.
+ * `POST /group/info`: body `{ groupjid }` (mais `extra`, ver `requestGroupInfo`). Resposta = schema
+ * `Group` verbatim na doc: `{ JID, Name, Topic (descrição), OwnerJID`/`OwnerPN (dono), GroupCreated,
+ * Participants: [{ JID, IsAdmin, IsSuperAdmin }] }`.
  */
 async function getGroupInfo(http: HttpClient, groupId: string): Promise<GroupInfo> {
+  const response = await requestGroupInfo(http, groupId);
+  return mapGroupInfo(response, { id: groupId });
+}
+
+/**
+ * `POST /group/info` cru, reaproveitado por `getGroupInfo` (sem `extra`) e por `getGroupInviteLink`
+ * (com `{ getInviteLink: true }`) — não há rota dedicada para obter o link de convite: o campo
+ * `invite_link` do schema `Group` só é populado quando esse flag é passado no body. Ver
+ * docs/providers/uazapi.md#grupos-convite-e-saída.
+ */
+async function requestGroupInfo(
+  http: HttpClient,
+  groupId: string,
+  extra?: Record<string, unknown>,
+): Promise<unknown> {
+  const groupjid = toUazapiGroupJid(groupId);
+  return http.request<unknown>({
+    method: 'POST',
+    path: '/group/info',
+    body: { groupjid, ...extra },
+  });
+}
+
+/**
+ * `POST /group/info` com `{ groupjid, getInviteLink: true }` — o link vem em `invite_link`
+ * (snake_case, já COMPLETO segundo a doc). `normalizeInviteLink` é aplicada mesmo assim (idempotente
+ * quando o valor já é um link completo) como defesa contra o provider devolver só o código bare,
+ * mesmo padrão de outros adapters que só devolvem o código. Ver
+ * docs/providers/uazapi.md#grupos-convite-e-saída.
+ */
+async function getGroupInviteLink(http: HttpClient, groupId: string): Promise<GroupInviteLink> {
+  const response = await requestGroupInfo(http, groupId, { getInviteLink: true });
+  const record = asRecord(response);
+  const link = (record ? asString(record.invite_link) : undefined) ?? '';
+  return { link: normalizeInviteLink(link), raw: response };
+}
+
+/**
+ * `POST /group/resetInviteCode`: body `{ groupjid }`. Resposta: `{ InviteLink, group,
+ * needs_refresh }` — atenção ao campo `InviteLink` em PascalCase, diferente de `invite_link`
+ * (snake_case) devolvido por `POST /group/info`/`getGroupInviteLink` acima. Já é o NOVO link
+ * completo (o código antigo é invalidado). Ver docs/providers/uazapi.md#grupos-convite-e-saída.
+ */
+async function revokeGroupInviteLink(http: HttpClient, groupId: string): Promise<GroupInviteLink> {
   const groupjid = toUazapiGroupJid(groupId);
   const response = await http.request<unknown>({
     method: 'POST',
-    path: '/group/info',
+    path: '/group/resetInviteCode',
     body: { groupjid },
   });
-  return mapGroupInfo(response, { id: groupId });
+  const record = asRecord(response);
+  const link = (record ? asString(record.InviteLink) : undefined) ?? '';
+  return { link: normalizeInviteLink(link), raw: response };
+}
+
+/**
+ * `POST /group/join`: body `{ invitecode }` (10-50 caracteres) — o provider aceita tanto o código
+ * curto quanto a URL completa nesse mesmo campo, então `input.invite` (já normalizado pelo conector
+ * para o link completo — ver `WaConnector.prepareJoinViaInviteLink`) é repassado direto, sem
+ * `extractInviteCode`. Resposta (`{ response: "Group join successful", group, needs_refresh }`)
+ * ignorada: o contrato exige apenas `Promise<void>`. Ver docs/providers/uazapi.md#grupos-convite-e-saída.
+ */
+async function joinGroupViaInviteLink(
+  http: HttpClient,
+  input: JoinGroupInviteInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/join',
+    body: { invitecode: input.invite },
+  });
+}
+
+/**
+ * `POST /group/leave`: body `{ groupjid }` (padrão documentado `^\d+@g\.us$`, mesmo formato de
+ * `GroupInfo.id`/`toUazapiGroupJid`). Resposta (`{ response: "Group leave successful" }`) ignorada:
+ * o contrato exige apenas `Promise<void>`. Ver docs/providers/uazapi.md#grupos-convite-e-saída.
+ */
+async function leaveGroup(http: HttpClient, groupId: string): Promise<void> {
+  const groupjid = toUazapiGroupJid(groupId);
+  await http.request({ method: 'POST', path: '/group/leave', body: { groupjid } });
 }
 
 /**

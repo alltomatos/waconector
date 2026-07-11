@@ -122,8 +122,10 @@ aceita JID) — o adapter extrai os dígitos de qualquer entrada em formato JID 
 Capabilities implementadas nesta fase: `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
-`groups.updatePicture` (ver ADR-0009). As 4 operações de participante colapsam num único
-endpoint do provider — ver tabela abaixo.
+`groups.updatePicture`, `groups.getInviteLink`, `groups.revokeInviteLink`,
+`groups.joinViaInviteLink`, `groups.leaveGroup` (ver ADR-0009). As 4 operações de participante
+colapsam num único endpoint do provider — ver tabela abaixo. As 4 operações de convite/saída têm
+seção dedicada logo abaixo (`### Convite e saída de grupo`).
 
 | Operação canônica | Endpoint | Observações |
 | --- | --- | --- |
@@ -197,6 +199,36 @@ neste documento. Pontos específicos a validar:
 - Se `POST /group/updateName` de fato trunca/rejeita nomes fora do intervalo 1-25 caracteres, e
   qual `code`/mensagem de erro devolve nesse caso (o adapter não valida o tamanho, delega ao
   provider — um 4xx do provider vira `PROVIDER_ERROR` via `HttpClient`, não `INVALID_INPUT`).
+
+### Convite e saída de grupo
+
+Capabilities: `groups.getInviteLink`, `groups.revokeInviteLink`, `groups.joinViaInviteLink`,
+`groups.leaveGroup` (ver ADR-0009 e os tipos `GroupInviteLink`/`JoinGroupInviteInput` em
+`src/core/types.ts`).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `groups.getInviteLink` | `POST /group/info` com `{ groupjid, getInviteLink: true }` | **Não existe rota dedicada** para obter o link de convite — é o mesmo endpoint de `groups.getInfo`, mas com o flag `getInviteLink: true` no body, que faz o schema `Group` da resposta vir com o campo adicional `invite_link` (snake_case, já em formato de link COMPLETO segundo a doc). O adapter reaproveita a chamada HTTP através de uma função interna comum (`requestGroupInfo`), evitando duplicar a montagem do body entre `getGroupInfo`/`getGroupInviteLink`. `normalizeInviteLink` (core) é aplicada ao valor de `invite_link` mesmo assim, como defesa caso o provider devolva só o código bare (idempotente quando já é link completo) — **não confirmado contra uma instância real** que `invite_link` sempre vem populado como link completo. |
+| `groups.revokeInviteLink` | `POST /group/resetInviteCode` | Body `{ groupjid }`. Resposta: `{ InviteLink, group, needs_refresh }` — **atenção ao casing**: o campo é `InviteLink` (PascalCase), diferente de `invite_link` (snake_case) devolvido por `POST /group/info`. Já é o NOVO link completo (o código anterior é invalidado pelo provider). `normalizeInviteLink` também é aplicada aqui por defesa. |
+| `groups.joinViaInviteLink` | `POST /group/join` | Body `{ invitecode }` (documentado como string de 10-50 caracteres). O provider aceita tanto o código curto quanto a URL completa nesse mesmo campo — como o conector já normaliza `JoinGroupInviteInput.invite` para o link completo antes de chamar o adapter (ver `WaConnector.prepareJoinViaInviteLink` em `src/core/connector.ts`), o adapter repassa `input.invite` direto em `invitecode`, **sem** usar `extractInviteCode`. Resposta (`{ response: "Group join successful", group, needs_refresh }`) é ignorada: o contrato exige apenas `Promise<void>`. |
+| `groups.leaveGroup` | `POST /group/leave` | Body `{ groupjid }` (padrão documentado `^\d+@g\.us$`, mesmo formato de `GroupInfo.id`). Resposta (`{ response: "Group leave successful" }`) ignorada: `Promise<void>`. |
+
+**Nenhuma das 4 operações foi exercitada contra uma instância uazapi real** — mesma ressalva já
+registrada para as demais rotas de `groups.*` neste dossiê. Pontos específicos ainda não validados:
+
+- Se `invite_link` de fato vem sempre presente e já como link completo em toda resposta de
+  `POST /group/info` com `getInviteLink: true`, inclusive para grupos recém-criados sem link
+  gerado ainda (nesse caso o adapter cairia no fallback de string vazia, que `normalizeInviteLink`
+  transformaria no prefixo `https://chat.whatsapp.com/` sem código — resultado inválido, mas nunca
+  lança).
+- Se `POST /group/join` de fato aceita a URL completa (`https://chat.whatsapp.com/<código>`) no
+  campo `invitecode`, ou só o código bare — a doc documenta a faixa de tamanho (10-50 caracteres)
+  compatível com ambos os formatos, mas não mostra um exemplo de request literal usando a URL
+  completa. Se a instância real rejeitar a URL completa, o ajuste é trocar `input.invite` por
+  `extractInviteCode(input.invite)` (já disponível em `../../core/chat-id`) dentro de
+  `joinGroupViaInviteLink`.
+- Se `POST /group/leave` de fato exige exatamente o padrão `^\d+@g\.us$` (grupos com JID em outro
+  formato, se existirem, poderiam ser rejeitados) — não testado.
 
 ## Webhooks
 

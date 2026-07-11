@@ -1,12 +1,14 @@
 import type { GroupsApi, InstanceApi, WaAdapter, WebhookInput } from './adapter';
 import { type Capability, type CapabilitySet, hasCapability } from './capabilities';
-import { normalizeChatId } from './chat-id';
+import { normalizeChatId, normalizeInviteLink } from './chat-id';
 import { UnsupportedCapabilityError, WaConnectorError } from './errors';
 import type { CanonicalEvent, CanonicalEventType, EventOf, UnknownEvent } from './events';
 import type {
   CreateGroupInput,
   GroupInfo,
+  GroupInviteLink,
   GroupParticipantsInput,
+  JoinGroupInviteInput,
   MediaRef,
   SendMediaInput,
   SendReactionInput,
@@ -58,6 +60,10 @@ export interface ConnectorGroupsApi {
   updateSubject(input: UpdateGroupSubjectInput): Promise<void>;
   updateDescription(input: UpdateGroupDescriptionInput): Promise<void>;
   updatePicture(input: UpdateGroupPictureInput): Promise<void>;
+  getInviteLink(groupId: string): Promise<GroupInviteLink>;
+  revokeInviteLink(groupId: string): Promise<GroupInviteLink>;
+  joinViaInviteLink(input: JoinGroupInviteInput): Promise<void>;
+  leaveGroup(groupId: string): Promise<void>;
 }
 
 /**
@@ -155,6 +161,22 @@ export class WaConnector {
       updatePicture: (input) =>
         this.callGroupsMethod('updatePicture', 'groups.updatePicture', (fn) =>
           fn(this.prepareUpdateGroupPicture(input)),
+        ),
+      getInviteLink: (groupId) =>
+        this.callGroupsMethod('getInviteLink', 'groups.getInviteLink', (fn) =>
+          fn(this.requireGroupId(groupId)),
+        ),
+      revokeInviteLink: (groupId) =>
+        this.callGroupsMethod('revokeInviteLink', 'groups.revokeInviteLink', (fn) =>
+          fn(this.requireGroupId(groupId)),
+        ),
+      joinViaInviteLink: (input) =>
+        this.callGroupsMethod('joinViaInviteLink', 'groups.joinViaInviteLink', (fn) =>
+          fn(this.prepareJoinViaInviteLink(input)),
+        ),
+      leaveGroup: (groupId) =>
+        this.callGroupsMethod('leaveGroup', 'groups.leaveGroup', (fn) =>
+          fn(this.requireGroupId(groupId)),
         ),
     };
 
@@ -322,6 +344,23 @@ export class WaConnector {
       );
     }
     return media;
+  }
+
+  /**
+   * `invite` aceita código bare ou link completo do chamador — normalizado aqui para SEMPRE o
+   * link completo antes de chegar ao adapter (constante universal do protocolo WhatsApp, não
+   * opaca por provider como `groupId` — ver `normalizeInviteLink`/ADR-0009). Adapters que
+   * precisam só do código (ex.: Wuzapi) usam `extractInviteCode` por conta própria.
+   */
+  private prepareJoinViaInviteLink(input: JoinGroupInviteInput): JoinGroupInviteInput {
+    if (typeof input.invite !== 'string' || input.invite.trim().length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'groups.joinViaInviteLink exige "invite" (código ou link do convite) não vazio.',
+        { provider: this.provider },
+      );
+    }
+    return { invite: normalizeInviteLink(input.invite.trim()) };
   }
 
   private normalizeParticipants(participants: unknown): string[] {

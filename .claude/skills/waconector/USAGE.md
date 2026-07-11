@@ -68,6 +68,15 @@ if (wa.supports('groups.updateSubject')) {
     media: { kind: 'image', url: 'https://...' },
   });
 }
+
+// Opcional (ADR-0009) — convites e saída. O link de convite é sempre normalizado para o
+// formato completo (https://chat.whatsapp.com/<código>); joinViaInviteLink aceita tanto o
+// código bare quanto o link completo.
+if (wa.supports('groups.getInviteLink')) {
+  const { link } = await wa.groups.getInviteLink('grupo-1');
+  await wa.groups.joinViaInviteLink({ invite: link }); // ou só o código
+  await wa.groups.leaveGroup('grupo-1');
+}
 ```
 
 **3. Receber, em qualquer framework HTTP**

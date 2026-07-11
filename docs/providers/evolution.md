@@ -121,9 +121,10 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 
 ## Grupos (núcleo)
 
-As 10 operações de `groups.*` (ver ADR-0009) são suportadas por este adapter. **Nenhuma das 4
+As 14 operações de `groups.*` (ver ADR-0009) são suportadas por este adapter. **Nenhuma das 4
 operações de participantes (`add`/`remove`/`promote`/`demote`), nem `POST /group/create`, nem as 3
-operações de configuração (`updateSubject`/`updateDescription`/`updatePicture`) aparecem na
+operações de configuração (`updateSubject`/`updateDescription`/`updatePicture`), nem as 4 operações
+de convite/saída (`getInviteLink`/`revokeInviteLink`/`joinViaInviteLink`/`leaveGroup`) aparecem na
 documentação oficial do site (`docs.evolutionfoundation.com.br`)** — foram confirmadas apenas
 lendo o código-fonte Go (`pkg/group/handler` + `pkg/group/service`). `getGroupInfo`/`listGroups`
 seguem o mesmo padrão de já-verificado-no-código usado no resto deste dossiê. Tratamos como alta
@@ -213,6 +214,37 @@ diferente das fixtures de webhook de mensagem/ack/conexão, copiadas literalment
   é JPEG com esse prefixo, isso é uma limitação conhecida deste adapter a revisar.
 - Resposta: `{"message":"success","data":"<novo pictureID string>"}` — o `pictureID` retornado é
   ignorado (a operação canônica `groups.updatePicture` retorna `Promise<void>`).
+
+### `groups.getInviteLink` / `groups.revokeInviteLink` — `POST /group/invitelink`
+
+- **Endpoint único compartilhado pelas duas operações** (mesmo padrão de
+  `updateGroupParticipants`): corpo `{groupJid: string, reset: boolean}` — `reset:false` obtém o
+  link de convite atual, `reset:true` revoga o link atual e gera um novo. O adapter implementa as
+  duas como uma função interna (`getGroupInviteLink`) parametrizada por `reset`.
+- Resposta: `{"message":"success","data":"<link completo>"}` — diferente de outras rotas de grupo
+  cujo `data` é um objeto/struct, aqui `data` já É a string do link, e **já vem completo**
+  (`https://chat.whatsapp.com/<código>`), não o código bare. O adapter roda o valor por
+  `normalizeInviteLink` mesmo assim antes de devolver `GroupInviteLink.link` — idempotente para um
+  valor que já tem o prefixo, e serve de rede de segurança caso uma versão futura do provider passe
+  a devolver só o código.
+
+### `groups.joinViaInviteLink` — `POST /group/join`
+
+- Corpo: `{code: string}`. **Confiança alta** (comportamento do whatsmeow, biblioteca usada
+  internamente pelo Evolution GO): o campo `code` aceita tanto o código bare quanto o link completo
+  — o whatsmeow remove o prefixo `https://chat.whatsapp.com/` automaticamente se presente antes de
+  resolver o convite. O conector já normaliza `input.invite` para o link completo antes de chamar o
+  adapter (ver `WaConnector.prepareJoinViaInviteLink`); o adapter repassa esse valor diretamente em
+  `code`, sem usar `extractInviteCode`.
+- Resposta: `{"message":"success"}` — **sem nenhuma informação sobre qual grupo foi de fato
+  ingressado** (nem `jid`, nem `data` de qualquer tipo). A operação canônica `groups.joinViaInviteLink`
+  retorna `Promise<void>`, então isso não é uma limitação prática deste adapter.
+
+### `groups.leaveGroup` — `POST /group/leave`
+
+- Corpo: `{groupJid: string}` — mesma conversão opaca de `toProviderGroupJid` usada pelo resto de
+  `groups.*`. Resposta: `{"message":"success"}`, sem `data`. `Promise<void>`, mesmo padrão de
+  `updateSubject`/`updateDescription`.
 
 ## Webhooks
 

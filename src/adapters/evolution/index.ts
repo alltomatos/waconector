@@ -6,7 +6,7 @@ import type {
   WebhookInput,
 } from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
-import { digitsOnly, isJid } from '../../core/chat-id';
+import { digitsOnly, isJid, normalizeInviteLink } from '../../core/chat-id';
 import { WaConnectorError } from '../../core/errors';
 import type {
   CanonicalEvent,
@@ -19,10 +19,12 @@ import type {
   ConnectResult,
   CreateGroupInput,
   GroupInfo,
+  GroupInviteLink,
   GroupParticipant,
   GroupParticipantsInput,
   InstanceState,
   InstanceStatus,
+  JoinGroupInviteInput,
   MediaRef,
   MessageAck,
   MessageKind,
@@ -87,6 +89,10 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'groups.updateSubject',
   'groups.updateDescription',
   'groups.updatePicture',
+  'groups.getInviteLink',
+  'groups.revokeInviteLink',
+  'groups.joinViaInviteLink',
+  'groups.leaveGroup',
   'webhooks.parse',
 ];
 
@@ -125,6 +131,10 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     updateSubject: (input) => updateGroupSubject(http, input),
     updateDescription: (input) => updateGroupDescription(http, input),
     updatePicture: (input) => updateGroupPicture(http, input),
+    getInviteLink: (groupId) => getGroupInviteLink(http, groupId, false),
+    revokeInviteLink: (groupId) => getGroupInviteLink(http, groupId, true),
+    joinViaInviteLink: (input) => joinGroupViaInviteLink(http, input),
+    leaveGroup: (groupId) => leaveGroupById(http, groupId),
   };
 
   return {
@@ -535,6 +545,62 @@ function toGroupPictureImage(media: MediaRef): string {
     'Evolution GO (adapter F2): groups.updatePicture requer "media.url" ou "media.base64".',
     { provider: PROVIDER },
   );
+}
+
+/**
+ * `POST /group/invitelink` — endpoint ÚNICO compartilhado por `getInviteLink`/`revokeInviteLink`;
+ * só o campo `reset` muda (`false` obtém o link atual, `true` revoga e gera um novo). Corpo:
+ * `{groupJid, reset}`. Resposta: `{message:"success", data:<link completo string>}` — o provider
+ * já devolve `data` como o link completo (`https://chat.whatsapp.com/<código>`), então
+ * `normalizeInviteLink` aqui é só defensivo/idempotente (não deveria alterar o valor na prática).
+ */
+async function getGroupInviteLink(
+  http: HttpClient,
+  groupId: string,
+  reset: boolean,
+): Promise<GroupInviteLink> {
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'POST',
+    path: '/group/invitelink',
+    body: {
+      groupJid: toProviderGroupJid(groupId),
+      reset,
+    },
+  });
+
+  const link = normalizeInviteLink(asString(response.data) ?? '');
+  return { link, raw: response };
+}
+
+/**
+ * `POST /group/join`. Corpo: `{code: string}` — aceita tanto o código bare quanto o link
+ * completo (o whatsmeow interno remove o prefixo `https://chat.whatsapp.com/` automaticamente se
+ * presente), então repassamos `input.invite` (já normalizado como link completo pelo conector —
+ * ver `WaConnector.prepareJoinViaInviteLink`) diretamente, sem usar `extractInviteCode`. Resposta:
+ * `{message:"success"}` — sem nenhuma informação sobre qual grupo foi de fato ingressado; a
+ * operação canônica retorna `Promise<void>`, então só disparamos a chamada.
+ */
+async function joinGroupViaInviteLink(
+  http: HttpClient,
+  input: JoinGroupInviteInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/join',
+    body: { code: input.invite },
+  });
+}
+
+/**
+ * `POST /group/leave`. Corpo: `{groupJid}`. Resposta `{message:"success"}` — a operação canônica
+ * retorna `Promise<void>`, então basta disparar a chamada.
+ */
+async function leaveGroupById(http: HttpClient, groupId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/leave',
+    body: { groupJid: toProviderGroupJid(groupId) },
+  });
 }
 
 /**

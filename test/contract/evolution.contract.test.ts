@@ -154,6 +154,18 @@ function createFetchStub(): typeof globalThis.fetch {
     if (method === 'POST' && url.pathname === '/group/photo') {
       return jsonResponse(200, { message: 'success', data: 'fake-picture-id' });
     }
+    if (method === 'POST' && url.pathname === '/group/invitelink') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: 'https://chat.whatsapp.com/FAKEcodigoDeConvite123',
+      });
+    }
+    if (method === 'POST' && url.pathname === '/group/join') {
+      return jsonResponse(200, { message: 'success' });
+    }
+    if (method === 'POST' && url.pathname === '/group/leave') {
+      return jsonResponse(200, { message: 'success' });
+    }
 
     throw new Error(`fetchStub (evolution): rota não configurada ${method} ${url.pathname}`);
   };
@@ -668,6 +680,151 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
       groupJid: '123456789-987654321@g.us',
       image: 'data:image/png;base64,ZmFrZS1mb3RvLXBuZw==',
     });
+  });
+
+  it('groups.getInviteLink envia POST /group/invitelink com {groupJid, reset:false} e repassa o link completo', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/invitelink') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const inviteLink = await wa.groups.getInviteLink('123456789-987654321@g.us');
+
+    expect(capturedBody).toEqual({ groupJid: '123456789-987654321@g.us', reset: false });
+    expect(inviteLink.link).toBe('https://chat.whatsapp.com/FAKEcodigoDeConvite123');
+    expect(inviteLink).toHaveProperty('raw');
+  });
+
+  it('groups.getInviteLink normaliza para link completo mesmo se o provider devolver só o código bare', async () => {
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/invitelink') {
+        return jsonResponse(200, { message: 'success', data: 'CodigoBareSemPrefixo123' });
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const inviteLink = await wa.groups.getInviteLink('123456789-987654321@g.us');
+
+    expect(inviteLink.link).toBe('https://chat.whatsapp.com/CodigoBareSemPrefixo123');
+  });
+
+  it('groups.revokeInviteLink reaproveita POST /group/invitelink com {reset:true} e devolve o novo link', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/invitelink') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return jsonResponse(200, {
+          message: 'success',
+          data: 'https://chat.whatsapp.com/NOVOcodigoRevogado456',
+        });
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const inviteLink = await wa.groups.revokeInviteLink('123456789-987654321@g.us');
+
+    expect(capturedBody).toEqual({ groupJid: '123456789-987654321@g.us', reset: true });
+    expect(inviteLink.link).toBe('https://chat.whatsapp.com/NOVOcodigoRevogado456');
+  });
+
+  it('groups.joinViaInviteLink envia POST /group/join com {code} recebendo o link completo (já normalizado pelo conector)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/join') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    // O conector normaliza "invite" para o link completo antes de chamar o adapter (ver
+    // WaConnector.prepareJoinViaInviteLink) — mesmo passando só o código bare aqui, o adapter deve
+    // receber e repassar o link completo, não o código isolado.
+    const result = await wa.groups.joinViaInviteLink({ invite: 'codigoDeConviteBare789' });
+
+    expect(capturedBody).toEqual({ code: 'https://chat.whatsapp.com/codigoDeConviteBare789' });
+    expect(result).toBeUndefined();
+  });
+
+  it('groups.joinViaInviteLink repassa um link completo de entrada sem alteração', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/join') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await wa.groups.joinViaInviteLink({
+      invite: 'https://chat.whatsapp.com/jaLinkCompleto000',
+    });
+
+    expect(capturedBody).toEqual({ code: 'https://chat.whatsapp.com/jaLinkCompleto000' });
+  });
+
+  it('groups.leaveGroup envia POST /group/leave com {groupJid}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/leave') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.groups.leaveGroup('123456789-987654321@g.us');
+
+    expect(capturedBody).toEqual({ groupJid: '123456789-987654321@g.us' });
+    expect(result).toBeUndefined();
   });
 
   it('parseWebhook normaliza evento "Message" de imagem e popula media.url a partir da chave "URL" (maiúscula)', () => {

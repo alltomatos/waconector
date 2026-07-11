@@ -4,8 +4,10 @@ import type {
   ConnectResult,
   CreateGroupInput,
   GroupInfo,
+  GroupInviteLink,
   GroupParticipantsInput,
   InstanceStatus,
+  JoinGroupInviteInput,
   SendMediaInput,
   SendReactionInput,
   SendTextInput,
@@ -68,6 +70,11 @@ export interface GroupsApi {
   updateSubject?(input: UpdateGroupSubjectInput): Promise<void>;
   updateDescription?(input: UpdateGroupDescriptionInput): Promise<void>;
   updatePicture?(input: UpdateGroupPictureInput): Promise<void>;
+  getInviteLink?(groupId: string): Promise<GroupInviteLink>;
+  revokeInviteLink?(groupId: string): Promise<GroupInviteLink>;
+  /** `input.invite` já chega normalizado como link completo (ver `normalizeInviteLink`). */
+  joinViaInviteLink?(input: JoinGroupInviteInput): Promise<void>;
+  leaveGroup?(groupId: string): Promise<void>;
 }
 
 /**

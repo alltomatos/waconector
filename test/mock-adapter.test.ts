@@ -198,6 +198,47 @@ describe('MockAdapter: groups', () => {
     );
     expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
+
+  it('getInviteLink/revokeInviteLink emitem links completos, e revoke invalida o código anterior', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({ subject: 'Time', participants: ['5585999999999'] });
+
+    const first = await wa.groups.getInviteLink(group.id);
+    expect(first.link.startsWith('https://chat.whatsapp.com/')).toBe(true);
+    await expect(wa.groups.joinViaInviteLink({ invite: first.link })).resolves.toBeUndefined();
+
+    const revoked = await wa.groups.revokeInviteLink(group.id);
+    expect(revoked.link).not.toBe(first.link);
+
+    // O código antigo não é mais válido após o revoke.
+    const failure = await reject(wa.groups.joinViaInviteLink({ invite: first.link }));
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+    // O novo código funciona.
+    await expect(wa.groups.joinViaInviteLink({ invite: revoked.link })).resolves.toBeUndefined();
+  });
+
+  it('joinViaInviteLink com código inválido falha com PROVIDER_ERROR', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const failure = await reject(wa.groups.joinViaInviteLink({ invite: 'codigo-invalido' }));
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('leaveGroup remove o grupo (não aparece mais em getInfo/list)', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({ subject: 'Time', participants: ['5585999999999'] });
+
+    await wa.groups.leaveGroup(group.id);
+
+    const failure = await reject(wa.groups.getInfo(group.id));
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+    expect(await wa.groups.list()).toHaveLength(0);
+  });
 });
 
 describe('MockAdapter: webhooks sintéticos', () => {
