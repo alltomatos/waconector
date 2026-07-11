@@ -101,6 +101,7 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       `contacts.getAbout`** (nenhum endpoint/campo para recado pessoal em toda a doc oficial,
       confirmado por busca exaustiva). Nenhum adapter compõe múltiplas chamadas HTTP atrás de uma
       operação (regra de ouro do ADR-0010) — campos ausentes ficam `undefined`, documentados.
+      Mergeado via [PR #21](https://github.com/alltomatos/waconector/pull/21).
 - [ ] Capability `contacts.*` — PR2 (moderação: block/unblock/listBlocked), planejado, ainda não
       iniciado. `getPresence` fica fora do escopo (estruturalmente assíncrono/webhook para 4 dos 5
       providers, incremento futuro à parte).
