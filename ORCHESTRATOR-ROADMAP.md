@@ -93,7 +93,8 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       notificações de participante (não as de subject/description/ícone/criação, sem exemplo de
       payload). **uazapi deliberadamente sem parsing estruturado** — nenhum exemplo de payload de
       grupo existe na doc oficial; eventos continuam caindo em `unknown` (comportamento seguro por
-      design, ADR-0002/ADR-0003). **Fecha o ADR-0009 por completo.**
+      design, ADR-0002/ADR-0003). **Fecha o ADR-0009 por completo.** Mergeado via
+      [PR #20](https://github.com/alltomatos/waconector/pull/20).
 - [ ] Capability `contacts.*` (escopo grande, ainda não iniciado)
 
 ## Marcos de release (v0.x)
