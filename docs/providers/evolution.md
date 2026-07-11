@@ -90,6 +90,9 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 | `contacts.checkExists` | `POST /user/check` | Ver seção "Contatos" abaixo. |
 | `contacts.getProfilePicture` | `POST /user/avatar` | Ver seção "Contatos" abaixo. |
 | `contacts.getAbout` | `POST /user/info` | Mesmo endpoint de `contacts.get` — ver seção "Contatos" abaixo. |
+| `contacts.block` | `POST /user/block` | Ver seção "Contatos" abaixo. |
+| `contacts.unblock` | `POST /user/unblock` | Ver seção "Contatos" abaixo. |
+| `contacts.listBlocked` | `GET /user/blocklist` | Ver seção "Contatos" abaixo. |
 
 ## Reações
 
@@ -329,6 +332,33 @@ campos do `Contact` mais completos. Os campos que o endpoint mais próximo não 
 - Se o contato não tiver foto definida (`ErrProfilePictureNotSet` no whatsmeow), o servidor
   normalmente responde com erro HTTP 4xx/5xx — o adapter **não captura nem mascara** esse erro;
   ele propaga como qualquer outra falha HTTP deste adapter (vira `PROVIDER_ERROR` via `HttpClient`).
+
+### `contacts.block` / `contacts.unblock` — `POST /user/block` / `POST /user/unblock`
+
+- Dois endpoints distintos (diferente do padrão "endpoint único com parâmetro" já usado em
+  `groups.addParticipants`/`removeParticipants`/`.../getInviteLink`/`revokeInviteLink`), mas com o
+  MESMO shape de corpo/resposta — o adapter implementa como duas funções finas irmãs
+  (`blockContact`/`unblockContact`), sem uma função interna compartilhada.
+- Corpo: `{number: chatId}` — `number` é uma **string única** (mesmo padrão de
+  `contacts.getProfilePicture`, diferente do array usado por `contacts.get`/`contacts.checkExists`).
+- Resposta: `{"message":"success","data":{"DHash":"...","JIDs":["..."]}}` — `data.JIDs` é a lista
+  **COMPLETA e já atualizada** de contatos bloqueados após a operação (não só o item recém-
+  bloqueado/desbloqueado). O adapter **ignora esse retorno por completo**: ambas as operações
+  canônicas retornam `Promise<void>`, e popular `listBlocked` a partir daqui violaria a regra de
+  ouro do ADR-0010 (uma operação não deveria inferir o resultado de outra a partir de um efeito
+  colateral incidental) — quem precisar da lista atualizada deve chamar `contacts.listBlocked()`
+  separadamente logo em seguida.
+
+### `contacts.listBlocked` — `GET /user/blocklist`
+
+- Sem corpo. Resposta: `{"message":"success","data":{"DHash":"...","JIDs":["..."]}}` — mesmo
+  shape de `data` de `contacts.block`/`contacts.unblock` (não por coincidência: os 3 endpoints
+  vivem no mesmo `pkg/user/*`).
+- Mapeamento: `data.JIDs` → array de strings retornado diretamente, sem remapeamento por item —
+  já vem no formato JID canônico, o mesmo formato usado como `Contact.id` no resto deste adapter.
+- **Suportado neste provider** (diferente de WAHA e Z-API, que não expõem um endpoint dedicado de
+  listagem de bloqueados e por isso não declaram `contacts.listBlocked` — ver ADR-0010, mesmo
+  padrão de omissão seletiva de capability já usado para `contacts.getAbout` na uazapi).
 
 ## Webhooks
 

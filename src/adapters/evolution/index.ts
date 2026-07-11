@@ -104,6 +104,9 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'contacts.checkExists',
   'contacts.getProfilePicture',
   'contacts.getAbout',
+  'contacts.block',
+  'contacts.unblock',
+  'contacts.listBlocked',
   'webhooks.parse',
 ];
 
@@ -154,6 +157,9 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     checkExists: (phone) => checkContactExists(http, phone),
     getProfilePicture: (chatId) => getContactProfilePicture(http, chatId),
     getAbout: (chatId) => getContactAbout(http, chatId),
+    block: (chatId) => blockContact(http, chatId),
+    unblock: (chatId) => unblockContact(http, chatId),
+    listBlocked: () => listBlockedContacts(http),
   };
 
   return {
@@ -823,6 +829,53 @@ async function getContactProfilePicture(
 
   const data = asRecord(response.data);
   return { url: asString(data?.URL), raw: response };
+}
+
+/**
+ * `contacts.block` via `POST /user/block`. Corpo: `{number: chatId}` — `number` é uma string
+ * única (mesmo padrão de `getContactProfilePicture`, diferente do array usado por
+ * `fetchUserInfo`/`checkContactExists`). Resposta: `{message:"success", data:{DHash, JIDs:
+ * string[]}}` — `data.JIDs` é a lista COMPLETA e já atualizada de contatos bloqueados após esta
+ * operação (não só o item recém-bloqueado), mas a operação canônica retorna `Promise<void>`, então
+ * ignoramos `data` por completo; quem precisar da lista atualizada deve chamar
+ * `contacts.listBlocked()` separadamente (mesmo endpoint dedicado usado por `listBlockedContacts`
+ * abaixo).
+ */
+async function blockContact(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/user/block',
+    body: { number: toProviderNumber(chatId) },
+  });
+}
+
+/**
+ * `contacts.unblock` via `POST /user/unblock`. Mesmo shape de corpo/resposta de `blockContact`
+ * (`{number: chatId}` → `{message:"success", data:{DHash, JIDs: string[]}}`), ignorado pelo mesmo
+ * motivo: a operação canônica retorna `Promise<void>`.
+ */
+async function unblockContact(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/user/unblock',
+    body: { number: toProviderNumber(chatId) },
+  });
+}
+
+/**
+ * `contacts.listBlocked` via `GET /user/blocklist`. Sem corpo. Resposta:
+ * `{message:"success", data:{DHash, JIDs: string[]}}` — `data.JIDs` já vem no formato JID
+ * canônico (mesmo formato usado como `Contact.id` no resto do adapter), então repassamos o array
+ * diretamente, sem remapeamento por item.
+ */
+async function listBlockedContacts(http: HttpClient): Promise<string[]> {
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'GET',
+    path: '/user/blocklist',
+  });
+
+  const data = asRecord(response.data);
+  return asStringArray(data?.JIDs);
 }
 
 // ---------------------------------------------------------------------------

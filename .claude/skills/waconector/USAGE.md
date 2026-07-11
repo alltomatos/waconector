@@ -88,6 +88,16 @@ if (wa.supports('contacts.checkExists')) {
     console.log(contact.name, contact.about, contact.profilePictureUrl);
   }
 }
+
+// Opcional (ADR-0010) — moderação. listBlocked não é suportado por todos os providers
+// (ex. WAHA/Z-API) — confira wa.supports antes.
+if (wa.supports('contacts.block')) {
+  await wa.contacts.block('5585999999999');
+  await wa.contacts.unblock('5585999999999');
+}
+if (wa.supports('contacts.listBlocked')) {
+  const blocked = await wa.contacts.listBlocked();
+}
 ```
 
 **3. Receber, em qualquer framework HTTP**

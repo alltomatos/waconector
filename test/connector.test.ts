@@ -86,6 +86,12 @@ describe('capabilities no conector', () => {
     expect(getProfilePictureFailure).toBeInstanceOf(UnsupportedCapabilityError);
     const getAboutFailure = await reject(wa.contacts.getAbout('5585999999999'));
     expect(getAboutFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const blockFailure = await reject(wa.contacts.block('5585999999999'));
+    expect(blockFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const unblockFailure = await reject(wa.contacts.unblock('5585999999999'));
+    expect(unblockFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const listBlockedFailure = await reject(wa.contacts.listBlocked());
+    expect(listBlockedFailure).toBeInstanceOf(UnsupportedCapabilityError);
   });
 
   it('adapter que declara messages.sendReaction sem implementar o método falha com PROVIDER_ERROR (bug do adapter, não entrada inválida)', async () => {
@@ -311,6 +317,18 @@ describe('validação e normalização de contacts.*', () => {
     const contact = await wa.contacts.get('5585999999999');
     expect(contact.id).toBe('5585999999999');
     expect(contact.name).toBeUndefined();
+  });
+
+  it('block/unblock/listBlocked gerenciam a lista de bloqueados, normalizando o chatId', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    await wa.contacts.block('+55 (85) 99999-9999');
+    expect(await wa.contacts.listBlocked()).toEqual(['5585999999999']);
+
+    await wa.contacts.unblock('+55 (85) 99999-9999');
+    expect(await wa.contacts.listBlocked()).toEqual([]);
   });
 });
 

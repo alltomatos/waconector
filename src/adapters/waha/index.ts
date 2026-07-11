@@ -97,6 +97,8 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'contacts.checkExists',
   'contacts.getProfilePicture',
   'contacts.getAbout',
+  'contacts.block',
+  'contacts.unblock',
   'webhooks.parse',
 ];
 
@@ -422,6 +424,36 @@ export function waha(options: WahaOptions): WaAdapter {
       });
       return mapContactAbout(body);
     },
+
+    block: async (chatId) => {
+      // POST /api/contacts/block, body ContactRequest = { contactId, session }. Resposta: 201,
+      // sem schema de conteúdo declarado — contrato retorna void, ignorada de propósito (mesmo
+      // padrão de updateSubject/leaveGroup: endpoint sem shape de resposta relevante).
+      const contactId = toWahaChatId(chatId);
+      await http.request({
+        method: 'POST',
+        path: '/api/contacts/block',
+        body: { contactId, session },
+      });
+    },
+
+    unblock: async (chatId) => {
+      // POST /api/contacts/unblock, mesmo shape de body/resposta de block.
+      const contactId = toWahaChatId(chatId);
+      await http.request({
+        method: 'POST',
+        path: '/api/contacts/unblock',
+        body: { contactId, session },
+      });
+    },
+
+    // listBlocked NÃO é implementado: o WAHA não tem endpoint nativo de listagem de bloqueados
+    // (busca exaustiva confirmou ausência de rota "blocklist"/"blocked" nos 18 tags do
+    // openapi.json, e a doc oficial de features não lista essa operação entre as 7 de contato).
+    // `isBlocked` existe por contato individual em GET /api/contacts/all (poderia ser
+    // reconstruído client-side filtrando), mas isso não conta como endpoint nativo — mesma regra
+    // já seguida para uazapi/contacts.getAbout: capability NÃO declarada, método NÃO implementado
+    // (ver docs/providers/waha.md#contatos).
   };
 
   return {

@@ -33,6 +33,9 @@ export const CAPABILITIES = [
   'contacts.checkExists',
   'contacts.getProfilePicture',
   'contacts.getAbout',
+  'contacts.block',
+  'contacts.unblock',
+  'contacts.listBlocked',
   'webhooks.parse',
 ] as const;
 

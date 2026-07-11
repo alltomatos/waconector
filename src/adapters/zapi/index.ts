@@ -108,6 +108,8 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'contacts.checkExists',
   'contacts.getProfilePicture',
   'contacts.getAbout',
+  'contacts.block',
+  'contacts.unblock',
   'webhooks.parse',
 ];
 
@@ -170,6 +172,14 @@ export function zapi(options: ZapiOptions): WaAdapter {
     checkExists: (phone) => checkContactExists(http, prefix, phone),
     getProfilePicture: (chatId) => getContactProfilePicture(http, prefix, chatId),
     getAbout: (chatId) => getContactAbout(http, prefix, chatId),
+    block: (chatId) => blockContact(http, prefix, chatId),
+    unblock: (chatId) => unblockContact(http, prefix, chatId),
+    // `listBlocked` deliberadamente NÃO implementado nem declarado em capabilities: busca
+    // exaustiva nas 273 páginas do índice completo da doc oficial (contacts/*, chats/*,
+    // privacy/*, etc.) não achou endpoint de listagem de contatos bloqueados. NÃO confundir com
+    // `GET /privacy/get-disallowed-contacts` — essa é uma blacklist de PRIVACIDADE por capability
+    // (quem fica de fora de "visto por último"/foto/descrição), uma feature adjacente porém
+    // diferente da lista de contatos efetivamente bloqueados. Ver docs/providers/zapi.md#contatos.
   };
 
   return {
@@ -933,6 +943,37 @@ async function getContactAbout(
   const response = await fetchContactDetail(http, prefix, chatId);
   const record = asRecord(response);
   return { about: record ? asString(record.about) : undefined, raw: response };
+}
+
+/**
+ * `contacts.block`/`contacts.unblock` usam o MESMO endpoint (`POST /contacts/modify-blocked`),
+ * discriminado pelo campo `action: 'block' | 'unblock'` — mesmo padrão de "um endpoint, vários
+ * verbos canônicos" já usado por `messages.sendReaction`/`send-remove-reaction` (só que ali são
+ * dois endpoints; aqui é um endpoint com dois valores de `action`). `phone` recebe o chatId
+ * canônico via `toZapiPhone` (a mesma função usada pelo restante de `contacts.*`/`messages.*`) —
+ * chatId de contato NÃO é opaco (ver ADR-0010). Resposta confirmada `{ value: true }` — ignorada,
+ * o contrato exige apenas `Promise<void>`.
+ */
+async function setContactBlocked(
+  http: HttpClient,
+  prefix: string,
+  chatId: string,
+  action: 'block' | 'unblock',
+): Promise<void> {
+  const phone = toZapiPhone(chatId);
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/contacts/modify-blocked`,
+    body: { phone, action },
+  });
+}
+
+async function blockContact(http: HttpClient, prefix: string, chatId: string): Promise<void> {
+  await setContactBlocked(http, prefix, chatId, 'block');
+}
+
+async function unblockContact(http: HttpClient, prefix: string, chatId: string): Promise<void> {
+  await setContactBlocked(http, prefix, chatId, 'unblock');
 }
 
 // ---------------------------------------------------------------------------

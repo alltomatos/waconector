@@ -99,6 +99,9 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'contacts.get',
   'contacts.checkExists',
   'contacts.getProfilePicture',
+  'contacts.block',
+  'contacts.unblock',
+  'contacts.listBlocked',
   'webhooks.parse',
 ];
 
@@ -149,6 +152,9 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     get: (chatId) => getContact(http, chatId),
     checkExists: (phone) => checkContactExists(http, phone),
     getProfilePicture: (chatId) => getContactProfilePicture(http, chatId),
+    block: (chatId) => blockContact(http, chatId),
+    unblock: (chatId) => unblockContact(http, chatId),
+    listBlocked: () => listBlockedContacts(http),
     // `getAbout` deliberadamente NÃO implementado nem declarado em capabilities: busca exaustiva
     // nas ~132 rotas do OpenAPI bundled não achou nenhum campo/endpoint para o recado pessoal de
     // um contato na uazapi. Ver docs/providers/uazapi.md#contatos.
@@ -724,6 +730,43 @@ function mapCheckExistsResult(body: unknown): CheckExistsResult {
   const exists = (first ? asBoolean(first.isInWhatsapp) : undefined) ?? false;
   const chatId = first ? asString(first.jid) : undefined;
   return { exists, chatId, raw: body };
+}
+
+/**
+ * `contacts.block`/`contacts.unblock` usam o MESMO endpoint (`POST /chat/block`), discriminado
+ * pelo campo `block: boolean` — mesmo padrão de "um endpoint, vários verbos canônicos" já usado
+ * por `updateGroupParticipants` (`action`). `number` recebe o chatId canônico via `toUazapiNumber`
+ * (identidade), a mesma função usada pelo restante de `contacts.*`/`messages.*` — chatId de
+ * contato NÃO é opaco (ver ADR-0010). Resposta (`{ response, blockList }`, lista atualizada de
+ * bloqueados) é ignorada: o contrato exige apenas `Promise<void>`. Ver
+ * docs/providers/uazapi.md#contatos.
+ */
+async function setContactBlocked(http: HttpClient, chatId: string, block: boolean): Promise<void> {
+  const number = toUazapiNumber(chatId);
+  await http.request({ method: 'POST', path: '/chat/block', body: { number, block } });
+}
+
+async function blockContact(http: HttpClient, chatId: string): Promise<void> {
+  await setContactBlocked(http, chatId, true);
+}
+
+async function unblockContact(http: HttpClient, chatId: string): Promise<void> {
+  await setContactBlocked(http, chatId, false);
+}
+
+/**
+ * `GET /chat/blocklist`: sem body/params. Resposta: `{ blockList: string[] }` — array de JIDs dos
+ * contatos bloqueados, já no mesmo formato canônico de chatId usado em `Contact.id`. Repassado sem
+ * transformação (mesmo padrão de identidade de `toUazapiNumber`); entradas que não sejam string são
+ * descartadas defensivamente via `asString` (nunca lança), mesmo padrão dos demais mapeamentos deste
+ * adapter.
+ */
+async function listBlockedContacts(http: HttpClient): Promise<string[]> {
+  const response = await http.request<unknown>({ method: 'GET', path: '/chat/blocklist' });
+  const record = asRecord(response);
+  const blockList = record?.blockList;
+  if (!Array.isArray(blockList)) return [];
+  return blockList.map(asString).filter((id): id is string => id !== undefined);
 }
 
 // ---------------------------------------------------------------------------

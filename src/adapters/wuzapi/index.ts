@@ -115,6 +115,9 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'contacts.checkExists',
   'contacts.getProfilePicture',
   'contacts.getAbout',
+  'contacts.block',
+  'contacts.unblock',
+  'contacts.listBlocked',
   'webhooks.parse',
 ];
 
@@ -166,6 +169,9 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     checkExists: (phone) => checkContactExists(http, phone),
     getProfilePicture: (chatId) => getContactProfilePicture(http, chatId),
     getAbout: (chatId) => getContactAbout(http, chatId),
+    block: (chatId) => blockContact(http, chatId),
+    unblock: (chatId) => unblockContact(http, chatId),
+    listBlocked: () => listBlockedContacts(http),
   };
 
   return {
@@ -829,6 +835,47 @@ async function getContactProfilePicture(
 async function getContactAbout(http: HttpClient, chatId: string): Promise<ContactAbout> {
   const { entry, response } = await fetchUserInfoEntry(http, chatId);
   return { about: asString(entry?.Status), raw: response };
+}
+
+/**
+ * `POST /user/block`, body `{Phone: chatId}` (o servidor também aceita `{JID: chatId}`, mas este
+ * adapter usa `Phone` por consistência com o resto do adapter — reaproveita `toWuzapiPhone`, mesmo
+ * helper de `messages.*`). Resposta (`data`): `{Details: "User blocked", JID, Blocklist: string[],
+ * DHash, RequestedJID?}` — ignorada, contrato retorna `Promise<void>` (mesmo padrão de operações
+ * sem retorno, ex. `leaveGroupCall`/`updateGroupSubject`).
+ *
+ * O provider resolve internamente `@lid` -> telefone antes de bloquear quando aplicável —
+ * transparente para este adapter, nenhum tratamento especial necessário.
+ */
+async function blockContact(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/user/block',
+    body: { Phone: toWuzapiPhone(chatId) },
+  });
+}
+
+/**
+ * `POST /user/unblock` — MESMO shape de `blockContact` (body `{Phone: chatId}`). Resposta (`data`):
+ * `{Details: "User unblocked", JID, Blocklist, DHash, RequestedJID?}` — ignorada, `Promise<void>`.
+ */
+async function unblockContact(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/user/unblock',
+    body: { Phone: toWuzapiPhone(chatId) },
+  });
+}
+
+/**
+ * `GET /user/blocklist` — sem corpo. Resposta (`data`): `{Blocklist: string[] (NUNCA null — lista
+ * vazia quando ninguém está bloqueado), DHash}`. Mapeia `data.Blocklist` -> array retornado, já no
+ * formato canônico de chatId (mesmo formato usado como `Contact.id`).
+ */
+async function listBlockedContacts(http: HttpClient): Promise<string[]> {
+  const response = await http.request<WuzapiEnvelope>({ method: 'GET', path: '/user/blocklist' });
+  const data = asRecord(response.data);
+  return asStringArray(data?.Blocklist);
 }
 
 /**

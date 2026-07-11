@@ -279,14 +279,12 @@ código/link do convite.
 - Se o bot precisa ser admin do grupo para `revokeInviteLink` (comportamento esperado do WhatsApp,
   não documentado explicitamente pelo WAHA).
 
-## Contatos (`contacts.*`, retrofit F2, ADR-0010, PR1)
+## Contatos (`contacts.*`, retrofit F2, ADR-0010, PR1 + PR2 moderação)
 
-5 operações de descoberta/perfil de `ContactsApi` (`list`, `get`, `checkExists`,
-`getProfilePicture`, `getAbout`) confirmadas no `openapi.json` oficial (tag "👤 Contacts"). Todas
-as 5 são declaradas por este adapter. As 3 operações de moderação (`block`, `unblock`,
-`listBlocked`) ficam fora do escopo deste PR (ver ADR-0010) — o WAHA não tem cobertura confirmada
-de `listBlocked` nesta pesquisa (nenhuma rota "blocklist"/"blocked" nos 18 tags do OpenAPI), então
-provavelmente não será declarada nem quando `block`/`unblock` entrarem num PR futuro.
+7 das 8 operações de `ContactsApi` são declaradas por este adapter: as 5 de descoberta/perfil
+(`list`, `get`, `checkExists`, `getProfilePicture`, `getAbout`, PR1) mais `block`/`unblock`
+(moderação, PR2 — ver seção "Moderação" abaixo). `listBlocked` fica de fora: o WAHA não tem
+endpoint nativo de listagem de bloqueados (ver seção "Moderação" para o detalhe da busca).
 
 Regra de ouro desta capability (ADR-0010): cada operação mapeia para **UMA ÚNICA chamada HTTP** —
 nunca compõe múltiplas requisições atrás de uma operação canônica. Quando o endpoint mais próximo
@@ -299,6 +297,28 @@ não traz um campo, ele fica `undefined` no tipo normalizado (limitação docume
 | `contacts.checkExists` | `GET /api/contacts/check-exists` | Query: `{ phone, session }`. **Diferente de `get`**: este endpoint quer o telefone em DÍGITOS, não `@c.us` — `toWahaPhoneDigits` reaproveita `toWahaChatId` (chega a um JID canônico, tratando os mesmos casos de domínio: `@s.whatsapp.net` → `@c.us`, JIDs já reconhecidos intactos) e então corta a parte antes do `@`. Resposta (schema `WANumberExistResult`): `{ numberExists: boolean, chatId?: string }` → `numberExists` vira `exists`; `chatId` (quando presente) passa por `toWahaChatId` pela mesma razão de canonicalização de `list`/`get`, e fica `undefined` quando o provider não o devolve (comum quando `numberExists` é `false`). |
 | `contacts.getProfilePicture` | `GET /api/contacts/profile-picture` | Query: `{ contactId, session }` (`refresh` é opcional, default `false` na doc — omitido, sem necessidade de forçar refresh nesta operação). Resposta: `{ profilePictureURL: string \| null }` → `null` (privacidade do contato não permite) mapeia para `url: undefined`, não erro. |
 | `contacts.getAbout` | `GET /api/contacts/about` | Query: `{ contactId, session }`. Resposta: `{ about: string \| null }` → `null` (privacidade não permite) mapeia para `about: undefined`, não erro. |
+| `contacts.block` | `POST /api/contacts/block` | Body (schema `ContactRequest`): `{ contactId, session }`, `contactId` via `toWahaChatId` (mesma conversão de `get`/`getProfilePicture`/`getAbout`). Resposta: `201`, sem schema de conteúdo declarado — ignorada, contrato retorna `void`. |
+| `contacts.unblock` | `POST /api/contacts/unblock` | Mesmo shape de body/resposta de `block`. |
+
+### Moderação (`block`/`unblock`/`listBlocked`, PR2)
+
+`block` e `unblock` são simétricos: mesmo endpoint `ContactRequest` (`{ contactId, session }`), só
+muda o path (`/api/contacts/block` vs `/api/contacts/unblock`). Ambos devolvem `201` sem schema de
+conteúdo — o adapter ignora o corpo da resposta, mesmo padrão já usado em `groups.updateSubject`/
+`groups.leaveGroup` (endpoint sem shape de resposta relevante).
+
+**`contacts.listBlocked` NÃO é implementado nem declarado.** Busca exaustiva no `openapi.json`
+oficial (18 tags) não encontrou nenhuma rota "blocklist"/"blocked" — e a tabela de features da doc
+oficial do WAHA lista exatamente 7 operações de contato (as 5 de descoberta/perfil + `block` +
+`unblock`), sem nenhuma de "listar bloqueados". A rota mais próxima é `GET /api/contacts/all`, cujo
+schema `WWebJSContact` traz um campo `isBlocked` por contato individual (já usado por
+`contacts.list`/`contacts.get`, ver `mapContact`) — em tese daria para reconstruir a lista de
+bloqueados client-side filtrando por `isBlocked: true`. Isso **não conta** como um endpoint nativo
+de `listBlocked`: seguindo a mesma regra já aplicada a `uazapi`/`contacts.getAbout` (feature
+ausente não vira "quase-suporte" via composição de outra chamada — ver ADR-0010, regra de UMA
+ÚNICA chamada HTTP por operação), a capability `contacts.listBlocked` não é declarada e o método
+não é implementado neste adapter. Um consumidor que precise dessa lista deve chamar
+`contacts.list()` e filtrar por `isBlocked` no próprio código, fora do contrato do waconector.
 
 ### Campos de `Contact` que este provider NÃO preenche numa única chamada
 
@@ -316,8 +336,9 @@ não traz um campo, ele fica `undefined` no tipo normalizado (limitação docume
 Reaproveita a mesma função `toWahaChatId` já usada por `messages.*`/`groups.*` (ver seção
 "Mapeamento de `chatId` canônico → WAHA" acima) — nenhuma conversão nova foi introduzida:
 
-- `get`/`getProfilePicture`/`getAbout`: `chatId` canônico (já normalizado pelo conector via
-  `normalizeChatId`) → `toWahaChatId` → query `contactId` no formato `@c.us`.
+- `get`/`getProfilePicture`/`getAbout`/`block`/`unblock`: `chatId` canônico (já normalizado pelo
+  conector via `normalizeChatId`) → `toWahaChatId` → `contactId` no formato `@c.us` (query em
+  `get`/`getProfilePicture`/`getAbout`, body `ContactRequest` em `block`/`unblock`).
 - `checkExists`: `phone` canônico → `toWahaChatId` → `toWahaPhoneDigits` extrai só a parte antes do
   `@` → query `phone` em dígitos crus (o único dos 5 endpoints que quer o telefone sem domínio).
 - `list`/`get` (map-in): `id`/`number` da resposta → `toWahaChatId` (mesma função, agora aplicada
