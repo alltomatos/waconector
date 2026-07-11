@@ -55,7 +55,12 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       porque o teste original mascarava o bug com um fixture que não refletia o payload real) —
       [PR #13](https://github.com/alltomatos/waconector/pull/13). **Fecha a lista original de 3
       providers da F2** (uazapi/Z-API/Wuzapi).
-- [ ] Capabilities novas: grupos, contatos, reply/quote, reactions (ainda não iniciado)
+- [x] Capability `messages.sendReaction` — núcleo (ADR-0008) + retrofit adversarial nos 5
+      adapters existentes (uazapi, Evolution GO, WAHA, Z-API, Wuzapi), cada um traduzindo a
+      convenção canônica de "emoji vazio remove" para a particularidade real do provider
+      (sentinel `"remove"` no Evolution GO/Wuzapi, endpoint dedicado `/send-remove-reaction` na
+      Z-API). `reply/quote` já estava coberto via `quotedId` (nenhuma mudança necessária).
+- [ ] Capabilities novas: grupos, contatos (escopo grande, ainda não iniciado)
 
 ## Marcos de release (v0.x)
 

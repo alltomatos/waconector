@@ -74,6 +74,12 @@ não recebe um número de telefone como parâmetro, então não há como expor e
 contrato central — fica para uma fase futura (possível extensão do contrato). `instance.connect()`
 usa exclusivamente o fluxo de QR code.
 
+## Capability adicional: `messages.sendReaction` (retrofit F2, ADR-0008)
+
+`messages.sendReaction` foi adicionada a este adapter num retrofit posterior à F1 (ADR-0008 —
+`reply/quote` e `reactions` entraram no core nesta fase; ver `docs/CONTEXT.md`). Suportado: ver
+seção "Reações" abaixo e a entrada correspondente na tabela de "Operações core".
+
 ## Operações core
 
 | Operação canônica | Endpoint | Observações |
@@ -83,6 +89,7 @@ usa exclusivamente o fluxo de QR code.
 | instance.logout | `POST /api/sessions/{session}/logout` | Sem corpo de resposta relevante. |
 | messages.sendText | `POST /api/sendText` | Body `{ chatId, text, session, reply_to?, mentions? }`. Destinatário em `chatId` (JID), não `phone`. `mentions` (recurso real da doc oficial, "Mention contact" — ausente do schema OpenAPI de `MessageTextRequest`, gap doc-vs-schema do próprio WAHA) é enviado quando `SendTextInput.mentions` vem preenchido; cada entrada passa por `toWahaChatId`, exceto o valor especial `"all"` (mencionar todo mundo no grupo), repassado intacto. |
 | messages.sendMedia | `POST /api/sendImage` \| `/api/sendFile` \| `/api/sendVideo` \| `/api/sendVoice` (endpoint por tipo de mídia, não genérico) | Body base `{ chatId, file: {mimetype, filename?, url} \| {mimetype, filename?, data(base64)}, session, reply_to? }`. Mapeamento de `MediaKind`: `image→sendImage`, `video→sendVideo`, `audio→sendVoice`, `document→sendFile`. `sticker` não tem endpoint documentado no dossiê original — o adapter usa `sendFile` como fallback best-effort (assumido, não confirmado contra instância real). **Exceções por endpoint** (confirmadas no `openapi.json` real): `caption` é omitido (não apenas `undefined` — a chave nem é enviada) para `sendVoice`, cujo schema `MessageVoiceRequest` não declara essa propriedade; `convert: false` é enviado como default explícito para `sendVideo`/`sendVoice`, cujos schemas marcam `convert` como `required` e `SendMediaInput` não expõe essa opção ao chamador (a confirmar contra instância real se o servidor de fato exige o campo). |
+| messages.sendReaction | `PUT /api/reaction` | Ver seção "Reações" abaixo. |
 
 ### Mapeamento de status → `InstanceState`
 
@@ -111,6 +118,39 @@ Nota: a doc recomenda usar `GET /api/checkNumberStatus` antes de enviar para nú
 (ambiguidade do 9º dígito). Essa checagem **não** está implementada nesta fase (fora do escopo de
 F1: `instance.connect/status/logout`, `messages.sendText/sendMedia`, `webhooks.parse`); o adapter
 apenas converte o formato, sem validar a existência do número.
+
+### Reações (`messages.sendReaction`, retrofit F2, ADR-0008)
+
+Confirmado no `openapi.json` oficial (operationId `ChattingController_setReaction`, tag "📤
+Chatting") e na página dedicada "Adding Emoji Reactions to Messages" da doc (`waha.devlike.pro/docs/how-to/send-messages/`):
+
+- Endpoint: **`PUT /api/reaction`** — não `POST`. A própria doc alerta explicitamente: "Reaction
+  API uses PUT, not POST request! Please make sure you send right request." (uma tabela de prosa
+  na mesma página lista o endpoint como "POST /api/reaction", o que é inconsistente com o
+  `openapi.json` e com a seção dedicada — tratado como erro de digitação da tabela; o adapter usa
+  `PUT`, conforme o schema e a seção específica).
+- Body (schema `MessageReactionRequest`): `{ session, messageId, reaction }`. Não existe campo
+  `chatId` separado — a mensagem-alvo (e portanto o chat) é resolvida a partir do `messageId`
+  (JID completo da mensagem, ex.: `"false_11111111111@c.us_AAAAAAAAAAAAAAAAAAAA"`). O adapter não
+  envia `input.to` no body; ele só é usado para popular `SentMessage.chatId` via `mapSentMessage`
+  no fallback em que a resposta não ecoa o destinatário (mesmo padrão de sendText/sendMedia).
+- Emoji vai no campo **`reaction`** (não `emoji`).
+- Remoção: enviar `reaction: ""` (string vazia) remove uma reação enviada antes — documentado
+  explicitamente ("To remove reaction from a message - send empty string in the reaction
+  request"), consistente com a convenção do contrato central (ADR-0008,
+  `SendReactionInput.emoji === ''`). Diferente da Z-API (dois endpoints distintos, um para enviar e
+  outro para remover), o WAHA usa um único endpoint para os dois casos.
+- Resposta: `200`, corpo tipado genericamente como `object` no `openapi.json` (schema vazio, sem
+  campos documentados). `mapSentMessage` cai no mesmo fallback usado para respostas sem shape
+  confirmado: `id` vira `waha-<timestamp>` e `chatId` vira o `chatId` convertido de `input.to`.
+- Suportado nas engines WEBJS, WPP, GOWS e NOWEB, segundo a tabela de capabilities da doc. Sem
+  restrição documentada limitando reações a mensagens só-recebidas ou só-enviadas.
+- Sem `idempotent: true` na chamada HTTP (mesma regra de sendText/sendMedia — ver ADR-0007):
+  reenviar após um `NETWORK_ERROR` poderia alternar/duplicar a reação de forma indevida.
+- **Não confirmado nesta pesquisa**: shape do webhook de reação recebida. Fora de escopo desta
+  adição — `messages.sendReaction` cobre só o envio; `parseWahaWebhook` continua sem mapear
+  `event: "message.reaction"` (webhook de reação recebida cai em `unknown`, como já documentado na
+  seção "Webhooks" abaixo).
 
 ## Webhooks
 

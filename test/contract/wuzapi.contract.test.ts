@@ -86,6 +86,14 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'POST' && pathname === '/chat/react') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Sent', Timestamp: 1751000002, Id: 'contrato-msg-1' },
+      });
+    }
+
     throw new Error(`fetchStub (wuzapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -467,6 +475,57 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
     if (isWaConnectorError(failure)) {
       expect(failure.code).toBe('INVALID_INPUT');
     }
+  });
+
+  it('messages.sendReaction envia Phone/Body/Id em POST /chat/react', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/react') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendReaction({
+      to: '5511999999999',
+      messageId: 'contrato-msg-1',
+      emoji: '👍',
+    });
+
+    expect(capturedBody?.Phone).toBe('5511999999999');
+    expect(capturedBody?.Body).toBe('👍');
+    expect(capturedBody?.Id).toBe('contrato-msg-1');
+    expect(sent.id).toBe('contrato-msg-1');
+    expect(sent.chatId).toBe('5511999999999');
+    expect(sent.timestamp).toBe(1751000002 * 1000);
+  });
+
+  it('messages.sendReaction traduz emoji vazio para o literal "remove" (Wuzapi rejeita Body vazio)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/react') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendReaction({
+      to: '5511999999999',
+      messageId: 'contrato-msg-1',
+      emoji: '',
+    });
+
+    expect(capturedBody?.Body).toBe('remove');
   });
 
   it('parseWebhook normaliza evento "Message" (modo json) para message.received', () => {

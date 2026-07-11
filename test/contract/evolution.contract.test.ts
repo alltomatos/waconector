@@ -71,6 +71,19 @@ function createFetchStub(): typeof globalThis.fetch {
         },
       });
     }
+    if (method === 'POST' && url.pathname === '/message/react') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          Info: {
+            ID: '3EB0FAKE0000000000REACT',
+            ServerID: 3,
+            Timestamp: '2026-07-10T12:00:02-03:00',
+            Type: 'ReactionMessage',
+          },
+        },
+      });
+    }
     if (method === 'DELETE' && url.pathname === '/instance/logout') {
       return jsonResponse(200, { message: 'success' });
     }
@@ -214,6 +227,66 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
       '5511988887777@s.whatsapp.net',
       '5511977776666@s.whatsapp.net',
     ]);
+  });
+
+  it('sendReaction envia POST /message/react com {number, reaction, id, fromMe} e normaliza SentMessage', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/message/react') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendReaction({
+      to: '5511999999999',
+      messageId: '3EB0FAKE0000000000TEXT',
+      emoji: '👍',
+    });
+
+    expect(capturedBody).toEqual({
+      number: '5511999999999',
+      reaction: '👍',
+      id: '3EB0FAKE0000000000TEXT',
+      fromMe: false,
+    });
+    expect(sent.id).toBe('3EB0FAKE0000000000REACT');
+    expect(sent.chatId).toBe('5511999999999');
+    expect(sent).toHaveProperty('raw');
+  });
+
+  it('sendReaction com emoji vazio envia o sentinel "remove" (o provider rejeita reaction:"" com 400)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/message/react') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await wa.messages.sendReaction({
+      to: '5511999999999',
+      messageId: '3EB0FAKE0000000000TEXT',
+      emoji: '',
+    });
+
+    expect(capturedBody?.reaction).toBe('remove');
   });
 
   it('parseWebhook normaliza evento "Message" de imagem e popula media.url a partir da chave "URL" (maiúscula)', () => {

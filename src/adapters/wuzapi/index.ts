@@ -17,6 +17,7 @@ import type {
   MessageAck,
   MessageKind,
   SendMediaInput,
+  SendReactionInput,
   SendTextInput,
   SentMessage,
   WaMessage,
@@ -72,6 +73,7 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'instance.logout',
   'messages.sendText',
   'messages.sendMedia',
+  'messages.sendReaction',
   'webhooks.parse',
 ];
 
@@ -97,6 +99,7 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
   const messages: MessagesApi = {
     sendText: (input) => sendText(http, input),
     sendMedia: (input) => sendMedia(http, input),
+    sendReaction: (input) => sendReaction(http, input),
   };
 
   return {
@@ -292,6 +295,40 @@ async function sendMedia(http: HttpClient, input: SendMediaInput): Promise<SentM
   const response = await http.request<WuzapiEnvelope>({
     method: 'POST',
     path: endpoint.path,
+    body,
+  });
+  return mapSentMessage(response, phone);
+}
+
+/**
+ * `POST /chat/react` — confirmado em `handlers.go` (func `React`) e `API.md`. Body:
+ * `{Phone, Body, Id, Participant?}`. `Body` é o emoji da reação; `Id` é o id da mensagem-alvo.
+ *
+ * O servidor **rejeita** `Body` vazio com 400 ("missing Body in Payload") — não aceita a
+ * convenção canônica de `emoji === ''` para remover uma reação anterior. Em vez disso, o Wuzapi
+ * usa o literal especial `"remove"` (`handlers.go`: `if reaction == "remove" { reaction = "" }`,
+ * que então monta um `ReactionMessage` com texto vazio internamente — a convenção real do
+ * protocolo WhatsApp/whatsmeow para desfazer uma reação). Este adapter traduz `emoji === ''` para
+ * `Body: "remove"` nesse ponto de fronteira.
+ *
+ * `Participant` (só relevante ao reagir a mensagem de outro participante num grupo, quando
+ * `FromMe` é falso) e o prefixo `"me:"` em `Id` (reagir à própria mensagem enviada) não têm campo
+ * equivalente em `SendReactionInput` — nenhum dos dois é enviado; suposição documentada em
+ * docs/providers/wuzapi.md.
+ *
+ * Resposta confirmada: mesmo envelope `{Details,Timestamp,Id}` de `sendText`/`sendMedia`
+ * (`mapSentMessage`) — mas aqui `data.Id` é o id da MENSAGEM-ALVO (a que recebeu a reação), não um
+ * novo id de "mensagem de reação" (o próprio `API.md` documenta `"Id":"<message id reacted to>"`).
+ * `SentMessage.id` reflete esse eco, não uma nova mensagem enviada.
+ */
+async function sendReaction(http: HttpClient, input: SendReactionInput): Promise<SentMessage> {
+  const phone = toWuzapiPhone(input.to);
+  const reactionBody = input.emoji === '' ? 'remove' : input.emoji;
+  const body: Record<string, unknown> = { Phone: phone, Body: reactionBody, Id: input.messageId };
+
+  const response = await http.request<WuzapiEnvelope>({
+    method: 'POST',
+    path: '/chat/react',
     body,
   });
   return mapSentMessage(response, phone);

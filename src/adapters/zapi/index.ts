@@ -13,6 +13,7 @@ import type {
   MessageAck,
   MessageKind,
   SendMediaInput,
+  SendReactionInput,
   SendTextInput,
   SentMessage,
   WaMessage,
@@ -67,6 +68,7 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'instance.logout',
   'messages.sendText',
   'messages.sendMedia',
+  'messages.sendReaction',
   'webhooks.parse',
 ];
 
@@ -103,6 +105,7 @@ export function zapi(options: ZapiOptions): WaAdapter {
   const messages: MessagesApi = {
     sendText: (input) => sendText(http, prefix, input),
     sendMedia: (input) => sendMedia(http, prefix, input),
+    sendReaction: (input) => sendReaction(http, prefix, input),
   };
 
   return {
@@ -360,6 +363,37 @@ async function sendMedia(
   const response = await http.request<unknown>({
     method: 'POST',
     path: `${prefix}${endpoint.path}`,
+    body,
+  });
+  return mapSentMessage(response, phone);
+}
+
+/**
+ * A Z-API expõe DOIS endpoints distintos para reação, confirmados na doc oficial
+ * (`developer.z-api.io/message/send-message-reaction` e `.../send-remove-reaction`):
+ * `POST /send-reaction` (`{ phone, reaction, messageId, delayMessage? }`) para enviar, e
+ * `POST /send-remove-reaction` (`{ phone, messageId, delayMessage? }` — SEM o campo `reaction`)
+ * para remover. A doc não documenta "enviar `reaction` vazia" em `/send-reaction` como forma de
+ * remoção — por isso este adapter respeita a convenção do contrato (ADR-0008: `emoji === ''`
+ * remove uma reação anterior) roteando explicitamente para `/send-remove-reaction` nesse caso, em
+ * vez de mandar `reaction: ''` para o endpoint de envio. Resposta confirmada idêntica nos dois
+ * endpoints: `{ zaapId, messageId, id }` — mesmo shape de `mapSentMessage`. A doc confirma
+ * explicitamente que dá para reagir tanto a mensagens enviadas quanto recebidas.
+ */
+async function sendReaction(
+  http: HttpClient,
+  prefix: string,
+  input: SendReactionInput,
+): Promise<SentMessage> {
+  const phone = toZapiPhone(input.to);
+  const isRemoval = input.emoji === '';
+  const body: Record<string, unknown> = { phone, messageId: input.messageId };
+  if (!isRemoval) {
+    body.reaction = input.emoji;
+  }
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: `${prefix}${isRemoval ? '/send-remove-reaction' : '/send-reaction'}`,
     body,
   });
   return mapSentMessage(response, phone);

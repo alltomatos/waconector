@@ -70,7 +70,7 @@ presa permanentemente a um número). Não há conceito de "sessão" separado do 
 ## Capabilities implementadas nesta fase (F2)
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
-`messages.sendMedia`, `webhooks.parse`.
+`messages.sendMedia`, `messages.sendReaction`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada: embora a Z-API suporte pareamento por código
 (`GET /phone-code/{phone}`), `InstanceApi.connect()` não recebe telefone como parâmetro nesta
@@ -86,6 +86,7 @@ WAHA/uazapi).
 | `instance.logout` | `GET /disconnect` | GET com efeito colateral (quirk do provider). Elegível ao retry automático de GET do `HttpClient` — seguro, pois desconectar uma instância já desconectada é idempotente em efeito. |
 | `messages.sendText` | `POST /send-text` | Body `{ phone, message, messageId? }`. Campos opcionais documentados (`delayMessage`, `delayTyping`, `editMessageId`) não são expostos por `SendTextInput`. **Citação confirmada** na página dedicada "reply-message" — mesma URL de `/send-text`, campo opcional `messageId` no corpo — por isso `SendTextInput.quotedId` é mapeado para `messageId`. `mentions` continua sem campo confirmado em nenhuma página consultada e é silenciosamente ignorado. |
 | `messages.sendMedia` | `POST /send-image` \| `/send-video` \| `/send-audio` \| `/send-document/{extension}` \| `/send-sticker` | Um endpoint por `MediaKind`, incluindo `sticker` (`{ phone, sticker, messageId?, delayMessage?, stickerAuthor? }`; `stickerAuthor` não é exposto por `SendMediaInput` nesta fase). `document` exige que o adapter derive `{extension}` de `media.filename` ou de um mapeamento MIME→extensão best-effort (lança `INVALID_INPUT` se nenhum dos dois permitir). Campo de mídia aceita URL OU data URI base64 (`data:<mime>;base64,...`); se `media.base64` vier sem o prefixo `data:`, o adapter monta a data URI com `media.mimeType` ou um mimetype-padrão por tipo. `caption` só é enviado para `image`/`video`/`document` — a doc não documenta esse campo para `audio`/`sticker`. `messageId` (citação) é enviado para `image`/`video`/`document`/`sticker`. |
+| `messages.sendReaction` | `POST /send-reaction` (envio) \| `POST /send-remove-reaction` (remoção) | Ver seção "Reações" abaixo. |
 
 ### Formato de resposta de envio
 
@@ -94,6 +95,32 @@ Confirmado no dossiê para todos os `send-*`: `{ zaapId, messageId, id }` (`id` 
 (fallback `id`, fallback `zapi-<timestamp>`); `SentMessage.chatId` usa o `phone` requisitado (a
 resposta não ecoa o destinatário); `SentMessage.timestamp` fica `undefined` — nenhum campo de
 timestamp é documentado na resposta de envio.
+
+### Reações (`messages.sendReaction`)
+
+Confirmado em duas páginas dedicadas da doc oficial (`developer.z-api.io/message/send-message-reaction`
+e `.../send-remove-reaction`), com URL padrão consistente entre as duas: `https://api.z-api.io/instances/{instanceId}/token/{token}/send-reaction` e `.../send-remove-reaction`.
+São **dois endpoints distintos** (não um único endpoint com "reaction vazia = remove"):
+
+- Envio: `POST /send-reaction` — body `{ phone, reaction, messageId, delayMessage? }`. `phone` é o
+  destinatário (ou ID do grupo), `reaction` é o emoji, `messageId` é o ID da mensagem-alvo.
+- Remoção: `POST /send-remove-reaction` — mesmo body, **sem** o campo `reaction`.
+- Resposta idêntica nos dois: `{ zaapId, messageId, id }` (mesmo shape de `send-text`/`send-media`,
+  mapeado por `mapSentMessage`).
+- A doc confirma explicitamente que dá para reagir tanto a mensagens enviadas quanto recebidas
+  ("mensagens enviadas ou recebidas").
+- `delayMessage` (1-15s) não é exposto por `SendReactionInput` nesta fase (mesmo padrão de
+  `sendText`/`sendMedia`, que também não expõem esse campo).
+
+O contrato central (ADR-0008) define que `SendReactionInput.emoji === ''` remove uma reação
+enviada antes. Como a Z-API modela remoção como um endpoint dedicado (sem campo `reaction`), o
+adapter roteia `emoji === ''` para `/send-remove-reaction` em vez de mandar `reaction: ''` para
+`/send-reaction` (que não tem esse comportamento documentado).
+
+**Não confirmado nesta pesquisa**: shape do webhook de reação recebida (fora de escopo desta
+adição — `messages.sendReaction` cobre só o envio; `parseWebhook` continua sem mapear reações
+recebidas para `WaMessage.reaction`, que segue `kind: 'unknown'` quando o payload trouxer uma
+chave de reação, ver nota em `mapMessageContent`).
 
 ### Mapeamento de status → `InstanceState`
 

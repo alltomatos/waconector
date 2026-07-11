@@ -57,6 +57,7 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'instance.logout',
   'messages.sendText',
   'messages.sendMedia',
+  'messages.sendReaction',
   'webhooks.parse',
 ];
 
@@ -152,6 +153,27 @@ export function waha(options: WahaOptions): WaAdapter {
         method: 'POST',
         path: mediaEndpoint(input.media.kind),
         body: requestBody,
+      });
+      return mapSentMessage(body, chatId);
+    },
+
+    sendReaction: async (input) => {
+      // Schema `MessageReactionRequest`, endpoint `PUT /api/reaction` — a doc oficial avisa
+      // explicitamente que é PUT, não POST ("Reaction API uses PUT, not POST request!"). Não há
+      // campo `chatId` separado no schema: a mensagem-alvo (e portanto o chat) é resolvida pelo
+      // `messageId`, que já é o JID completo da mensagem (ex.:
+      // "false_11111111111@c.us_AAAAAAAAAAAAAAAAAAAA"). `input.to` não é enviado no body — segue
+      // como `requestedChatId` só para popular `SentMessage.chatId` no fallback de
+      // `mapSentMessage`, mesmo padrão usado em sendText/sendMedia.
+      const chatId = toWahaChatId(input.to);
+      const body = await http.request<unknown>({
+        method: 'PUT',
+        path: '/api/reaction',
+        body: {
+          session,
+          messageId: input.messageId,
+          reaction: input.emoji,
+        },
       });
       return mapSentMessage(body, chatId);
     },
