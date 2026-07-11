@@ -49,3 +49,19 @@ jobs:
           name: coverage-report
           path: coverage/
           retention-days: 14
+
+  ci-required:
+    # Jobs com matrix nunca reportam um check chamado exatamente "ci" — o GitHub sempre sufixa
+    # com o valor da matrix ("ci (20)", "ci (22)"). Como a branch ruleset exige um check chamado
+    # "ci", este job-portão agrega o resultado de toda a matrix sob esse nome exato.
+    name: ci
+    needs: ci
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Falhar se algum job da matrix não passou
+        run: |
+          if [ "${{ needs.ci.result }}" != "success" ]; then
+            echo "ci (matrix Node 20/22) não passou: ${{ needs.ci.result }}" >&2
+            exit 1
+          fi
