@@ -132,6 +132,7 @@ Estado: **in_progress**
       corretamente; o fixture de teste também mascarava o bug, mesmo padrão do bug histórico do QR
       no Wuzapi). `messages.sendReaction`/`instance.pairingCode`/`groups.*`/`contacts.*`
       confirmados suportados pelo provider mas deliberadamente adiados (fora do escopo desta fase).
+      Mergeado via [PR #24](https://github.com/alltomatos/waconector/pull/24).
 - [ ] Adapter QuePasa (self-hosted, Docker) — próximo (instrução direta do usuário: "faça whapi e
       depois o quepasa")
 - [ ] Adapter WPPConnect Server (self-hosted, Docker) — substitui Zapo na lista de providers-alvo
