@@ -1,0 +1,7 @@
+{
+  "type": "QR",
+  "event": "code",
+  "qrCodeBase64": "data:image/png;base64,QQ==",
+  "userID": "1",
+  "instanceName": "minha-sessao"
+}

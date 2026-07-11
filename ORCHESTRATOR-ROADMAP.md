@@ -49,14 +49,18 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       de webhook) — [PR #11](https://github.com/alltomatos/waconector/pull/11)
 - [x] Adapter Z-API (SaaS brasileiro) — dossiê, implementação e auditoria adversarial (achou e
       corrigiu 2 issues "major": endpoint /send-sticker existente mas descartado, e messageId de
-      citação em /send-text não mapeado) — PR pendente de abertura
-- [ ] Adapter: Wuzapi
-- [ ] Capabilities novas: grupos, contatos, reply/quote, reactions
+      citação em /send-text não mapeado) — [PR #12](https://github.com/alltomatos/waconector/pull/12)
+- [x] Adapter Wuzapi (self-hosted, whatsmeow) — dossiê pesquisado direto no código-fonte Go;
+      auditoria adversarial achou e corrigiu 1 bug real e sutil (QR code nunca extraído do webhook
+      porque o teste original mascarava o bug com um fixture que não refletia o payload real) —
+      PR pendente de abertura. **Fecha a lista original de 3 providers da F2** (uazapi/Z-API/Wuzapi).
+- [ ] Capabilities novas: grupos, contatos, reply/quote, reactions (ainda não iniciado)
 
 ## Marcos de release (v0.x)
 
 - [x] **v0.1.0** publicado no npm (2026-07-10/11) — F1 completa (WAHA + Evolution GO)
-- [ ] **v0.2.0** — uazapi + Z-API (changesets pendentes, aguardando decisão de quando publicar)
+- [ ] **v0.2.0** — uazapi + Z-API + Wuzapi (3 changesets pendentes, aguardando decisão de quando
+      publicar)
 
 ## Epic 4 — F3 do produto: profundidade e DX
 

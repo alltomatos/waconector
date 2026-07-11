@@ -1,0 +1,19 @@
+{
+  "type": "Message",
+  "userID": "1",
+  "instanceName": "minha-sessao",
+  "event": {
+    "Info": {
+      "ID": "3EB0FAKE00000000WUZ01",
+      "Chat": "5511999999999@s.whatsapp.net",
+      "Sender": "5511999999999@s.whatsapp.net",
+      "IsFromMe": false,
+      "IsGroup": false,
+      "PushName": "Fulano de Tal",
+      "Timestamp": "2026-07-11T10:00:00Z"
+    },
+    "Message": {
+      "conversation": "Ola, tudo bem?"
+    }
+  }
+}
