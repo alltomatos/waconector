@@ -7,12 +7,14 @@ import type {
   WebhookInput,
 } from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
+import { normalizeInviteLink } from '../../core/chat-id';
 import { WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, ConnectionUpdateEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
   ConnectResult,
   GroupInfo,
+  GroupInviteLink,
   GroupParticipant,
   InstanceState,
   MediaKind,
@@ -76,6 +78,10 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'groups.updateSubject',
   'groups.updateDescription',
   'groups.updatePicture',
+  'groups.getInviteLink',
+  'groups.revokeInviteLink',
+  'groups.joinViaInviteLink',
+  'groups.leaveGroup',
   'webhooks.parse',
 ];
 
@@ -291,6 +297,49 @@ export function waha(options: WahaOptions): WaAdapter {
         method: 'PUT',
         path: groupParticipantsPath(session, input.groupId, 'picture'),
         body: { file },
+      });
+    },
+
+    getInviteLink: async (groupId) => {
+      // GET /api/{session}/groups/{id}/invite-code. Resposta (openapi.json): STRING PURA (schema
+      // `type: string`), o código bare — a doc manda montar o link completo à mão
+      // ("then you can put it in the url https://chat.whatsapp.com/{inviteCode}").
+      // `normalizeInviteLink` faz essa montagem (ver docs/providers/waha.md#grupos-convite).
+      const body = await http.request<unknown>({
+        method: 'GET',
+        path: groupParticipantsPath(session, groupId, 'invite-code'),
+      });
+      return mapGroupInviteLink(body);
+    },
+
+    revokeInviteLink: async (groupId) => {
+      // POST /api/{session}/groups/{id}/invite-code/revoke. Mesmo shape de resposta de
+      // getInviteLink (string pura com o novo código bare) — mesma conversão.
+      const body = await http.request<unknown>({
+        method: 'POST',
+        path: groupParticipantsPath(session, groupId, 'invite-code/revoke'),
+      });
+      return mapGroupInviteLink(body);
+    },
+
+    joinViaInviteLink: async (input) => {
+      // POST /api/{session}/groups/join, body { code }. O conector já entrega `input.invite`
+      // sempre como link completo (prepareJoinViaInviteLink) — a doc do WAHA aceita tanto o link
+      // completo quanto o código bare em `code`, então repassamos direto, sem
+      // `extractInviteCode` (diferente do que outros providers podem precisar).
+      await http.request({
+        method: 'POST',
+        path: `/api/${encodeURIComponent(session)}/groups/join`,
+        body: { code: input.invite },
+      });
+    },
+
+    leaveGroup: async (groupId) => {
+      // POST /api/{session}/groups/{id}/leave. Sem body, sem schema de resposta relevante —
+      // contrato retorna void.
+      await http.request({
+        method: 'POST',
+        path: groupParticipantsPath(session, groupId, 'leave'),
       });
     },
   };
@@ -511,6 +560,18 @@ function mapGroupInfo(body: unknown, fallback: GroupInfoFallback = {}): GroupInf
     participants,
     raw: body,
   };
+}
+
+/**
+ * `getInviteLink`/`revokeInviteLink` do WAHA devolvem o corpo como STRING PURA (schema
+ * `type: string` no openapi.json), o código bare do convite — não um objeto. `HttpClient.request`
+ * já desembrulha tanto `"abc123"` (JSON) quanto `abc123` (texto puro) para uma string JS comum, daí
+ * bastar checar `typeof body === 'string'`. `normalizeInviteLink` garante o link completo exigido
+ * por `GroupInviteLink.link` mesmo partindo só do código.
+ */
+function mapGroupInviteLink(body: unknown): GroupInviteLink {
+  const code = typeof body === 'string' ? body : '';
+  return { link: normalizeInviteLink(code), raw: body };
 }
 
 function mapWahaStatus(status: string | undefined): InstanceState {

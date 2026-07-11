@@ -76,8 +76,15 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       Evolution GO/Wuzapi exigem data-URI com prefixo explícito; Wuzapi só aceita JPEG de fato,
       verificado por magic bytes no servidor). Mergeado via
       [PR #18](https://github.com/alltomatos/waconector/pull/18).
-- [ ] Capability `groups.*` — PR3 (convites + saída: invite link/join/leave), planejado, ainda
-      não iniciado
+- [x] Capability `groups.*` — PR3: convites + saída (`getInviteLink`/`revokeInviteLink`/
+      `joinViaInviteLink`/`leaveGroup`) nos 5 adapters. Link de convite normalizado no core
+      (`normalizeInviteLink`/`extractInviteCode` em `src/core/chat-id.ts`, diferente do `groupId`
+      opaco — o formato do link é uma constante do protocolo WhatsApp, não do provider). Achado
+      extra: uazapi devolve o link em campos com casing diferente por endpoint (`invite_link` em
+      `/group/info`, `InviteLink` em `/group/resetInviteCode`) — mesmo provider, não é erro de
+      digitação. **Fecha as 14 operações originalmente escopadas para `groups.*` (ADR-0009)** —
+      resta só popular os webhooks de atualização de grupo (`GroupUpdateEvent`), tratado como
+      incremento à parte pela confiança desigual dos payloads pesquisados por provider.
 - [ ] Capability `contacts.*` (escopo grande, ainda não iniciado)
 
 ## Marcos de release (v0.x)

@@ -170,3 +170,19 @@ export interface UpdateGroupPictureInput {
   /** `media.kind` deve ser `'image'` — grupos só aceitam foto, não vídeo/áudio/documento/figurinha. */
   media: MediaRef;
 }
+
+/**
+ * Link de convite de grupo. `link` é sempre o formato completo
+ * (`https://chat.whatsapp.com/<código>`), normalizado pelo core mesmo quando o provider devolve só
+ * o código bare (ver `normalizeInviteLink` em `chat-id.ts`) — diferente do `groupId` (opaco por
+ * provider), o link de convite é um formato universal do próprio WhatsApp.
+ */
+export interface GroupInviteLink {
+  link: string;
+  raw: unknown;
+}
+
+export interface JoinGroupInviteInput {
+  /** Código do convite OU link completo (`https://chat.whatsapp.com/<código>`) — ambos aceitos. */
+  invite: string;
+}

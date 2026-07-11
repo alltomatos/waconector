@@ -1,5 +1,6 @@
 import type { GroupsApi, InstanceApi, MessagesApi, WaAdapter, WebhookInput } from '../core/adapter';
 import { CAPABILITIES, type CapabilitySet } from '../core/capabilities';
+import { extractInviteCode, normalizeInviteLink } from '../core/chat-id';
 import { WaConnectorError } from '../core/errors';
 import type { CanonicalEvent } from '../core/events';
 import {
@@ -43,7 +44,9 @@ export class MockAdapter implements WaAdapter {
   private state: InstanceState;
   private seq = 0;
   private groupSeq = 0;
+  private inviteSeq = 0;
   private readonly groupsById = new Map<string, GroupInfo>();
+  private readonly groupIdByInviteCode = new Map<string, string>();
 
   constructor(options: MockAdapterOptions = {}) {
     this.provider = options.provider ?? 'mock';
@@ -127,6 +130,35 @@ export class MockAdapter implements WaAdapter {
       updatePicture: async ({ groupId }) => {
         this.assertConnected();
         this.requireGroup(groupId);
+      },
+      getInviteLink: async (groupId) => {
+        this.assertConnected();
+        this.requireGroup(groupId);
+        return this.issueInviteLink(groupId);
+      },
+      revokeInviteLink: async (groupId) => {
+        this.assertConnected();
+        this.requireGroup(groupId);
+        for (const [code, id] of this.groupIdByInviteCode) {
+          if (id === groupId) this.groupIdByInviteCode.delete(code);
+        }
+        return this.issueInviteLink(groupId);
+      },
+      joinViaInviteLink: async ({ invite }) => {
+        this.assertConnected();
+        const code = extractInviteCode(invite);
+        if (!this.groupIdByInviteCode.has(code)) {
+          throw new WaConnectorError(
+            'PROVIDER_ERROR',
+            `MockAdapter: código de convite "${code}" inválido ou expirado.`,
+            { provider: this.provider },
+          );
+        }
+      },
+      leaveGroup: async (groupId) => {
+        this.assertConnected();
+        this.requireGroup(groupId);
+        this.groupsById.delete(groupId);
       },
     };
   }
@@ -274,6 +306,12 @@ export class MockAdapter implements WaAdapter {
       });
     }
     return group;
+  }
+
+  private issueInviteLink(groupId: string): { link: string; raw: unknown } {
+    const code = `mock-invite-${++this.inviteSeq}`;
+    this.groupIdByInviteCode.set(code, groupId);
+    return { link: normalizeInviteLink(code), raw: { mock: true, groupId, code } };
   }
 
   private setAdminFlag(groupId: string, participants: string[], isAdmin: boolean): void {

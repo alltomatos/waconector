@@ -6,7 +6,7 @@ import type {
   WebhookInput,
 } from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
-import { digitsOnly, isJid } from '../../core/chat-id';
+import { digitsOnly, isJid, normalizeInviteLink } from '../../core/chat-id';
 import { WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
@@ -14,10 +14,12 @@ import type {
   ConnectResult,
   CreateGroupInput,
   GroupInfo,
+  GroupInviteLink,
   GroupParticipant,
   GroupParticipantsInput,
   InstanceState,
   InstanceStatus,
+  JoinGroupInviteInput,
   MediaKind,
   MediaRef,
   MessageAck,
@@ -92,6 +94,10 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'groups.updateSubject',
   'groups.updateDescription',
   'groups.updatePicture',
+  'groups.getInviteLink',
+  'groups.revokeInviteLink',
+  'groups.joinViaInviteLink',
+  'groups.leaveGroup',
   'webhooks.parse',
 ];
 
@@ -142,6 +148,10 @@ export function zapi(options: ZapiOptions): WaAdapter {
     updateSubject: (input) => updateGroupSubject(http, prefix, input),
     updateDescription: (input) => updateGroupDescription(http, prefix, input),
     updatePicture: (input) => updateGroupPicture(http, prefix, input),
+    getInviteLink: (groupId) => getGroupInviteLink(http, prefix, groupId),
+    revokeInviteLink: (groupId) => revokeGroupInviteLink(http, prefix, groupId),
+    joinViaInviteLink: (input) => joinGroupViaInviteLink(http, prefix, input),
+    leaveGroup: (groupId) => leaveGroupCall(http, prefix, groupId),
   };
 
   return {
@@ -678,6 +688,83 @@ async function updateGroupPicture(
     method: 'POST',
     path: `${prefix}/update-group-photo`,
     body: { groupId: input.groupId, groupPhoto: resolveMediaValue(input.media) },
+  });
+}
+
+/**
+ * `GET /group-invitation-link/{groupId}` — `groupId` no PATH, verbatim (opaco, ver nota acima).
+ * Resposta confirmada: `{ phone, invitationLink }` — `invitationLink` já vem como link completo
+ * (`https://chat.whatsapp.com/<código>`). Passa por `normalizeInviteLink` mesmo assim, como camada
+ * defensiva e idempotente (mesmo padrão adotado pelos adapters Evolution GO/Wuzapi para este mesmo
+ * campo) — não deveria alterar o valor na prática, mas protege contra alguma variação de resposta
+ * que devolva só o código bare.
+ */
+async function getGroupInviteLink(
+  http: HttpClient,
+  prefix: string,
+  groupId: string,
+): Promise<GroupInviteLink> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: `${prefix}/group-invitation-link/${groupId}`,
+  });
+  return mapGroupInviteLink(response);
+}
+
+/**
+ * `POST /redefine-invitation-link/{groupId}` — `groupId` no PATH, verbatim; SEM corpo (nenhum
+ * campo de corpo documentado para esta operação). Resposta confirmada: `{ invitationLink }` — o
+ * NOVO link completo do grupo (o link anterior deixa de funcionar a partir desta chamada). Mesmo
+ * mapeamento de `getGroupInviteLink`.
+ */
+async function revokeGroupInviteLink(
+  http: HttpClient,
+  prefix: string,
+  groupId: string,
+): Promise<GroupInviteLink> {
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: `${prefix}/redefine-invitation-link/${groupId}`,
+  });
+  return mapGroupInviteLink(response);
+}
+
+function mapGroupInviteLink(body: unknown): GroupInviteLink {
+  const record = asRecord(body);
+  const invitationLink = (record ? asString(record.invitationLink) : undefined) ?? '';
+  return { link: normalizeInviteLink(invitationLink), raw: body };
+}
+
+/**
+ * `GET /accept-invite-group` — query param `url` recebe a URL COMPLETA do convite (a doc não
+ * confirma que o endpoint aceita só o código bare, então `input.invite` — já normalizado como link
+ * completo pelo conector, ver `WaConnector.prepareJoinViaInviteLink` — é usado diretamente, SEM
+ * `extractInviteCode`). Resposta confirmada `{ success: true }` — ignorada, a operação canônica
+ * retorna `Promise<void>`. **Quirk de método**: é GET apesar do efeito colateral, mesma
+ * particularidade já documentada para `/disconnect` (ver `logoutInstance`).
+ */
+async function joinGroupViaInviteLink(
+  http: HttpClient,
+  prefix: string,
+  input: JoinGroupInviteInput,
+): Promise<void> {
+  await http.request({
+    method: 'GET',
+    path: `${prefix}/accept-invite-group`,
+    query: { url: input.invite },
+  });
+}
+
+/**
+ * `POST /leave-group`. Corpo `{ groupId }` — `groupId` no CORPO (diferente de
+ * `getGroupInviteLink`/`revokeGroupInviteLink`, que levam o groupId no path), verbatim (opaco, ver
+ * nota acima). Resposta confirmada `{ value: true }` — `void`.
+ */
+async function leaveGroupCall(http: HttpClient, prefix: string, groupId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/leave-group`,
+    body: { groupId },
   });
 }
 

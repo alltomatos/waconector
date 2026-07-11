@@ -110,7 +110,8 @@ dessa identidade.
 `messages.sendMedia`, `messages.sendReaction`, `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
-`groups.updatePicture`, `webhooks.parse`.
+`groups.updatePicture`, `groups.getInviteLink`, `groups.revokeInviteLink`,
+`groups.joinViaInviteLink`, `groups.leaveGroup`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada (ver justificativa acima).
 
@@ -213,10 +214,11 @@ demais adapters deste pacote).
 
 ## Grupos (núcleo)
 
-10 operações implementadas (ADR-0009): `groups.create`, `groups.getInfo`, `groups.list`,
+14 operações implementadas (ADR-0009): `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
-`groups.updatePicture`.
+`groups.updatePicture`, `groups.getInviteLink`, `groups.revokeInviteLink`,
+`groups.joinViaInviteLink`, `groups.leaveGroup`.
 
 | Operação canônica | Endpoint | Observações |
 | --- | --- | --- |
@@ -227,6 +229,35 @@ demais adapters deste pacote).
 | `groups.updateSubject` | `POST /group/name` | Body `{GroupJID, Name}`. `Name` recebe `input.subject` (já validado não-vazio pelo conector). Resposta: `{Details: "Group Name set successfully"}` — `Promise<void>`. |
 | `groups.updateDescription` | `POST /group/topic` | Body `{GroupJID, Topic}`. `Topic` **vazio é permitido** — limpa a descrição do grupo (internamente o provider passa `previousID`/`newID` vazios ao whatsmeow); não é tratado como erro. Resposta: `{Details: "Group Topic set successfully"}` — `Promise<void>`. |
 | `groups.updatePicture` | `POST /group/photo` | Body `{GroupJID, Image}`. Ver subseção dedicada abaixo — **só aceita JPEG de fato**. Resposta: `{Details: "Group Photo set successfully", PictureID}` — `PictureID` é ignorado, `Promise<void>`. |
+| `groups.getInviteLink` / `groups.revokeInviteLink` | `GET /group/invitelink` | **Mesmo endpoint**, variando só o parâmetro `reset` (`?groupJID=...&reset=false\|true`) — mesmo padrão de `addParticipants`/`removeParticipants`/etc. reaproveitando um único endpoint. `groupJID`/`reset` vão na **query string**, não no corpo (o exemplo de `curl` da doc oficial mostra `--data`, o que é enganoso — mesma divergência já confirmada em `getInfo`). `reset=false` busca o link atual sem invalidar; `reset=true` invalida o atual e gera um novo. Resposta: `{InviteLink: "https://chat.whatsapp.com/<código>"}`. Ver subseção dedicada abaixo. |
+| `groups.joinViaInviteLink` | `POST /group/join` | Body `{Code: string}` — **CONFIANÇA MÉDIA, não confirmado empiricamente**. Ver subseção dedicada abaixo. Resposta: `{Details: "Group joined successfully"}` — ignorada, `Promise<void>`. |
+| `groups.leaveGroup` | `POST /group/leave` | Body `{GroupJID: string}`. Resposta: `{Details: "Group left successfully"}` — ignorada, `Promise<void>`. |
+
+### `groups.getInviteLink`/`groups.revokeInviteLink` — link sempre completo
+
+A resposta confirmada de `GET /group/invitelink` (`data.InviteLink`) já vem no formato completo
+(`https://chat.whatsapp.com/<código>`) na pesquisa original, mas o adapter passa o valor por
+`normalizeInviteLink` (`core/chat-id.ts`) antes de retornar de qualquer forma — operação idempotente
+quando o valor já é o link completo, e defensiva caso alguma versão do servidor devolva só o código
+bare. `GroupInviteLink.link` do waconector é **sempre** o link completo, nunca o código bare (ver
+`core/types.ts`).
+
+### `groups.joinViaInviteLink` — assunção não validada: só o código, não o link completo
+
+O conector já normaliza `input.invite` para o link completo (`https://chat.whatsapp.com/<código>`)
+antes de chamar qualquer adapter (ver `WaConnector.prepareJoinViaInviteLink` em `core/connector.ts`)
+— não importa o que o consumidor final passou (código bare ou link completo), o adapter sempre
+recebe o link completo. **A pesquisa original para este provider não confirmou empiricamente se
+`POST /group/join` aceita a URL completa do convite ou exige só o código bare** — este adapter
+assume/trata como aceitando **só o código**, extraindo-o do link completo recebido via
+`extractInviteCode` (`core/chat-id.ts`) antes de montar `{Code: <código>}`. Se uma instância real
+confirmar que o endpoint aceita o link completo também (ou que rejeita o formato assumido aqui),
+este comportamento precisa ser revisto — não validado contra uma instância Wuzapi real.
+
+### `groups.leaveGroup`
+
+Sem particularidades além do já documentado: `groupId` é opaco, repassado intacto em `GroupJID`
+(mesmo tratamento de `getInfo`/`updateSubject`/etc.).
 
 ### `groups.updatePicture` — só aceita JPEG de fato (requisito rígido confirmado no código-fonte)
 

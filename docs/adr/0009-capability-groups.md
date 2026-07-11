@@ -1,7 +1,8 @@
 # ADR-0009: Capability `groups.*` — contrato de gestão de grupo
 
-- Status: aceito (núcleo + participantes + configurações implementados; convites/saída
-  planejado como incremento separado — ver "Consequências")
+- Status: aceito e implementado (todas as 14 operações — núcleo, participantes, configurações,
+  convites/saída — nos 5 adapters existentes). Webhooks de grupo (`GroupUpdateEvent`) seguem
+  como incremento separado — ver "Consequências".
 - Data: 2026-07-11
 
 ## Contexto
@@ -76,8 +77,15 @@ existência de eventos de webhook de atualização de grupo (o tipo `GroupUpdate
    é 100% responsabilidade do map-out de cada adapter.
 4. **Tipos novos em `src/core/types.ts`**: `GroupParticipant { id, isAdmin, isSuperAdmin }`,
    `GroupInfo { id, subject, description?, owner?, participants: GroupParticipant[], raw }`,
-   `CreateGroupInput { subject, participants }`, `InviteLink { link }`. `raw` sempre presente
-   (ADR-0002).
+   `CreateGroupInput { subject, participants }`, `GroupInviteLink { link, raw }`,
+   `JoinGroupInviteInput { invite }`. `raw` sempre presente (ADR-0002).
+6. **Link de convite é normalizado no core, diferente de `groupId`**: `GroupInviteLink.link` é
+   SEMPRE o link completo (`https://chat.whatsapp.com/<código>`), mesmo quando o provider devolve
+   só o código bare (ex.: WAHA). Diferente do `groupId` (opaco, específico de cada provider), o
+   formato do link de convite é uma constante do próprio protocolo WhatsApp — por isso as funções
+   `normalizeInviteLink`/`extractInviteCode` vivem no core (`src/core/chat-id.ts`), reutilizáveis
+   por qualquer adapter, e o conector normaliza `JoinGroupInviteInput.invite` para o link completo
+   antes de chamar o adapter (mesmo padrão de `normalizeChatId` para `to` de mensagens).
 5. **Webhooks de grupo tratados à parte**: popular `GroupUpdateEvent` é trabalho subsequente à
    implementação dos métodos de envio, condicionado a validar o payload contra uma instância real
    quando a confiança da pesquisa for média/baixa (uazapi, e os 8/10 valores não-exemplificados de
@@ -97,8 +105,11 @@ existência de eventos de webhook de atualização de grupo (o tipo `GroupUpdate
      `sendMedia`; Wuzapi de fato só aceita JPEG, verificado por magic bytes no servidor).
      "Remover foto" não foi incluído (não fazia parte das 14 operações originalmente escopadas);
      pode ser um incremento futuro se necessário.
-  3. **PR3 (pendente)**: convites + saída — `getInviteLink`, `revokeInviteLink`,
-     `joinViaInviteLink`, `leaveGroup`.
+  3. **PR3 (implementado)**: convites + saída — `getInviteLink`, `revokeInviteLink`,
+     `joinViaInviteLink`, `leaveGroup`. Descoberta adicional: uazapi devolve o link em campos com
+     casing diferente conforme o endpoint (`invite_link` snake_case em `/group/info`, `InviteLink`
+     PascalCase em `/group/resetInviteCode`) — mesmo provider, mesma informação, nomes diferentes;
+     documentado no dossiê para não ser confundido com erro de digitação.
   4. **Webhooks de grupo (pendente, incremento à parte)**: popular `GroupUpdateEvent` — confiança
      desigual por provider (WAHA alta, Evolution GO/Wuzapi reconstruída, uazapi e 8/10 tipos da
      Z-API baixa) exige validação contra instância real antes de travar parsers em produção.

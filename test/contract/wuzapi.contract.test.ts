@@ -182,6 +182,35 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'GET' && pathname === '/group/invitelink') {
+      const reset = url.searchParams.get('reset') === 'true';
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          InviteLink: reset
+            ? 'https://chat.whatsapp.com/CONTRATO_NOVO_CODIGO'
+            : 'CONTRATO_CODIGO_BARE',
+        },
+      });
+    }
+
+    if (method === 'POST' && pathname === '/group/join') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Group joined successfully' },
+      });
+    }
+
+    if (method === 'POST' && pathname === '/group/leave') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Group left successfully' },
+      });
+    }
+
     throw new Error(`fetchStub (wuzapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1040,6 +1069,115 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
       GroupJID: '120363000000000000@g.us',
       Image: 'data:image/jpeg;base64,ZmFrZS1mb3RvLWdydXBv',
     });
+  });
+
+  it('groups.getInviteLink chama GET /group/invitelink com groupJID/reset=false na query e normaliza código bare para link completo', async () => {
+    let capturedQuery: URLSearchParams | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/invitelink') {
+            capturedQuery = url.searchParams;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.getInviteLink('120363000000000000@g.us');
+
+    expect(capturedQuery?.get('groupJID')).toBe('120363000000000000@g.us');
+    expect(capturedQuery?.get('reset')).toBe('false');
+    // o stub devolve só o código bare para reset=false — o adapter deve completar o link.
+    expect(result.link).toBe('https://chat.whatsapp.com/CONTRATO_CODIGO_BARE');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('groups.revokeInviteLink chama o MESMO endpoint com reset=true e repassa o novo link completo', async () => {
+    let capturedQuery: URLSearchParams | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/invitelink') {
+            capturedQuery = url.searchParams;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.revokeInviteLink('120363000000000000@g.us');
+
+    expect(capturedQuery?.get('groupJID')).toBe('120363000000000000@g.us');
+    expect(capturedQuery?.get('reset')).toBe('true');
+    expect(result.link).toBe('https://chat.whatsapp.com/CONTRATO_NOVO_CODIGO');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('groups.joinViaInviteLink envia { Code } com SÓ O CÓDIGO (não o link completo) para POST /group/join', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/join') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    // o conector já normaliza "invite" para o link completo antes de chamar o adapter — mesmo
+    // passando só o código, o adapter deve extrair de volta só o código para o body.
+    await expect(
+      wa.groups.joinViaInviteLink({ invite: 'CONTRATO_CODIGO_CONVITE' }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ Code: 'CONTRATO_CODIGO_CONVITE' });
+  });
+
+  it('groups.joinViaInviteLink extrai o código de um link completo informado pelo chamador', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/join') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.joinViaInviteLink({
+      invite: 'https://chat.whatsapp.com/CONTRATO_CODIGO_CONVITE',
+    });
+
+    expect(capturedBody).toEqual({ Code: 'CONTRATO_CODIGO_CONVITE' });
+  });
+
+  it('groups.leaveGroup envia { GroupJID } para POST /group/leave', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/leave') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.groups.leaveGroup('120363000000000000@g.us')).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ GroupJID: '120363000000000000@g.us' });
   });
 
   it('envia o header "token" configurado em toda chamada', async () => {

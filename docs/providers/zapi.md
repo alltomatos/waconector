@@ -73,7 +73,8 @@ presa permanentemente a um número). Não há conceito de "sessão" separado do 
 `messages.sendMedia`, `messages.sendReaction`, `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
-`groups.updatePicture`, `webhooks.parse`.
+`groups.updatePicture`, `groups.getInviteLink`, `groups.revokeInviteLink`,
+`groups.joinViaInviteLink`, `groups.leaveGroup`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada: embora a Z-API suporte pareamento por código
 (`GET /phone-code/{phone}`), `InstanceApi.connect()` não recebe telefone como parâmetro nesta
@@ -194,6 +195,35 @@ pesquisa da documentação oficial da Z-API para esta adição — nenhuma chama
 confirmado se `groupPhoto` aceita OS DOIS formatos (URL e data URI base64) com a mesma flexibilidade
 documentada para os campos de mídia de `send-image`/`send-video`/etc., nem se a Z-API teria alguma
 exigência adicional (dimensão, proporção, tamanho máximo) para a foto de grupo.
+
+### Convite/saída de grupo (`getInviteLink`/`revokeInviteLink`/`joinViaInviteLink`/`leaveGroup`)
+
+Fonte primária: `developer.z-api.io/group/*` (páginas `group-invitation-link`,
+`redefine-invitation-link`, `accept-invite-group`, `leave-group`).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `groups.getInviteLink` | `GET /group-invitation-link/{groupId}` | `groupId` no **path**, verbatim (opaco, mesma convenção da tabela acima). Resposta confirmada: `{ phone, invitationLink }` — `invitationLink` já vem como link completo (`https://chat.whatsapp.com/<código>`). O adapter passa o valor por `normalizeInviteLink` mesmo assim (idempotente quando já é um link completo), como camada defensiva — mesmo padrão adotado pelos adapters Evolution GO/Wuzapi para este campo. |
+| `groups.revokeInviteLink` | `POST /redefine-invitation-link/{groupId}` | `groupId` no **path**, verbatim; **sem corpo** (nenhum campo de corpo documentado). Resposta confirmada: `{ invitationLink }` — o NOVO link completo (o anterior deixa de funcionar). Mesmo mapeamento de `getInviteLink` (via `normalizeInviteLink`). |
+| `groups.joinViaInviteLink` | `GET /accept-invite-group` | Query param `url` recebe a URL **completa** do convite — a doc não confirma que o endpoint aceita só o código bare, então o adapter usa `input.invite` diretamente (já normalizado como link completo pelo conector, ver `WaConnector.prepareJoinViaInviteLink`), **sem** `extractInviteCode`. Resposta confirmada `{ success: true }` — ignorada (`Promise<void>`). **Quirk de método**: é `GET` apesar do efeito colateral, mesma particularidade já documentada para `/disconnect`. |
+| `groups.leaveGroup` | `POST /leave-group` | Corpo `{ groupId }` — `groupId` no **corpo** (diferente das duas operações de convite acima, que levam no path), verbatim (opaco). Resposta confirmada `{ value: true }` — `void`. |
+
+**Assunções não validadas contra uma instância real (as quatro operações acima)**: nenhuma chamada
+real foi feita contra `api.z-api.io/.../group-invitation-link`, `/redefine-invitation-link`,
+`/accept-invite-group` ou `/leave-group` durante o levantamento (sem credenciais) — rotas, nomes de
+campo e shapes de resposta vêm só da documentação oficial. Em particular:
+
+- Não confirmado se `GET /accept-invite-group` de fato aceita a URL completa do convite no query
+  param `url` (em vez de só o código bare) — a doc não traz um exemplo de requisição completo para
+  este endpoint. Diferente do Wuzapi (que a pesquisa já marca como **confiança média** e trata como
+  aceitando só o código, via `extractInviteCode`), aqui a decisão foi enviar o link completo por
+  ausência de evidência em contrário — se uma instância real rejeitar esse formato, a correção é
+  trocar para `extractInviteCode(input.invite)` no query param.
+- Não confirmado se `POST /redefine-invitation-link/{groupId}` de fato dispensa corpo, ou se aceita/
+  exige algum campo opcional não documentado.
+- Não confirmado o comportamento de `GET /accept-invite-group`/`POST /leave-group` quando o
+  chamador já é membro do grupo (idempotência) ou quando o convite expirou/foi revogado — a doc não
+  documenta um código de erro dedicado para nenhum desses casos.
 
 ### Limitações e assunções não confirmadas contra uma instância real
 

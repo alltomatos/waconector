@@ -66,6 +66,15 @@ describe('capabilities no conector', () => {
       }),
     );
     expect(updatePictureFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const getInviteLinkFailure = await reject(wa.groups.getInviteLink('grupo-1'));
+    expect(getInviteLinkFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const revokeInviteLinkFailure = await reject(wa.groups.revokeInviteLink('grupo-1'));
+    expect(revokeInviteLinkFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const joinFailure = await reject(wa.groups.joinViaInviteLink({ invite: 'codigo-123' }));
+    expect(joinFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const leaveFailure = await reject(wa.groups.leaveGroup('grupo-1'));
+    expect(leaveFailure).toBeInstanceOf(UnsupportedCapabilityError);
   });
 
   it('adapter que declara messages.sendReaction sem implementar o método falha com PROVIDER_ERROR (bug do adapter, não entrada inválida)', async () => {
@@ -153,6 +162,41 @@ describe('validação e normalização de groups.*', () => {
     const wa = createConnector(adapter);
     const failure = await reject(wa.groups.getInfo(''));
     expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('rejeita groupId vazio em getInviteLink/revokeInviteLink/leaveGroup com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const getInviteFailure = await reject(wa.groups.getInviteLink(''));
+    expect(isWaConnectorError(getInviteFailure) && getInviteFailure.code === 'INVALID_INPUT').toBe(
+      true,
+    );
+    const revokeFailure = await reject(wa.groups.revokeInviteLink(''));
+    expect(isWaConnectorError(revokeFailure) && revokeFailure.code === 'INVALID_INPUT').toBe(true);
+    const leaveFailure = await reject(wa.groups.leaveGroup(''));
+    expect(isWaConnectorError(leaveFailure) && leaveFailure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('rejeita invite vazio em groups.joinViaInviteLink com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const failure = await reject(wa.groups.joinViaInviteLink({ invite: '' }));
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('normaliza invite (código bare ou link completo) para o link completo antes de entregar ao adapter', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({ subject: 'Time', participants: ['5585999999999'] });
+    const { link } = await wa.groups.getInviteLink(group.id);
+    const bareCode = link.replace('https://chat.whatsapp.com/', '');
+
+    // Aceita tanto o código bare quanto o link completo — ambos resolvem ao mesmo convite.
+    await expect(wa.groups.joinViaInviteLink({ invite: bareCode })).resolves.toBeUndefined();
+    await expect(wa.groups.joinViaInviteLink({ invite: link })).resolves.toBeUndefined();
   });
 
   it('normaliza participantes (telefone vira só-dígitos) antes de entregar ao adapter, mas preserva o groupId opaco intacto', async () => {
