@@ -1,0 +1,17 @@
+{
+  "id": "quepasa-group-join-0001",
+  "timestamp": "2026-07-11T21:20:00Z",
+  "type": "group",
+  "chat": { "id": "123456789-987654321@g.us", "title": "Grupo de Teste" },
+  "text": "joined group",
+  "fromme": false,
+  "frominternal": false,
+  "wid": "5511888888888",
+  "info": {
+    "Owner": "5511888888888@s.whatsapp.net",
+    "Created": "2026-01-01T00:00:00Z",
+    "Participants": 5,
+    "Reason": "",
+    "Type": ""
+  }
+}

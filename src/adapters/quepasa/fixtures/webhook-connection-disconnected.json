@@ -1,0 +1,18 @@
+{
+  "id": "b6b9b2f1-quepasa-system-0002",
+  "timestamp": "2026-07-11T21:20:00Z",
+  "type": "system",
+  "chat": { "id": "system", "title": "Internal System Message" },
+  "text": "conexão perdida com o WhatsApp",
+  "fromme": false,
+  "frominternal": false,
+  "wid": "5511888888888",
+  "info": {
+    "event": "disconnected",
+    "cause": "stream-error",
+    "details": "conexão perdida com o WhatsApp",
+    "wid": "5511888888888",
+    "phone": "5511888888888",
+    "timestamp": "2026-07-11T21:20:00Z"
+  }
+}

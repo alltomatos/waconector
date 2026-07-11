@@ -1,0 +1,13 @@
+{
+  "id": "b6b9b2f1-quepasa-system-0003",
+  "timestamp": "2026-07-11T21:09:30Z",
+  "type": "system",
+  "chat": { "id": "system", "title": "Internal System Message" },
+  "text": "",
+  "fromme": false,
+  "frominternal": false,
+  "wid": "",
+  "info": {
+    "event": "qr_scan"
+  }
+}

@@ -10,6 +10,7 @@ export default defineConfig({
     'adapters/zapi/index': 'src/adapters/zapi/index.ts',
     'adapters/wuzapi/index': 'src/adapters/wuzapi/index.ts',
     'adapters/whapi/index': 'src/adapters/whapi/index.ts',
+    'adapters/quepasa/index': 'src/adapters/quepasa/index.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,

@@ -1,0 +1,16 @@
+{
+  "id": "b6b9b2f1-quepasa-system-0001",
+  "timestamp": "2026-07-11T21:10:00Z",
+  "type": "system",
+  "chat": { "id": "system", "title": "Internal System Message" },
+  "text": "connected",
+  "fromme": false,
+  "frominternal": false,
+  "wid": "5511888888888",
+  "info": {
+    "event": "connected",
+    "wid": "5511888888888",
+    "phone": "5511888888888",
+    "timestamp": "2026-07-11T21:10:00Z"
+  }
+}
