@@ -42,7 +42,10 @@ Estado: **done**
 
 ## Epic 3 — F2 do produto: largura
 
-Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
+Estado: **done** (detalhe completo em docs/CONTEXT.md#roadmap). `getPresence` fica deliberadamente
+fora do escopo original — majoritariamente assíncrono/webhook em 4 dos 5 providers, precisa de
+desenho próprio (provavelmente um evento canônico novo, não uma capability request-response) —
+tratado como incremento futuro separado, não uma pendência desta Epic.
 
 - [x] Adapter uazapi (SaaS multi-tenant) — dossiê, implementação e auditoria adversarial (achou e
       corrigiu 2 issues "major": suposição errada de `messageType` e risco de formato de envelope
