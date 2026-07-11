@@ -1,0 +1,16 @@
+{
+  "id": "3EB0quepasa-document-0003",
+  "timestamp": "2026-07-11T21:16:40Z",
+  "type": "document",
+  "chat": { "id": "5511999999999@s.whatsapp.net", "title": "Fulano" },
+  "text": "segue o contrato",
+  "fromme": false,
+  "frominternal": false,
+  "wid": "5511888888888",
+  "attachment": {
+    "mime": "application/pdf",
+    "filename": "contrato.pdf",
+    "url": "https://cdn.exemplo.test/contrato.pdf",
+    "filelength": 204800
+  }
+}

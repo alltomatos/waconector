@@ -1,7 +1,7 @@
 /**
  * Smoke test do pacote EMPACOTADO (dist/): valida o mapa de exports em ESM e
  * CJS — incluindo os subpath exports de adapter (`./waha`, `./evolution`,
- * `./uazapi`, `./zapi`, `./wuzapi`, `./whapi`) — e exercita o fluxo completo com o
+ * `./uazapi`, `./zapi`, `./wuzapi`, `./whapi`, `./quepasa`) — e exercita o fluxo completo com o
  * MockAdapter. Roda após `npm run build`. Ao adicionar um adapter novo,
  * estenda ADAPTER_SUBPATHS abaixo em vez de duplicar o bloco de asserções.
  */
@@ -26,6 +26,7 @@ const ADAPTER_SUBPATHS = [
   },
   { name: 'wuzapi', factory: 'wuzapi', options: { baseUrl: 'http://localhost:1', token: 'x' } },
   { name: 'whapi', factory: 'whapi', options: { baseUrl: 'http://localhost:1', token: 'x' } },
+  { name: 'quepasa', factory: 'quepasa', options: { baseUrl: 'http://localhost:1', token: 'x' } },
 ];
 
 const require = createRequire(import.meta.url);

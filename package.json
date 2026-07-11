@@ -108,6 +108,16 @@
         "default": "./dist/adapters/whapi/index.cjs"
       }
     },
+    "./quepasa": {
+      "import": {
+        "types": "./dist/adapters/quepasa/index.d.ts",
+        "default": "./dist/adapters/quepasa/index.js"
+      },
+      "require": {
+        "types": "./dist/adapters/quepasa/index.d.cts",
+        "default": "./dist/adapters/quepasa/index.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.cjs",

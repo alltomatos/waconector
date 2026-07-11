@@ -1,0 +1,11 @@
+{
+  "id": "3EB0quepasa-received-0001",
+  "trackid": "",
+  "timestamp": "2026-07-11T21:14:24Z",
+  "type": "text",
+  "chat": { "id": "5511999999999@s.whatsapp.net", "title": "Fulano" },
+  "text": "Hello world",
+  "fromme": false,
+  "frominternal": false,
+  "wid": "5511888888888"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "readreceipt",
+  "timestamp": "2026-07-11T21:15:09Z",
+  "type": "system",
+  "chat": { "id": "5511999999999@s.whatsapp.net", "title": "Fulano" },
+  "text": "3EB0quepasa-sent-0002",
+  "fromme": false,
+  "frominternal": false,
+  "wid": "5511888888888"
+}
