@@ -5,6 +5,12 @@ on:
     branches: [main, develop]
   pull_request:
 
+# Least privilege: nenhum job aqui precisa escrever no repositório (só ler código e publicar
+# artifact, que não exige permissão própria) — CodeQL sinaliza workflows sem "permissions"
+# explícito porque o GITHUB_TOKEN default varia de repo pra repo.
+permissions:
+  contents: read
+
 jobs:
   guard-main-source:
     # main só recebe merge vindo de develop (ver CONTRIBUTING.md e a skill waconector).
