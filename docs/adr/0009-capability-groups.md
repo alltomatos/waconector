@@ -66,7 +66,7 @@ existência de eventos de webhook de atualização de grupo (o tipo `GroupUpdate
    no conector via um `ConnectorGroupsApi` sempre presente (mesmo padrão dual do ADR-0008).
 2. **Toda operação de `GroupsApi` é opcional na interface do adapter** (`createGroup?`,
    `getInfo?`, ...) — mesmo as 14 sendo suportadas por todos os 5 adapters atuais. Motivo: F3 vai
-   trazer Whapi/Zapo/QuePasa, que podem não cobrir tudo; declarar mandatório agora e quebrar depois
+   trazer Whapi/WPPConnect/QuePasa, que podem não cobrir tudo; declarar mandatório agora e quebrar depois
    seria uma mudança breaking evitável. Cada operação vira sua própria capability
    (`groups.create`, `groups.getInfo`, `groups.list`, `groups.addParticipants`,
    `groups.removeParticipants`, `groups.promoteParticipants`, `groups.demoteParticipants`,

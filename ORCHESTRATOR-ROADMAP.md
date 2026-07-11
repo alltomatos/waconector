@@ -120,7 +120,7 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
 
 Estado: **todo**
 
-- [ ] Adapters: Whapi, Zapo, QuePasa
+- [ ] Adapters: Whapi, WPPConnect, QuePasa
 - [ ] Site de docs com matriz de capabilities gerada do código
 - [ ] Exemplos de bot (Express/Next), `npx waconector doctor`
 

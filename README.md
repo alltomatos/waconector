@@ -14,7 +14,7 @@ e suite de contrato prontos; adapters **WAHA**, **Evolution GO** (F1), **uazapi*
 
 ## O problema
 
-uazapi, WAHA, Evolution GO, Wuzapi, Whapi, Z-API, Zapo, QuePasa... todas fazem as mesmas
+uazapi, WAHA, Evolution GO, Wuzapi, Whapi, Z-API, WPPConnect, QuePasa... todas fazem as mesmas
 operações — conectar instância, enviar texto/mídia, receber mensagens via webhook — mas cada uma
 com auth, endpoints, payloads e eventos diferentes. Integrar com uma é fácil; ficar refém dela,
 também.
@@ -75,7 +75,7 @@ em memória. Use `simulateConnected()` para pular direto ao estado `connected`, 
 | --- | --- | --- | --- | --- |
 | WAHA | ✅ F1 | | Z-API | ✅ F2 |
 | Evolution GO | ✅ F1 | | Whapi | F3 (planejado) |
-| uazapi | ✅ F2 | | Zapo | F3 (planejado) |
+| uazapi | ✅ F2 | | WPPConnect | F3 (planejado) |
 | Wuzapi | ✅ F2 | | QuePasa | F3 (planejado) |
 
 Roadmap completo e arquitetura em [docs/CONTEXT.md](docs/CONTEXT.md); decisões registradas em

@@ -23,7 +23,7 @@ body:
       options:
         - label: WAHA
         - label: Evolution GO
-        - label: uazapi / Z-API / Wuzapi / Whapi / Zapo / QuePasa (especifique qual, abaixo)
+        - label: uazapi / Z-API / Wuzapi / Whapi / WPPConnect / QuePasa (especifique qual, abaixo)
         - label: Não sei / não se aplica
   - type: textarea
     id: alternatives

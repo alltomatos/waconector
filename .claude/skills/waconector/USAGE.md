@@ -21,7 +21,7 @@ const wa = createConnector(
 ```
 
 Hoje só existem adapters WAHA e Evolution GO (fase F1). Se o pedido for outro provider (uazapi,
-Z-API, Wuzapi, Whapi, Zapo, QuePasa), ele **não está implementado ainda** — aponte para o workflow
+Z-API, Wuzapi, Whapi, WPPConnect, QuePasa), ele **não está implementado ainda** — aponte para o workflow
 de contribuição ([CONTRIBUTING-WORKFLOW.md](CONTRIBUTING-WORKFLOW.md)) ou para o template de issue
 "novo adapter" no repo; não invente um adapter inline.
 
