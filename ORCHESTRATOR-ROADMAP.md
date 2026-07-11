@@ -42,10 +42,18 @@ Estado: **done**
 
 ## Epic 3 — F2 do produto: largura
 
-Estado: **todo** (detalhe completo em docs/CONTEXT.md#roadmap)
+Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
 
-- [ ] Adapters: uazapi, Z-API, Wuzapi
+- [x] Adapter uazapi (SaaS multi-tenant) — dossiê, implementação e auditoria adversarial (achou e
+      corrigiu 2 issues "major": suposição errada de `messageType` e risco de formato de envelope
+      de webhook) — [PR #11](https://github.com/alltomatos/waconector/pull/11)
+- [ ] Adapters: Z-API, Wuzapi
 - [ ] Capabilities novas: grupos, contatos, reply/quote, reactions
+
+## Marcos de release (v0.x)
+
+- [x] **v0.1.0** publicado no npm (2026-07-10/11) — F1 completa (WAHA + Evolution GO)
+- [ ] **v0.2.0** — uazapi (após merge do PR #11)
 
 ## Epic 4 — F3 do produto: profundidade e DX
 
