@@ -59,7 +59,8 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       adapters existentes (uazapi, Evolution GO, WAHA, Z-API, Wuzapi), cada um traduzindo a
       convenção canônica de "emoji vazio remove" para a particularidade real do provider
       (sentinel `"remove"` no Evolution GO/Wuzapi, endpoint dedicado `/send-remove-reaction` na
-      Z-API). `reply/quote` já estava coberto via `quotedId` (nenhuma mudança necessária).
+      Z-API). `reply/quote` já estava coberto via `quotedId` (nenhuma mudança necessária). Retrofit
+      mergeado via [PR #16](https://github.com/alltomatos/waconector/pull/16).
 - [ ] Capabilities novas: grupos, contatos (escopo grande, ainda não iniciado)
 
 ## Marcos de release (v0.x)
