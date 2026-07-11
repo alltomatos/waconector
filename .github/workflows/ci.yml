@@ -13,15 +13,25 @@ permissions:
 
 jobs:
   guard-main-source:
-    # main só recebe merge vindo de develop (ver CONTRIBUTING.md e a skill waconector).
-    # O GitHub não tem uma regra de proteção nativa para "só aceitar PR de um branch
-    # específico" — este job é a aplicação técnica dessa regra.
+    # main só recebe merge vindo de develop DESTE repositório (ver CONTRIBUTING.md e a skill
+    # waconector). O GitHub não tem uma regra de proteção nativa para "só aceitar PR de um branch
+    # específico" — este job é a aplicação técnica dessa regra. Checar só o nome do branch
+    # (github.head_ref) não basta: um fork pode ter uma branch chamada literalmente "develop" e
+    # passaria no check sem vir do develop real. Por isso também comparamos o repositório de
+    # origem do PR (github.event.pull_request.head.repo.full_name) contra este repositório.
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-latest
     steps:
-      - name: PRs para main devem vir de develop
-        if: github.head_ref != 'develop'
+      - name: PRs para main devem vir de develop (deste repositório, não de um fork)
+        if: |
+          github.head_ref != 'develop' ||
+          github.event.pull_request.head.repo.full_name != github.repository
         run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "PRs para main só são aceitos a partir do develop DESTE repositório. Este PR vem" >&2
+            echo "de um fork (${{ github.event.pull_request.head.repo.full_name }}), não de ${{ github.repository }} — rejeitado independente do nome do branch." >&2
+            exit 1
+          fi
           echo "PRs para main só são aceitos a partir de develop (branch atual: ${{ github.head_ref }})." >&2
           exit 1
 
