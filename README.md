@@ -66,7 +66,8 @@ await wa.webhooks.dispatch(adapter.buildIncomingText('5585988887777', 'oi'));
 
 `waconector/testing` publica o `MockAdapter` — instância simulada, `outbox` de envios e webhooks
 sintéticos (`buildIncomingText`, `buildAck`, `buildConnectionUpdate`). Seu bot inteiro é testável
-em memória.
+em memória. Use `simulateConnected()` para pular direto ao estado `connected`, ou
+`simulateState(state)` para forçar qualquer outro estado do ciclo de vida (ex.: `'qr'`).
 
 ## Providers
 
