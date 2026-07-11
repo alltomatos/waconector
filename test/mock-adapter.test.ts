@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { createConnector } from '../src';
+import { createConnector, isWaConnectorError } from '../src';
 import { MockAdapter } from '../src/testing';
+
+async function reject(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+}
 
 describe('MockAdapter: ciclo de vida da instância', () => {
   it('transita disconnected → qr → connected → disconnected', async () => {
@@ -80,6 +87,79 @@ describe('MockAdapter: outbox', () => {
       messageId: 'msg-1',
       emoji: '👍',
     });
+  });
+});
+
+describe('MockAdapter: groups', () => {
+  it('cria um grupo e permite consultá-lo via getInfo/list', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const group = await wa.groups.create({
+      subject: 'Time',
+      participants: ['5585999999999', '5585988888888'],
+    });
+    expect(group.id).toBeTruthy();
+    expect(group.subject).toBe('Time');
+    expect(group.participants).toHaveLength(2);
+    expect(group.participants.every((p) => p.isAdmin === false)).toBe(true);
+
+    const info = await wa.groups.getInfo(group.id);
+    expect(info).toEqual(group);
+
+    const list = await wa.groups.list();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.id).toBe(group.id);
+  });
+
+  it('getInfo de um grupo inexistente falha com PROVIDER_ERROR', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const failure = await reject(wa.groups.getInfo('nao-existe'));
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('groups.create exige instância conectada (INSTANCE_DISCONNECTED)', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+    const failure = await reject(
+      wa.groups.create({ subject: 'Time', participants: ['5585999999999'] }),
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'INSTANCE_DISCONNECTED').toBe(true);
+  });
+
+  it('addParticipants/removeParticipants adicionam e removem participantes do grupo', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({ subject: 'Time', participants: ['5585999999999'] });
+
+    await wa.groups.addParticipants({ groupId: group.id, participants: ['5585988888888'] });
+    let info = await wa.groups.getInfo(group.id);
+    expect(info.participants.map((p) => p.id).sort()).toEqual(
+      ['5585988888888', '5585999999999'].sort(),
+    );
+
+    await wa.groups.removeParticipants({ groupId: group.id, participants: ['5585999999999'] });
+    info = await wa.groups.getInfo(group.id);
+    expect(info.participants.map((p) => p.id)).toEqual(['5585988888888']);
+  });
+
+  it('promoteParticipants/demoteParticipants alternam a flag isAdmin', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({ subject: 'Time', participants: ['5585999999999'] });
+
+    await wa.groups.promoteParticipants({ groupId: group.id, participants: ['5585999999999'] });
+    let info = await wa.groups.getInfo(group.id);
+    expect(info.participants[0]?.isAdmin).toBe(true);
+
+    await wa.groups.demoteParticipants({ groupId: group.id, participants: ['5585999999999'] });
+    info = await wa.groups.getInfo(group.id);
+    expect(info.participants[0]?.isAdmin).toBe(false);
   });
 });
 

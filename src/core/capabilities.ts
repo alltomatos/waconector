@@ -14,6 +14,13 @@ export const CAPABILITIES = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'groups.create',
+  'groups.getInfo',
+  'groups.list',
+  'groups.addParticipants',
+  'groups.removeParticipants',
+  'groups.promoteParticipants',
+  'groups.demoteParticipants',
   'webhooks.parse',
 ] as const;
 

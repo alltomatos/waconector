@@ -37,6 +37,19 @@ describe('capabilities no conector', () => {
       wa.messages.sendReaction({ to: '5585999999999', messageId: 'm1', emoji: '👍' }),
     );
     expect(reactionFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const createFailure = await reject(
+      wa.groups.create({ subject: 'Grupo', participants: ['5585999999999'] }),
+    );
+    expect(createFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const getInfoFailure = await reject(wa.groups.getInfo('grupo-1'));
+    expect(getInfoFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const listFailure = await reject(wa.groups.list());
+    expect(listFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const addFailure = await reject(
+      wa.groups.addParticipants({ groupId: 'grupo-1', participants: ['5585999999999'] }),
+    );
+    expect(addFailure).toBeInstanceOf(UnsupportedCapabilityError);
   });
 
   it('adapter que declara messages.sendReaction sem implementar o método falha com PROVIDER_ERROR (bug do adapter, não entrada inválida)', async () => {
@@ -51,6 +64,67 @@ describe('capabilities no conector', () => {
       wa.messages.sendReaction({ to: '5585999999999', messageId: 'm1', emoji: '👍' }),
     );
     expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('adapter que declara groups.create sem implementar o método falha com PROVIDER_ERROR', async () => {
+    const adapter = new MockAdapter({ capabilities: ['groups.create', 'webhooks.parse'] });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (capability declarada sem método) para testar o guard-rail do conector.
+    (adapter.groups as any).create = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(
+      wa.groups.create({ subject: 'Grupo', participants: ['5585999999999'] }),
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+});
+
+describe('validação e normalização de groups.*', () => {
+  it('rejeita subject vazio em groups.create com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const failure = await reject(
+      wa.groups.create({ subject: '', participants: ['5585999999999'] }),
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('rejeita participants vazio em groups.create com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const failure = await reject(wa.groups.create({ subject: 'Grupo', participants: [] }));
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('rejeita groupId vazio em groups.getInfo com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const failure = await reject(wa.groups.getInfo(''));
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('normaliza participantes (telefone vira só-dígitos) antes de entregar ao adapter, mas preserva o groupId opaco intacto', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({
+      subject: 'Grupo',
+      participants: ['+55 (85) 99999-9999'],
+    });
+    expect(group.participants[0]?.id).toBe('5585999999999');
+
+    // groupId é opaco (ver ADR-0009): mesmo um ID no formato sintético da Z-API
+    // ("<id>-group", sem "@") deve ir e voltar intacto, sem passar por normalizeChatId.
+    await wa.groups.addParticipants({
+      groupId: group.id,
+      participants: ['+55 (85) 98888-8888'],
+    });
+    const info = await wa.groups.getInfo(group.id);
+    expect(info.id).toBe(group.id);
+    expect(info.participants.some((p) => p.id === '5585988888888')).toBe(true);
   });
 });
 

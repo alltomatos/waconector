@@ -1,11 +1,19 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import type { InstanceApi, MessagesApi, WaAdapter, WebhookInput } from '../../core/adapter';
+import type {
+  GroupsApi,
+  InstanceApi,
+  MessagesApi,
+  WaAdapter,
+  WebhookInput,
+} from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
 import { WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, ConnectionUpdateEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
   ConnectResult,
+  GroupInfo,
+  GroupParticipant,
   InstanceState,
   MediaKind,
   MediaRef,
@@ -58,6 +66,13 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'groups.create',
+  'groups.getInfo',
+  'groups.list',
+  'groups.addParticipants',
+  'groups.removeParticipants',
+  'groups.promoteParticipants',
+  'groups.demoteParticipants',
   'webhooks.parse',
 ];
 
@@ -179,11 +194,75 @@ export function waha(options: WahaOptions): WaAdapter {
     },
   };
 
+  const groups: GroupsApi = {
+    create: async (input) => {
+      const body = await http.request<unknown>({
+        method: 'POST',
+        path: `/api/${encodeURIComponent(session)}/groups`,
+        body: {
+          name: input.subject,
+          participants: toWahaParticipants(input.participants),
+        },
+      });
+      return mapGroupInfo(body, { subject: input.subject, participants: input.participants });
+    },
+
+    getInfo: async (groupId) => {
+      const body = await http.request<unknown>({
+        method: 'GET',
+        path: `/api/${encodeURIComponent(session)}/groups/${encodeURIComponent(toWahaGroupId(groupId))}`,
+      });
+      return mapGroupInfo(body, { id: groupId });
+    },
+
+    list: async () => {
+      const body = await http.request<unknown>({
+        method: 'GET',
+        path: `/api/${encodeURIComponent(session)}/groups`,
+      });
+      const items = Array.isArray(body) ? body : [];
+      return items.map((item) => mapGroupInfo(item));
+    },
+
+    addParticipants: async (input) => {
+      await http.request({
+        method: 'POST',
+        path: groupParticipantsPath(session, input.groupId, 'participants/add'),
+        body: { participants: toWahaParticipants(input.participants) },
+      });
+    },
+
+    removeParticipants: async (input) => {
+      await http.request({
+        method: 'POST',
+        path: groupParticipantsPath(session, input.groupId, 'participants/remove'),
+        body: { participants: toWahaParticipants(input.participants) },
+      });
+    },
+
+    promoteParticipants: async (input) => {
+      await http.request({
+        method: 'POST',
+        path: groupParticipantsPath(session, input.groupId, 'admin/promote'),
+        body: { participants: toWahaParticipants(input.participants) },
+      });
+    },
+
+    demoteParticipants: async (input) => {
+      await http.request({
+        method: 'POST',
+        path: groupParticipantsPath(session, input.groupId, 'admin/demote'),
+        body: { participants: toWahaParticipants(input.participants) },
+      });
+    },
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WAHA_CAPABILITIES,
     instance,
     messages,
+    groups,
     parseWebhook: (input) => parseWahaWebhook(input, session, options.webhookHmacKey),
   };
 }
@@ -217,6 +296,32 @@ function toWahaChatId(canonical: string): string {
 function toWahaMention(entry: string): string {
   if (entry === 'all') return entry;
   return toWahaChatId(entry);
+}
+
+/**
+ * Converte o `groupId` opaco (ver ADR-0009) para o JID de grupo que o WAHA espera no path `{id}`
+ * (`<dígitos>@g.us`). Diferente de `toWahaChatId` (pensado para `chatId` de mensagem, cujo domínio
+ * padrão é `@c.us`), aqui o domínio padrão é `@g.us` — reaproveitar `toWahaChatId` cegamente
+ * produziria `<dígitos>@c.us`, incorreto para um grupo. Ver docs/providers/waha.md#grupos-núcleo.
+ */
+function toWahaGroupId(groupId: string): string {
+  return groupId.includes('@') ? groupId : `${groupId}@g.us`;
+}
+
+/**
+ * Participantes individuais (dentro de `participants: string[]`), ao contrário do `groupId`, já
+ * chegam normalizados pelo conector (telefone vira só-dígitos, JID passa intacto) — mesmo formato
+ * de um `to` de mensagem comum, então reaproveitamos `toWahaChatId` para cada um antes de montar o
+ * objeto `{ id }` que os endpoints de grupo do WAHA esperam (`createGroup`,
+ * `participants/add|remove`, `admin/promote|demote`).
+ */
+function toWahaParticipants(participants: readonly string[]): Array<{ id: string }> {
+  return participants.map((participant) => ({ id: toWahaChatId(participant) }));
+}
+
+/** Monta o path `/api/{session}/groups/{id}/<suffix>` com `groupId` já convertido para `@g.us`. */
+function groupParticipantsPath(session: string, groupId: string, suffix: string): string {
+  return `/api/${encodeURIComponent(session)}/groups/${encodeURIComponent(toWahaGroupId(groupId))}/${suffix}`;
 }
 
 interface WahaRemoteFile {
@@ -286,6 +391,75 @@ function mapSentMessage(body: unknown, requestedChatId: string): SentMessage {
     id,
     chatId,
     timestamp: timestampRaw === undefined ? undefined : normalizeTimestamp(timestampRaw),
+    raw: body,
+  };
+}
+
+/**
+ * Mapeia um participante de grupo do WAHA (schema inferido por cross-reference com o webhook
+ * `group.v2.join`, ver docs/providers/waha.md#grupos-núcleo) para `GroupParticipant`. Em respostas,
+ * o WAHA pode devolver o participante como `@lid` (privacidade) com o formato real `@c.us`
+ * separado no campo `pn` — preferimos `pn` quando presente, senão caímos em `id`.
+ */
+function mapGroupParticipant(entry: unknown): GroupParticipant | undefined {
+  const record = asRecord(entry);
+  if (!record) return undefined;
+  const id = asString(record.pn) ?? asString(record.id);
+  if (id === undefined) return undefined;
+  const role = asString(record.role);
+  return {
+    id,
+    isAdmin: role === 'admin' || role === 'superadmin',
+    isSuperAdmin: role === 'superadmin',
+  };
+}
+
+function mapGroupParticipants(value: unknown): GroupParticipant[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const mapped: GroupParticipant[] = [];
+  for (const entry of value) {
+    const participant = mapGroupParticipant(entry);
+    if (participant) mapped.push(participant);
+  }
+  return mapped;
+}
+
+/**
+ * Entrada usada só quando o corpo da resposta não traz o campo correspondente — comum em
+ * `createGroup` (a doc do WAHA não declara schema de resposta para esse endpoint). Mesmo padrão de
+ * fallback de `mapSentMessage` (`chatId ?? requestedNumber`): cai nos valores já conhecidos da
+ * requisição em vez de inventar um dado.
+ */
+interface GroupInfoFallback {
+  /** Ex.: o `groupId` já usado para montar o path da requisição (`getInfo`). */
+  id?: string;
+  /** Ex.: `CreateGroupInput.subject` (`create`). */
+  subject?: string;
+  /** Ex.: `CreateGroupInput.participants`, já canônicos (`create`). */
+  participants?: readonly string[];
+}
+
+function mapGroupInfo(body: unknown, fallback: GroupInfoFallback = {}): GroupInfo {
+  const record = asRecord(body);
+  const id =
+    (record ? asString(record.id) : undefined) ?? fallback.id ?? `waha-group-${Date.now()}`;
+  const subject = (record ? asString(record.subject) : undefined) ?? fallback.subject ?? '';
+  const description = record ? asString(record.description) : undefined;
+  const participants =
+    (record ? mapGroupParticipants(record.participants) : undefined) ??
+    (fallback.participants ?? []).map((participantId) => ({
+      id: participantId,
+      isAdmin: false,
+      isSuperAdmin: false,
+    }));
+  return {
+    id,
+    subject,
+    description,
+    // O WAHA não expõe um campo de "dono" explícito no schema inferido de GroupInfo — ver
+    // docs/providers/waha.md#grupos-núcleo.
+    owner: undefined,
+    participants,
     raw: body,
   };
 }

@@ -107,7 +107,9 @@ dessa identidade.
 ## Capabilities implementadas nesta fase (F2)
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
-`messages.sendMedia`, `messages.sendReaction`, `webhooks.parse`.
+`messages.sendMedia`, `messages.sendReaction`, `groups.create`, `groups.getInfo`, `groups.list`,
+`groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
+`groups.demoteParticipants`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada (ver justificativa acima).
 
@@ -207,6 +209,51 @@ vira `user@s.whatsapp.net`; se contém `@`, é parseada como JID literal (inclui
 exatamente os dois formatos que o chatId canônico já produz. O adapter repassa sem transformação
 (`toWuzapiPhone`, função identidade — existe só como ponto único de mudança, mesmo padrão dos
 demais adapters deste pacote).
+
+## Grupos (núcleo)
+
+7 operações implementadas (ADR-0009): `groups.create`, `groups.getInfo`, `groups.list`,
+`groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
+`groups.demoteParticipants`.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `groups.create` | `POST /group/create` | Body `{name, participants}` — **atenção**: tags JSON minúsculas, diferente da maioria dos outros endpoints deste provider (PascalCase sem tag); confirmado no código-fonte, não é engano. `participants` recebe `input.participants` (já normalizado pelo conector) passado por `toWuzapiPhone` (identidade). Resposta (`data`): `{JID, Name, OwnerJID, GroupCreated, Participants: [{IsAdmin, IsSuperAdmin, JID}]}`. |
+| `groups.getInfo` | `GET /group/info` | `groupJID` vai na **query string** (`?groupJID=...`), **não** no corpo. Resposta (`data`) = `types.GroupInfo`: `{JID, OwnerJID, Name, Topic (=descrição), IsLocked, GroupCreated, Participants: [{JID, IsAdmin, IsSuperAdmin}]}`. |
+| `groups.list` | `GET /group/list` | Sem parâmetros. Resposta (`data`): `{Groups: [<mesmo shape de getGroupInfo>, ...]}`. |
+| `groups.addParticipants` / `removeParticipants` / `promoteParticipants` / `demoteParticipants` | `POST /group/updateparticipants` (tudo minúsculo) | **As 4 operações são o mesmo endpoint**, variando só `Action` (`"add"`\|`"remove"`\|`"promote"`\|`"demote"`). Body `{GroupJID, Phone: string[], Action}` — **atenção**: o campo se chama `Phone`, não `Participants`. Resposta: `{Details: "Group Participants updated successfully"}`, sem detalhe por participante (por isso o contrato retorna `Promise<void>` para as 4). |
+
+### ⚠️ Divergência confirmada: doc vs. código em `GET /group/info`
+
+O `API.md` oficial mostra um exemplo de `curl` enganoso para este endpoint, com
+`--data '{"GroupJID":"..."}'` sugerindo um body JSON. O handler do servidor **só lê a query
+string** (`?groupJID=...`) e ignora qualquer corpo enviado — confirmado lendo o código-fonte, não
+apenas a prosa da doc. Este adapter envia `groupJID` exclusivamente via `query`, sem body.
+
+### `groupId` — identificador opaco (ver ADR-0009)
+
+Diferente da Z-API (que usa um ID sintético sem `@`), o Wuzapi usa **JID padrão**
+(`<dígitos>@g.us` para grupos, `<dígitos>@s.whatsapp.net` para indivíduos) tanto para grupos quanto
+para participantes — o mesmo formato aceito por `parseJID` em qualquer campo de destinatário. Ainda
+assim, `groupId` **não** passa por `normalizeChatId`/`toWuzapiPhone` no caminho de
+`getInfo`/`addParticipants`/etc.: é repassado tal como chega ao adapter (o conector já trata
+`groupId` como opaco para todo provider, uniformemente — ver `WaConnector.requireGroupId`), o que
+funciona sem problema aqui porque o valor típico (obtido de um `GroupInfo.id` anterior) já vem no
+formato `@g.us` esperado pelo servidor.
+
+### Participantes individuais em `groups.*`
+
+Diferente de `groupId`, os itens de `participants`/`Phone` **são** tratados como um `to` de
+mensagem comum: o conector já os normaliza (telefone -> só-dígitos, JID passa intacto) antes de
+chamar o adapter, e este reaproveita `toWuzapiPhone` (identidade) — mesmo helper usado por
+`sendText`/`sendMedia`/`sendReaction`.
+
+### Fallback quando a resposta não ecoa todos os campos (`groups.create`)
+
+`POST /group/create` normalmente ecoa `Name`/`Participants` na resposta, mas quando não ecoa
+(variação de versão do servidor), o adapter cai de volta em `input.subject`/nos participantes
+requisitados (com `isAdmin`/`isSuperAdmin` assumidos como `false`) — mesmo padrão de fallback já
+usado em `mapSentMessage` (`chatId ?? requestedNumber`).
 
 ## Webhooks
 

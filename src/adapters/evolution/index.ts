@@ -1,4 +1,10 @@
-import type { InstanceApi, MessagesApi, WaAdapter, WebhookInput } from '../../core/adapter';
+import type {
+  GroupsApi,
+  InstanceApi,
+  MessagesApi,
+  WaAdapter,
+  WebhookInput,
+} from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
 import { digitsOnly, isJid } from '../../core/chat-id';
 import { WaConnectorError } from '../../core/errors';
@@ -11,6 +17,10 @@ import type {
 import { HttpClient } from '../../core/http';
 import type {
   ConnectResult,
+  CreateGroupInput,
+  GroupInfo,
+  GroupParticipant,
+  GroupParticipantsInput,
   InstanceState,
   InstanceStatus,
   MediaRef,
@@ -64,6 +74,13 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'groups.create',
+  'groups.getInfo',
+  'groups.list',
+  'groups.addParticipants',
+  'groups.removeParticipants',
+  'groups.promoteParticipants',
+  'groups.demoteParticipants',
   'webhooks.parse',
 ];
 
@@ -91,11 +108,22 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     sendReaction: (input) => sendReaction(http, input),
   };
 
+  const groups: GroupsApi = {
+    create: (input) => createGroup(http, input),
+    getInfo: (groupId) => getGroupInfo(http, groupId),
+    list: () => listGroups(http),
+    addParticipants: (input) => updateGroupParticipants(http, input, 'add'),
+    removeParticipants: (input) => updateGroupParticipants(http, input, 'remove'),
+    promoteParticipants: (input) => updateGroupParticipants(http, input, 'promote'),
+    demoteParticipants: (input) => updateGroupParticipants(http, input, 'demote'),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: EVOLUTION_CAPABILITIES,
     instance,
     messages,
+    groups,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -128,6 +156,22 @@ function toProviderNumber(chatId: string): string {
 function toMentionJid(chatId: string): string {
   if (isJid(chatId)) return chatId;
   return `${digitsOnly(chatId)}@s.whatsapp.net`;
+}
+
+/**
+ * Mapeia o `groupId` canônico (opaco — ver ADR-0009) para o campo `groupJid` esperado pelas
+ * rotas `/group/*` do Evolution GO.
+ *
+ * Diferente da Z-API, o Evolution GO não tem um ID sintético de grupo: o `GroupInfo.id` deste
+ * adapter já É o JID whatsmeow (`data.JID`/`data.jid` das respostas de `/group/info`,
+ * `/group/list` e `/group/create` — sempre no formato `<dígitos>@g.us` ou variante `-` legado),
+ * que é exatamente o que `groupJid` espera de volta. Função existe separada de
+ * `toProviderNumber` (idêntica hoje) para não acoplar acidentalmente as duas decisões: uma cobre
+ * o campo `number` de mensagens 1:1/grupo, a outra cobre especificamente o identificador opaco
+ * de grupo — se um dos dois formatos mudar no futuro, cada um evolui de forma independente.
+ */
+function toProviderGroupJid(groupId: string): string {
+  return groupId;
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +342,152 @@ function toSentMessage(to: string, response: EvolutionEnvelope): SentMessage {
     chatId: to,
     timestamp: toEpochMs(info?.Timestamp),
     raw: response,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// groups.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /group/create` (confirmado só via código-fonte Go — `pkg/group/handler` +
+ * `pkg/group/service`, não documentado no site oficial). Corpo: `{groupName, participants}` —
+ * atenção: o campo é `groupName`, **não** `name` (diverge do resto do provider, que costuma usar
+ * `name`/`number`). `participants` aceita dígitos crus ou JID completo (mesmo formato de
+ * `toProviderNumber`), e já chega normalizado pelo conector.
+ *
+ * Resposta: `{message:"success", data:{jid, name, owner, added: string[], failed: string[]}}` —
+ * um envelope **diferente** do whatsmeow `GroupInfo` usado por `getGroupInfo`/`listGroups`
+ * (chaves minúsculas aqui, capitalizadas lá). Sem lista detalhada de participantes (com
+ * isAdmin/isSuperAdmin) na resposta — construímos `GroupInfo.participants` a partir do array
+ * `added` (todos entram como membros comuns, `isAdmin:false`); se `added` vier vazio (formato
+ * inesperado), caímos de volta na lista de entrada, mesmo padrão de fallback de `toSentMessage`.
+ */
+async function createGroup(http: HttpClient, input: CreateGroupInput): Promise<GroupInfo> {
+  const body = {
+    groupName: input.subject,
+    participants: input.participants.map(toProviderNumber),
+  };
+
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'POST',
+    path: '/group/create',
+    body,
+  });
+
+  const data = asRecord(response.data);
+  const added = asStringArray(data?.added);
+  const participants: GroupParticipant[] = (added.length > 0 ? added : input.participants).map(
+    (id) => ({ id, isAdmin: false, isSuperAdmin: false }),
+  );
+
+  return {
+    id: asString(data?.jid) ?? '',
+    subject: asString(data?.name) ?? input.subject,
+    owner: asString(data?.owner),
+    participants,
+    raw: response,
+  };
+}
+
+/**
+ * `POST /group/info` — POST mesmo sendo uma leitura (mesmo padrão do provider para as demais
+ * rotas de grupo). Corpo: `{groupJid}`. `data` é o `GroupInfo` do whatsmeow serializado
+ * verbatim (struct Go sem json tags, chaves capitalizadas): `{JID, OwnerJID, Name, Topic
+ * (=descrição), IsLocked, GroupCreated, Participants: [...]}` — ver `mapGroupInfo`.
+ */
+async function getGroupInfo(http: HttpClient, groupId: string): Promise<GroupInfo> {
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'POST',
+    path: '/group/info',
+    body: { groupJid: toProviderGroupJid(groupId) },
+  });
+
+  return mapGroupInfo(asRecord(response.data), { id: groupId }, response);
+}
+
+/**
+ * `GET /group/list` — resposta `{message:"success", data: GroupInfo[]}`, um array do mesmo
+ * shape whatsmeow usado por `getGroupInfo` (um item por grupo). Diferente de `getGroupInfo`/
+ * `createGroup`, cada item carrega seu próprio `raw` (o registro individual, não o envelope
+ * inteiro) — mais útil para depurar um grupo específico dentro da lista.
+ */
+async function listGroups(http: HttpClient): Promise<GroupInfo[]> {
+  const response = await http.request<EvolutionEnvelope>({ method: 'GET', path: '/group/list' });
+  const items = Array.isArray(response.data) ? response.data : [];
+
+  return items
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => item !== undefined)
+    .map((data) => mapGroupInfo(data, {}, data));
+}
+
+type GroupParticipantAction = 'add' | 'remove' | 'promote' | 'demote';
+
+/**
+ * `POST /group/participant` — endpoint ÚNICO compartilhado pelas 4 operações de participantes
+ * (`addParticipants`/`removeParticipants`/`promoteParticipants`/`demoteParticipants`); só o
+ * campo `action` muda (`"add"|"remove"|"promote"|"demote"`). Corpo:
+ * `{groupJid, participants, action}`. Resposta `{message:"success"}`, sem detalhe por
+ * participante — o provider descarta essa informação internamente (não é um bug deste adapter).
+ * As 4 operações canônicas retornam `Promise<void>`, então basta disparar a chamada.
+ */
+async function updateGroupParticipants(
+  http: HttpClient,
+  input: GroupParticipantsInput,
+  action: GroupParticipantAction,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/participant',
+    body: {
+      groupJid: toProviderGroupJid(input.groupId),
+      participants: input.participants.map(toProviderNumber),
+      action,
+    },
+  });
+}
+
+/**
+ * Mapeia o participante individual do `GroupInfo` do whatsmeow (`{JID, PhoneNumber, LID,
+ * IsAdmin, IsSuperAdmin, DisplayName, Error, AddRequest}`) para o `GroupParticipant` canônico.
+ * `JID` é o identificador preferido (mesmo formato de chatId/participante usado no resto do
+ * adapter); `PhoneNumber` é fallback defensivo para o caso (não confirmado na pesquisa) de um
+ * participante vir sem `JID` populado.
+ */
+function mapGroupParticipant(record: Record<string, unknown>): GroupParticipant {
+  return {
+    id: asString(record.JID) ?? asString(record.PhoneNumber) ?? '',
+    isAdmin: asBoolean(record.IsAdmin) ?? false,
+    isSuperAdmin: asBoolean(record.IsSuperAdmin) ?? false,
+  };
+}
+
+function mapGroupParticipants(value: unknown): GroupParticipant[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => item !== undefined)
+    .map(mapGroupParticipant);
+}
+
+/**
+ * Mapeia `data` no shape whatsmeow `GroupInfo` (`getGroupInfo`/`listGroups`) para o `GroupInfo`
+ * canônico. `fallback.id`/`fallback.subject` cobrem o caso (não observado na pesquisa, mas
+ * defensivo) de o provider omitir `JID`/`Name` — mesmo padrão de fallback de `toSentMessage`.
+ */
+function mapGroupInfo(
+  data: Record<string, unknown> | undefined,
+  fallback: { id?: string; subject?: string },
+  raw: unknown,
+): GroupInfo {
+  return {
+    id: asString(data?.JID) ?? fallback.id ?? '',
+    subject: asString(data?.Name) ?? fallback.subject ?? '',
+    description: asString(data?.Topic),
+    owner: asString(data?.OwnerJID),
+    participants: mapGroupParticipants(data?.Participants),
+    raw,
   };
 }
 

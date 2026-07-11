@@ -2,6 +2,9 @@ import type { CapabilitySet } from './capabilities';
 import type { CanonicalEvent } from './events';
 import type {
   ConnectResult,
+  CreateGroupInput,
+  GroupInfo,
+  GroupParticipantsInput,
   InstanceStatus,
   SendMediaInput,
   SendReactionInput,
@@ -47,6 +50,21 @@ export interface MessagesApi {
 }
 
 /**
+ * Todo método é opcional (ver ADR-0009): diferente de `messages` (`sendText`/`sendMedia`
+ * obrigatórios desde o F0), `groups` é um namespace inteiramente novo — nem todo adapter precisa
+ * implementar nenhum método dele, e adapters futuros (F3+) podem cobrir só um subconjunto.
+ */
+export interface GroupsApi {
+  create?(input: CreateGroupInput): Promise<GroupInfo>;
+  getInfo?(groupId: string): Promise<GroupInfo>;
+  list?(): Promise<GroupInfo[]>;
+  addParticipants?(input: GroupParticipantsInput): Promise<void>;
+  removeParticipants?(input: GroupParticipantsInput): Promise<void>;
+  promoteParticipants?(input: GroupParticipantsInput): Promise<void>;
+  demoteParticipants?(input: GroupParticipantsInput): Promise<void>;
+}
+
+/**
  * Contrato que todo adapter de provider implementa.
  *
  * O adapter é "burro" de propósito: apenas traduz o modelo canônico de/para o
@@ -58,5 +76,6 @@ export interface WaAdapter {
   readonly capabilities: CapabilitySet;
   readonly instance: InstanceApi;
   readonly messages: MessagesApi;
+  readonly groups: GroupsApi;
   parseWebhook(input: WebhookInput): CanonicalEvent[];
 }

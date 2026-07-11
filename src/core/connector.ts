@@ -1,9 +1,17 @@
-import type { InstanceApi, WaAdapter, WebhookInput } from './adapter';
+import type { GroupsApi, InstanceApi, WaAdapter, WebhookInput } from './adapter';
 import { type Capability, type CapabilitySet, hasCapability } from './capabilities';
 import { normalizeChatId } from './chat-id';
 import { UnsupportedCapabilityError, WaConnectorError } from './errors';
 import type { CanonicalEvent, CanonicalEventType, EventOf, UnknownEvent } from './events';
-import type { SendMediaInput, SendReactionInput, SendTextInput, SentMessage } from './types';
+import type {
+  CreateGroupInput,
+  GroupInfo,
+  GroupParticipantsInput,
+  SendMediaInput,
+  SendReactionInput,
+  SendTextInput,
+  SentMessage,
+} from './types';
 
 export type WaEventListener<T extends CanonicalEventType | '*'> = (
   event: T extends '*' ? CanonicalEvent : EventOf<Exclude<T, '*'>>,
@@ -31,6 +39,21 @@ export interface ConnectorMessagesApi {
 }
 
 /**
+ * `GroupsApi` exposta pelo conector: todo método sempre presente (diferente da interface do
+ * adapter, onde todos são opcionais — ver ADR-0009), gateado por capability + guard-rail
+ * `PROVIDER_ERROR` quando o adapter declara a capability sem implementar o método.
+ */
+export interface ConnectorGroupsApi {
+  create(input: CreateGroupInput): Promise<GroupInfo>;
+  getInfo(groupId: string): Promise<GroupInfo>;
+  list(): Promise<GroupInfo[]>;
+  addParticipants(input: GroupParticipantsInput): Promise<void>;
+  removeParticipants(input: GroupParticipantsInput): Promise<void>;
+  promoteParticipants(input: GroupParticipantsInput): Promise<void>;
+  demoteParticipants(input: GroupParticipantsInput): Promise<void>;
+}
+
+/**
  * Camada de ergonomia e política sobre um adapter: checagem de capabilities,
  * validação e normalização de entrada, eventos e parsing seguro de webhooks.
  */
@@ -40,6 +63,7 @@ export class WaConnector {
   readonly capabilities: CapabilitySet;
   readonly instance: InstanceApi;
   readonly messages: ConnectorMessagesApi;
+  readonly groups: ConnectorGroupsApi;
   readonly webhooks: WebhooksApi;
 
   private readonly listeners = new Map<string, Set<AnyListener>>();
@@ -85,6 +109,34 @@ export class WaConnector {
         }
         return adapter.messages.sendReaction(this.prepareSendReaction(input));
       },
+    };
+
+    this.groups = {
+      create: (input) =>
+        this.callGroupsMethod('create', 'groups.create', (fn) =>
+          fn(this.prepareCreateGroup(input)),
+        ),
+      getInfo: (groupId) =>
+        this.callGroupsMethod('getInfo', 'groups.getInfo', (fn) =>
+          fn(this.requireGroupId(groupId)),
+        ),
+      list: () => this.callGroupsMethod('list', 'groups.list', (fn) => fn()),
+      addParticipants: (input) =>
+        this.callGroupsMethod('addParticipants', 'groups.addParticipants', (fn) =>
+          fn(this.prepareGroupParticipants(input)),
+        ),
+      removeParticipants: (input) =>
+        this.callGroupsMethod('removeParticipants', 'groups.removeParticipants', (fn) =>
+          fn(this.prepareGroupParticipants(input)),
+        ),
+      promoteParticipants: (input) =>
+        this.callGroupsMethod('promoteParticipants', 'groups.promoteParticipants', (fn) =>
+          fn(this.prepareGroupParticipants(input)),
+        ),
+      demoteParticipants: (input) =>
+        this.callGroupsMethod('demoteParticipants', 'groups.demoteParticipants', (fn) =>
+          fn(this.prepareGroupParticipants(input)),
+        ),
     };
 
     this.webhooks = {
@@ -164,6 +216,69 @@ export class WaConnector {
       );
     }
     return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
+  }
+
+  /**
+   * Guard-rail comum aos 7 métodos de `groups.*`: checa a capability e, se o adapter a declarou
+   * sem de fato implementar o método correspondente, lança `PROVIDER_ERROR` (bug do adapter, não
+   * entrada inválida) — mesmo padrão do `sendReaction` (ADR-0008), reaproveitado (ADR-0009).
+   */
+  private async callGroupsMethod<K extends keyof GroupsApi, R>(
+    method: K,
+    capability: Capability,
+    invoke: (fn: NonNullable<GroupsApi[K]>) => Promise<R>,
+  ): Promise<R> {
+    this.assertCapability(capability);
+    const fn = this.adapter.groups[method];
+    if (!fn) {
+      throw new WaConnectorError(
+        'PROVIDER_ERROR',
+        `Adapter "${this.provider}" declara a capability "${capability}" mas não implementa ` +
+          `groups.${String(method)} — isso é um bug no adapter, não uma entrada inválida.`,
+        { provider: this.provider },
+      );
+    }
+    return invoke(fn as NonNullable<GroupsApi[K]>);
+  }
+
+  private prepareCreateGroup(input: CreateGroupInput): CreateGroupInput {
+    if (typeof input.subject !== 'string' || input.subject.length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'groups.create exige "subject" não vazio.', {
+        provider: this.provider,
+      });
+    }
+    return { ...input, participants: this.normalizeParticipants(input.participants) };
+  }
+
+  private prepareGroupParticipants(input: GroupParticipantsInput): GroupParticipantsInput {
+    return {
+      groupId: this.requireGroupId(input.groupId),
+      participants: this.normalizeParticipants(input.participants),
+    };
+  }
+
+  private normalizeParticipants(participants: unknown): string[] {
+    if (!Array.isArray(participants) || participants.length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'groups.* exige "participants" com ao menos um telefone/JID.',
+        { provider: this.provider },
+      );
+    }
+    return participants.map((participant) => normalizeChatId(this.requireTo(participant)));
+  }
+
+  /**
+   * `groupId` é opaco (ver ADR-0009 e `GroupInfo.id`) — diferente de `to`, NÃO passa por
+   * `normalizeChatId` (a Z-API usa um ID sintético sem `@` que `normalizeChatId` corromperia).
+   */
+  private requireGroupId(groupId: unknown): string {
+    if (typeof groupId !== 'string' || groupId.trim().length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'Campo "groupId" é obrigatório.', {
+        provider: this.provider,
+      });
+    }
+    return groupId;
   }
 
   private requireTo(to: unknown): string {

@@ -1,4 +1,10 @@
-import type { InstanceApi, MessagesApi, WaAdapter, WebhookInput } from '../../core/adapter';
+import type {
+  GroupsApi,
+  InstanceApi,
+  MessagesApi,
+  WaAdapter,
+  WebhookInput,
+} from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
 import { WaConnectorError } from '../../core/errors';
 import type {
@@ -10,6 +16,10 @@ import type {
 import { HttpClient } from '../../core/http';
 import type {
   ConnectResult,
+  CreateGroupInput,
+  GroupInfo,
+  GroupParticipant,
+  GroupParticipantsInput,
   InstanceState,
   InstanceStatus,
   MediaKind,
@@ -74,6 +84,13 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'groups.create',
+  'groups.getInfo',
+  'groups.list',
+  'groups.addParticipants',
+  'groups.removeParticipants',
+  'groups.promoteParticipants',
+  'groups.demoteParticipants',
   'webhooks.parse',
 ];
 
@@ -102,11 +119,22 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     sendReaction: (input) => sendReaction(http, input),
   };
 
+  const groups: GroupsApi = {
+    create: (input) => createGroup(http, input),
+    getInfo: (groupId) => getGroupInfo(http, groupId),
+    list: () => listGroups(http),
+    addParticipants: (input) => updateGroupParticipants(http, input, 'add'),
+    removeParticipants: (input) => updateGroupParticipants(http, input, 'remove'),
+    promoteParticipants: (input) => updateGroupParticipants(http, input, 'promote'),
+    demoteParticipants: (input) => updateGroupParticipants(http, input, 'demote'),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WUZAPI_CAPABILITIES,
     instance,
     messages,
+    groups,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -346,6 +374,135 @@ function mapSentMessage(response: WuzapiEnvelope, requestedPhone: string): SentM
   const id = asString(data?.Id) ?? `wuzapi-${Date.now()}`;
   const timestamp = secondsToEpochMs(data?.Timestamp);
   return { id, chatId: requestedPhone, timestamp, raw: response };
+}
+
+// ---------------------------------------------------------------------------
+// groups.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /group/create` — corpo com tags JSON minúsculas (`name`/`participants`), diferente da
+ * maioria dos outros endpoints deste provider (que usam PascalCase sem tag) — confirmado no
+ * código-fonte, não é engano. `participants` recebe o mesmo tratamento de `Phone` em mensagens
+ * (`toWuzapiPhone`, aqui identidade): o conector já entrega telefones normalizados (só-dígitos) ou
+ * JIDs explícitos intactos.
+ *
+ * Resposta (`data`): `{JID, Name, OwnerJID, GroupCreated, Participants: [{IsAdmin, IsSuperAdmin,
+ * JID}]}`. Quando o corpo da resposta não ecoa `Name`/`Participants` (variação de versão do
+ * servidor), cai de volta em `input.subject`/nos participantes requisitados (mesmo padrão de
+ * fallback de `mapSentMessage`, ex. `chatId ?? requestedNumber`).
+ */
+async function createGroup(http: HttpClient, input: CreateGroupInput): Promise<GroupInfo> {
+  const participants = input.participants.map(toWuzapiPhone);
+  const response = await http.request<WuzapiEnvelope>({
+    method: 'POST',
+    path: '/group/create',
+    body: { name: input.subject, participants },
+  });
+  const data = asRecord(response.data);
+  return mapGroupInfo(data, response, {
+    subject: input.subject,
+    participants: participants.map(toFallbackParticipant),
+  });
+}
+
+/**
+ * `GET /group/info` — `groupJID` vai na QUERY STRING (`?groupJID=...`), NÃO no corpo, mesmo que o
+ * exemplo de `curl` do próprio `API.md` mostre `--data '{"GroupJID":...}'` (o handler só lê a
+ * query string; o exemplo da doc é enganoso — divergência confirmada no código-fonte). `groupId` é
+ * repassado tal como chega (opaco — ver `GroupInfo.id`/ADR-0009), sem passar por `toWuzapiPhone`.
+ *
+ * Resposta (`data`) = `types.GroupInfo`: `{JID, OwnerJID, Name, Topic (=descrição), IsLocked,
+ * GroupCreated, Participants: [{JID, IsAdmin, IsSuperAdmin}]}`.
+ */
+async function getGroupInfo(http: HttpClient, groupId: string): Promise<GroupInfo> {
+  const response = await http.request<WuzapiEnvelope>({
+    method: 'GET',
+    path: '/group/info',
+    query: { groupJID: groupId },
+  });
+  const data = asRecord(response.data);
+  return mapGroupInfo(data, response, { id: groupId });
+}
+
+/** `GET /group/list`, sem parâmetros. Resposta (`data`): `{Groups: [<mesmo shape de getGroupInfo>, ...]}`. */
+async function listGroups(http: HttpClient): Promise<GroupInfo[]> {
+  const response = await http.request<WuzapiEnvelope>({ method: 'GET', path: '/group/list' });
+  const data = asRecord(response.data);
+  const groups = Array.isArray(data?.Groups) ? data.Groups : [];
+  return groups.map((group) => mapGroupInfo(asRecord(group), group));
+}
+
+type GroupParticipantsAction = 'add' | 'remove' | 'promote' | 'demote';
+
+/**
+ * `addParticipants`/`removeParticipants`/`promoteParticipants`/`demoteParticipants` são o MESMO
+ * endpoint `POST /group/updateparticipants` (tudo minúsculo), variando só `Action`. Corpo:
+ * `{GroupJID, Phone: string[], Action}` — atenção: o campo se chama `Phone`, não `Participants`.
+ * `GroupJID` é repassado intacto (opaco); `Phone` reaproveita `toWuzapiPhone` porque os
+ * participantes individuais, ao contrário do `groupId`, já chegam normalizados como um `to` de
+ * mensagem comum.
+ *
+ * Resposta: `{Details: "Group Participants updated successfully"}`, sem detalhe por participante —
+ * o contrato (`GroupParticipantsInput` -> `Promise<void>`) não precisa de retorno, então a resposta
+ * é apenas descartada (erros de HTTP já viram `WaConnectorError` dentro de `HttpClient`).
+ */
+async function updateGroupParticipants(
+  http: HttpClient,
+  input: GroupParticipantsInput,
+  action: GroupParticipantsAction,
+): Promise<void> {
+  const phones = input.participants.map(toWuzapiPhone);
+  await http.request({
+    method: 'POST',
+    path: '/group/updateparticipants',
+    body: { GroupJID: input.groupId, Phone: phones, Action: action },
+  });
+}
+
+interface GroupInfoFallback {
+  id?: string;
+  subject?: string;
+  participants?: GroupParticipant[];
+}
+
+/**
+ * Mapeia `data` (o objeto `types.GroupInfo` do provider, já desembrulhado do envelope `{code,
+ * success, data}`) para o `GroupInfo` canônico. `raw` é passado separadamente (em vez de sempre
+ * usar o envelope completo) para que `listGroups` preserve, por item, só o objeto daquele grupo
+ * específico — não a lista inteira.
+ *
+ * Quando um campo não vem na resposta (comum em `create`, que só ecoa o essencial), cai de volta
+ * no valor de entrada (`fallback`) — mesmo padrão de `mapSentMessage` (`chatId ?? requestedNumber`).
+ */
+function mapGroupInfo(
+  data: Record<string, unknown> | undefined,
+  raw: unknown,
+  fallback: GroupInfoFallback = {},
+): GroupInfo {
+  const id = asString(data?.JID) ?? fallback.id ?? '';
+  const subject = asString(data?.Name) ?? fallback.subject ?? '';
+  const description = asString(data?.Topic);
+  const owner = asString(data?.OwnerJID);
+  const participants = mapGroupParticipants(data?.Participants) ?? fallback.participants ?? [];
+  return { id, subject, description, owner, participants, raw };
+}
+
+function mapGroupParticipants(value: unknown): GroupParticipant[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.map((item) => {
+    const record = asRecord(item);
+    return {
+      id: asString(record?.JID) ?? '',
+      isAdmin: asBoolean(record?.IsAdmin) ?? false,
+      isSuperAdmin: asBoolean(record?.IsSuperAdmin) ?? false,
+    };
+  });
+}
+
+/** Fallback usado por `createGroup` quando a resposta não ecoa `Participants`: assume não-admin. */
+function toFallbackParticipant(id: string): GroupParticipant {
+  return { id, isAdmin: false, isSuperAdmin: false };
 }
 
 // ---------------------------------------------------------------------------

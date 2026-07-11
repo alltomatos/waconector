@@ -1,4 +1,10 @@
-import type { InstanceApi, MessagesApi, WaAdapter, WebhookInput } from '../../core/adapter';
+import type {
+  GroupsApi,
+  InstanceApi,
+  MessagesApi,
+  WaAdapter,
+  WebhookInput,
+} from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
 import { digitsOnly, isJid } from '../../core/chat-id';
 import { WaConnectorError } from '../../core/errors';
@@ -6,6 +12,10 @@ import type { CanonicalEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
   ConnectResult,
+  CreateGroupInput,
+  GroupInfo,
+  GroupParticipant,
+  GroupParticipantsInput,
   InstanceState,
   InstanceStatus,
   MediaKind,
@@ -69,6 +79,13 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'groups.create',
+  'groups.getInfo',
+  'groups.list',
+  'groups.addParticipants',
+  'groups.removeParticipants',
+  'groups.promoteParticipants',
+  'groups.demoteParticipants',
   'webhooks.parse',
 ];
 
@@ -108,11 +125,22 @@ export function zapi(options: ZapiOptions): WaAdapter {
     sendReaction: (input) => sendReaction(http, prefix, input),
   };
 
+  const groups: GroupsApi = {
+    create: (input) => createGroup(http, prefix, input),
+    getInfo: (groupId) => getGroupInfo(http, prefix, groupId),
+    list: () => listGroups(http, prefix),
+    addParticipants: (input) => addGroupParticipants(http, prefix, input),
+    removeParticipants: (input) => removeGroupParticipants(http, prefix, input),
+    promoteParticipants: (input) => promoteGroupParticipants(http, prefix, input),
+    demoteParticipants: (input) => demoteGroupParticipants(http, prefix, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: ZAPI_CAPABILITIES,
     instance,
     messages,
+    groups,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -131,6 +159,13 @@ export function zapi(options: ZapiOptions): WaAdapter {
  * (grupos `@g.us`, `@s.whatsapp.net`, `@lid`, etc.) passam intactos; qualquer outra entrada é
  * filtrada para dígitos puros como camada defensiva (o conector já normaliza isso antes de chamar
  * o adapter, mas o adapter pode ser instanciado sem `createConnector`).
+ *
+ * **Uso restrito a `to`/participantes individuais.** NUNCA rode o `groupId` (opaco, ver
+ * `GroupInfo.id` e ADR-0009) por esta função: a Z-API usa um ID sintético de grupo SEM "@"
+ * (`"{idNumerico}-group"` ou o formato legado `"{telefoneCriador}-{timestampUnix}"`) — como
+ * `isJid()` checa só a presença de "@", esse ID cairia no ramo `digitsOnly()` e perderia o sufixo
+ * `-group` ou os hífens. As funções de `groups.*` abaixo tratam `groupId` como string opaca,
+ * repassada verbatim (path ou corpo, conforme o endpoint) — nunca via `toZapiPhone`.
  */
 function toZapiPhone(chatId: string): string {
   if (isJid(chatId)) return chatId;
@@ -414,6 +449,177 @@ function mapSentMessage(body: unknown, requestedPhone: string): SentMessage {
 }
 
 // ---------------------------------------------------------------------------
+// groups.*
+// ---------------------------------------------------------------------------
+//
+// NOTA CRÍTICA (ver docs/providers/zapi.md#grupos-núcleo): o `groupId` da Z-API NÃO é um JID — é
+// um identificador sintético sem "@" (`"{idNumerico}-group"` atual, ou o formato legado
+// `"{telefoneCriador}-{timestampUnix}"`). Ele é tratado como string OPACA em toda função abaixo:
+// repassado verbatim no path ou no corpo, NUNCA convertido por `toZapiPhone`/`digitsOnly` (que o
+// corromperiam removendo o sufixo `-group` ou os hífens). Participantes individuais (dentro de
+// `input.participants`), ao contrário, JÁ chegam normalizados pelo conector e se comportam como um
+// `to` de mensagem comum — por isso reaproveitam `toZapiPhone`.
+
+/**
+ * `POST /create-group`. Corpo confirmado: `{ autoInvite, groupName, phones }` — `autoInvite: false`
+ * é o default seguro adotado aqui (a doc não detalha o comportamento quando `true`, e
+ * `CreateGroupInput` não expõe esse flag). A resposta (`{ phone, phonesNotAdded, invitationLink }`)
+ * NÃO ecoa nome nem participantes — `phone` é o novo ID do grupo. `GroupInfo` é montado com
+ * fallback nos valores de entrada (`subject`/`participants`) para os campos que a resposta não
+ * traz, mesmo padrão de fallback já usado em `mapSentMessage`.
+ */
+async function createGroup(
+  http: HttpClient,
+  prefix: string,
+  input: CreateGroupInput,
+): Promise<GroupInfo> {
+  const phones = input.participants.map(toZapiPhone);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: `${prefix}/create-group`,
+    body: { autoInvite: false, groupName: input.subject, phones },
+  });
+  const record = asRecord(response);
+  const id = (record ? asString(record.phone) : undefined) ?? `zapi-group-${Date.now()}`;
+  return {
+    id,
+    subject: input.subject,
+    participants: input.participants.map((participant) => ({
+      id: participant,
+      isAdmin: false,
+      isSuperAdmin: false,
+    })),
+    raw: response,
+  };
+}
+
+/**
+ * `GET /group-metadata/{groupId}` — `groupId` vai NO PATH, verbatim (nunca convertido, ver nota
+ * acima). Resposta confirmada: `{ phone, description, owner, subject, creation, invitationLink,
+ * participants: [{ phone, isAdmin, isSuperAdmin, short?, name? }] }`.
+ */
+async function getGroupInfo(http: HttpClient, prefix: string, groupId: string): Promise<GroupInfo> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: `${prefix}/group-metadata/${groupId}`,
+  });
+  return mapGroupInfo(response, groupId);
+}
+
+function mapGroupInfo(body: unknown, requestedGroupId: string): GroupInfo {
+  const record = asRecord(body);
+  return {
+    id: (record ? asString(record.phone) : undefined) ?? requestedGroupId,
+    subject: (record ? asString(record.subject) : undefined) ?? '',
+    description: record ? asString(record.description) : undefined,
+    owner: record ? asString(record.owner) : undefined,
+    participants: (record ? asRecordArray(record.participants) : []).map(mapGroupParticipant),
+    raw: body,
+  };
+}
+
+function mapGroupParticipant(record: Record<string, unknown>): GroupParticipant {
+  return {
+    id: asString(record.phone) ?? '',
+    isAdmin: asBoolean(record.isAdmin) ?? false,
+    isSuperAdmin: asBoolean(record.isSuperAdmin) ?? false,
+  };
+}
+
+/**
+ * `GET /groups` — exige paginação (`page`/`pageSize`) como query params; `GroupsApi.list()` não
+ * expõe paginação no contrato canônico, então usamos um default único e razoável
+ * (`page=1, pageSize=100`). A resposta é uma lista de objetos LEVES (`{ isGroup: true, name,
+ * phone }`), SEM `description`/`owner`/`participants` — por isso cada `GroupInfo` desta lista vem
+ * com `participants: []` (limitação documentada; para os participantes de um grupo específico, use
+ * `groups.getInfo`).
+ */
+async function listGroups(http: HttpClient, prefix: string): Promise<GroupInfo[]> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: `${prefix}/groups`,
+    query: { page: 1, pageSize: 100 },
+  });
+  return asRecordArray(response).map((item) => ({
+    id: asString(item.phone) ?? '',
+    subject: asString(item.name) ?? '',
+    participants: [],
+    raw: item,
+  }));
+}
+
+/**
+ * `POST /add-participant` (SINGULAR — não "participants", desvio de nome confirmado na pesquisa).
+ * Corpo `{ autoInvite, groupId, phones }`: `groupId` vai NO CORPO (não no path) e verbatim
+ * (opaco); `phones` reaproveita `toZapiPhone` sobre cada participante (já normalizado pelo
+ * conector). Retorna `void` — o contrato de `GroupsApi.addParticipants` não pede o grupo
+ * atualizado de volta.
+ */
+async function addGroupParticipants(
+  http: HttpClient,
+  prefix: string,
+  input: GroupParticipantsInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/add-participant`,
+    body: {
+      autoInvite: false,
+      groupId: input.groupId,
+      phones: input.participants.map(toZapiPhone),
+    },
+  });
+}
+
+/**
+ * `POST /remove-participant` (singular). Corpo `{ groupId, phones }` — sem `autoInvite` (não se
+ * aplica a uma remoção).
+ */
+async function removeGroupParticipants(
+  http: HttpClient,
+  prefix: string,
+  input: GroupParticipantsInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/remove-participant`,
+    body: { groupId: input.groupId, phones: input.participants.map(toZapiPhone) },
+  });
+}
+
+/**
+ * `POST /add-admin` — nome do endpoint NÃO é "promote" (desvio de nome confirmado na pesquisa).
+ * Corpo `{ groupId, phones }`, mesmo shape de `removeGroupParticipants`.
+ */
+async function promoteGroupParticipants(
+  http: HttpClient,
+  prefix: string,
+  input: GroupParticipantsInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/add-admin`,
+    body: { groupId: input.groupId, phones: input.participants.map(toZapiPhone) },
+  });
+}
+
+/**
+ * `POST /remove-admin` — nome do endpoint NÃO é "demote" (desvio de nome confirmado na pesquisa).
+ * Corpo `{ groupId, phones }`, mesmo shape de `promoteGroupParticipants`.
+ */
+async function demoteGroupParticipants(
+  http: HttpClient,
+  prefix: string,
+  input: GroupParticipantsInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/remove-admin`,
+    body: { groupId: input.groupId, phones: input.participants.map(toZapiPhone) },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // webhooks.parse
 // ---------------------------------------------------------------------------
 
@@ -682,5 +888,13 @@ function asBoolean(value: unknown): boolean | undefined {
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
+    : [];
+}
+
+function asRecordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value
+        .map((item) => asRecord(item))
+        .filter((item): item is Record<string, unknown> => item !== undefined)
     : [];
 }

@@ -94,6 +94,70 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'POST' && pathname === '/group/create') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          JID: '120363000000000000@g.us',
+          Name: 'Grupo de teste',
+          OwnerJID: '5511999999999@s.whatsapp.net',
+          GroupCreated: '2026-07-11T12:00:00Z',
+          Participants: [
+            { JID: '5511999999999@s.whatsapp.net', IsAdmin: true, IsSuperAdmin: true },
+            { JID: '5511988887777@s.whatsapp.net', IsAdmin: false, IsSuperAdmin: false },
+          ],
+        },
+      });
+    }
+
+    if (method === 'GET' && pathname === '/group/info') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          JID: url.searchParams.get('groupJID'),
+          OwnerJID: '5511999999999@s.whatsapp.net',
+          Name: 'Grupo de teste',
+          Topic: 'Descrição do grupo',
+          IsLocked: false,
+          GroupCreated: '2026-07-11T12:00:00Z',
+          Participants: [
+            { JID: '5511999999999@s.whatsapp.net', IsAdmin: true, IsSuperAdmin: true },
+            { JID: '5511988887777@s.whatsapp.net', IsAdmin: false, IsSuperAdmin: false },
+          ],
+        },
+      });
+    }
+
+    if (method === 'GET' && pathname === '/group/list') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          Groups: [
+            {
+              JID: '120363000000000000@g.us',
+              OwnerJID: '5511999999999@s.whatsapp.net',
+              Name: 'Grupo de teste',
+              Topic: 'Descrição do grupo',
+              Participants: [
+                { JID: '5511999999999@s.whatsapp.net', IsAdmin: true, IsSuperAdmin: true },
+              ],
+            },
+          ],
+        },
+      });
+    }
+
+    if (method === 'POST' && pathname === '/group/updateparticipants') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Group Participants updated successfully' },
+      });
+    }
+
     throw new Error(`fetchStub (wuzapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -633,6 +697,168 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
       expect(failure.message).not.toContain('super-secret-token');
       expect(failure.message).toContain('***');
     }
+  });
+
+  it('groups.create envia { name, participants } (tags minúsculas) para POST /group/create e mapeia a resposta', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/create') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({
+      subject: 'Grupo de teste',
+      participants: ['5511988887777', '5511977776666@s.whatsapp.net'],
+    });
+
+    // as tags JSON de /group/create são minúsculas ("name"/"participants") — diferente da maioria
+    // dos outros endpoints do Wuzapi (PascalCase sem tag) — confirmado no código-fonte.
+    expect(capturedBody?.name).toBe('Grupo de teste');
+    expect(capturedBody?.participants).toEqual(['5511988887777', '5511977776666@s.whatsapp.net']);
+
+    expect(group.id).toBe('120363000000000000@g.us');
+    expect(group.subject).toBe('Grupo de teste');
+    expect(group.owner).toBe('5511999999999@s.whatsapp.net');
+    expect(group.participants).toEqual([
+      { id: '5511999999999@s.whatsapp.net', isAdmin: true, isSuperAdmin: true },
+      { id: '5511988887777@s.whatsapp.net', isAdmin: false, isSuperAdmin: false },
+    ]);
+    expect(group).toHaveProperty('raw');
+  });
+
+  it('groups.create cai de volta para "subject"/"participants" de entrada quando a resposta não traz os campos correspondentes', async () => {
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/create') {
+            return jsonResponse(200, { code: 200, success: true, data: {} });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({
+      subject: 'Grupo sem resposta completa',
+      participants: ['5511988887777'],
+    });
+
+    expect(group.id).toBe('');
+    expect(group.subject).toBe('Grupo sem resposta completa');
+    expect(group.participants).toEqual([
+      { id: '5511988887777', isAdmin: false, isSuperAdmin: false },
+    ]);
+  });
+
+  it('groups.getInfo envia "groupJID" na QUERY STRING (não no body) e mapeia GroupInfo (Topic -> description)', async () => {
+    let capturedQuery: string | null = null;
+    let capturedBody: string | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/info') {
+            capturedQuery = url.searchParams.get('groupJID');
+            capturedBody = init?.body === undefined ? undefined : String(init.body);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const group = await wa.groups.getInfo('120363000000000000@g.us');
+
+    expect(capturedQuery).toBe('120363000000000000@g.us');
+    expect(capturedBody).toBeUndefined();
+    expect(group.id).toBe('120363000000000000@g.us');
+    expect(group.subject).toBe('Grupo de teste');
+    expect(group.description).toBe('Descrição do grupo');
+    expect(group.owner).toBe('5511999999999@s.whatsapp.net');
+    expect(group.participants).toEqual([
+      { id: '5511999999999@s.whatsapp.net', isAdmin: true, isSuperAdmin: true },
+      { id: '5511988887777@s.whatsapp.net', isAdmin: false, isSuperAdmin: false },
+    ]);
+    expect(group).toHaveProperty('raw');
+  });
+
+  it('groups.list chama GET /group/list (sem parâmetros) e mapeia cada item de "Groups" para GroupInfo', async () => {
+    const adapter = wuzapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const list = await wa.groups.list();
+
+    expect(list).toHaveLength(1);
+    expect(list[0]?.id).toBe('120363000000000000@g.us');
+    expect(list[0]?.subject).toBe('Grupo de teste');
+    expect(list[0]?.description).toBe('Descrição do grupo');
+    expect(list[0]?.participants).toEqual([
+      { id: '5511999999999@s.whatsapp.net', isAdmin: true, isSuperAdmin: true },
+    ]);
+  });
+
+  it('groups.addParticipants envia { GroupJID, Phone, Action: "add" } para POST /group/updateparticipants', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/updateparticipants') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.addParticipants({
+        groupId: '120363000000000000@g.us',
+        participants: ['5511988887777', '5511977776666@s.whatsapp.net'],
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody?.GroupJID).toBe('120363000000000000@g.us');
+    expect(capturedBody?.Action).toBe('add');
+    // note o campo se chama "Phone" (não "Participants") neste endpoint.
+    expect(capturedBody?.Phone).toEqual(['5511988887777', '5511977776666@s.whatsapp.net']);
+  });
+
+  it('groups.removeParticipants/promoteParticipants/demoteParticipants usam o mesmo endpoint com o "Action" correto', async () => {
+    const capturedActions: string[] = [];
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/updateparticipants') {
+            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            capturedActions.push(String(body.Action));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.removeParticipants({
+      groupId: '120363000000000000@g.us',
+      participants: ['5511988887777'],
+    });
+    await wa.groups.promoteParticipants({
+      groupId: '120363000000000000@g.us',
+      participants: ['5511988887777'],
+    });
+    await wa.groups.demoteParticipants({
+      groupId: '120363000000000000@g.us',
+      participants: ['5511988887777'],
+    });
+
+    expect(capturedActions).toEqual(['remove', 'promote', 'demote']);
   });
 
   it('envia o header "token" configurado em toda chamada', async () => {

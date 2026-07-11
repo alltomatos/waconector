@@ -106,6 +106,51 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'POST' && pathname === `${PREFIX}/create-group`) {
+      return jsonResponse(200, {
+        phone: '120363019502650977-group',
+        phonesNotAdded: [],
+        invitationLink: 'https://chat.whatsapp.com/fake-invite',
+      });
+    }
+
+    if (method === 'GET' && pathname === `${PREFIX}/group-metadata/120363019502650977-group`) {
+      return jsonResponse(200, {
+        phone: '120363019502650977-group',
+        subject: 'Grupo de contrato',
+        description: 'descrição do grupo',
+        owner: '5511999999999',
+        creation: 1700000000000,
+        invitationLink: 'https://chat.whatsapp.com/fake-invite',
+        participants: [
+          { phone: '5511999999999', isAdmin: true, isSuperAdmin: true },
+          { phone: '5511988887777', isAdmin: false, isSuperAdmin: false },
+        ],
+      });
+    }
+
+    if (method === 'GET' && pathname === `${PREFIX}/groups`) {
+      return jsonResponse(200, [
+        { isGroup: true, name: 'Grupo leve', phone: '120363019502650977-group' },
+      ]);
+    }
+
+    if (method === 'POST' && pathname === `${PREFIX}/add-participant`) {
+      return jsonResponse(200, { value: true });
+    }
+
+    if (method === 'POST' && pathname === `${PREFIX}/remove-participant`) {
+      return jsonResponse(200, { value: true });
+    }
+
+    if (method === 'POST' && pathname === `${PREFIX}/add-admin`) {
+      return jsonResponse(200, { value: true });
+    }
+
+    if (method === 'POST' && pathname === `${PREFIX}/remove-admin`) {
+      return jsonResponse(200, { value: true });
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -626,5 +671,191 @@ describe('zapi adapter: comportamento específico do provider', () => {
     });
     await adapterSemClientToken.instance.status();
     expect(calls[1]?.has('Client-Token')).toBe(false);
+  });
+
+  it('groups.create envia {autoInvite:false, groupName, phones} para POST /create-group e cai de volta nos valores de entrada', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    let requestedPath: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/create-group`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({
+      subject: 'Grupo de contrato',
+      participants: ['5511999999999', '5511988887777'],
+    });
+
+    expect(requestedPath).toBe(`${PREFIX}/create-group`);
+    expect(capturedBody?.autoInvite).toBe(false);
+    expect(capturedBody?.groupName).toBe('Grupo de contrato');
+    expect(capturedBody?.phones).toEqual(['5511999999999', '5511988887777']);
+    // resposta da Z-API não ecoa nome/participantes — GroupInfo cai de volta nos valores de entrada
+    expect(group.id).toBe('120363019502650977-group');
+    expect(group.subject).toBe('Grupo de contrato');
+    expect(group.participants).toEqual([
+      { id: '5511999999999', isAdmin: false, isSuperAdmin: false },
+      { id: '5511988887777', isAdmin: false, isSuperAdmin: false },
+    ]);
+    expect(group).toHaveProperty('raw');
+  });
+
+  it('groups.getInfo chama GET .../group-metadata/{groupId} com o groupId opaco verbatim (sem digitsOnly) e mapeia a resposta para GroupInfo', async () => {
+    const adapter = zapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const group = await wa.groups.getInfo('120363019502650977-group');
+
+    expect(group.id).toBe('120363019502650977-group');
+    expect(group.subject).toBe('Grupo de contrato');
+    expect(group.description).toBe('descrição do grupo');
+    expect(group.owner).toBe('5511999999999');
+    expect(group.participants).toEqual([
+      { id: '5511999999999', isAdmin: true, isSuperAdmin: true },
+      { id: '5511988887777', isAdmin: false, isSuperAdmin: false },
+    ]);
+    expect(group).toHaveProperty('raw');
+  });
+
+  it('groups.list chama GET .../groups com paginação default e mapeia a lista leve (participants: [])', async () => {
+    let requestedUrl: URL | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/groups`) {
+            requestedUrl = url;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const groups = await wa.groups.list();
+
+    expect(requestedUrl?.searchParams.get('page')).toBe('1');
+    expect(requestedUrl?.searchParams.get('pageSize')).toBe('100');
+    expect(groups).toEqual([
+      {
+        id: '120363019502650977-group',
+        subject: 'Grupo leve',
+        participants: [],
+        raw: { isGroup: true, name: 'Grupo leve', phone: '120363019502650977-group' },
+      },
+    ]);
+  });
+
+  it('groups.addParticipants envia {autoInvite:false, groupId, phones} para POST /add-participant (singular)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    let requestedPath: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/add-participant`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.addParticipants({
+      groupId: '120363019502650977-group',
+      participants: ['5511999999999'],
+    });
+
+    expect(requestedPath).toBe(`${PREFIX}/add-participant`);
+    expect(capturedBody?.autoInvite).toBe(false);
+    expect(capturedBody?.groupId).toBe('120363019502650977-group');
+    expect(capturedBody?.phones).toEqual(['5511999999999']);
+    expect(result).toBeUndefined();
+  });
+
+  it('groups.removeParticipants chama POST /remove-participant (singular) com {groupId, phones}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    let requestedPath: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/remove-participant`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.removeParticipants({
+      groupId: '120363019502650977-group',
+      participants: ['5511999999999'],
+    });
+
+    expect(requestedPath).toBe(`${PREFIX}/remove-participant`);
+    expect(capturedBody?.groupId).toBe('120363019502650977-group');
+    expect(capturedBody?.phones).toEqual(['5511999999999']);
+    expect(capturedBody).not.toHaveProperty('autoInvite');
+  });
+
+  it('groups.promoteParticipants chama POST /add-admin ("promote" não é o nome do endpoint)', async () => {
+    let requestedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/add-admin`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.promoteParticipants({
+      groupId: '120363019502650977-group',
+      participants: ['5511999999999'],
+    });
+
+    expect(requestedPath).toBe(`${PREFIX}/add-admin`);
+    expect(capturedBody?.groupId).toBe('120363019502650977-group');
+    expect(capturedBody?.phones).toEqual(['5511999999999']);
+  });
+
+  it('groups.demoteParticipants chama POST /remove-admin ("demote" não é o nome do endpoint)', async () => {
+    let requestedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/remove-admin`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.demoteParticipants({
+      groupId: '120363019502650977-group',
+      participants: ['5511999999999'],
+    });
+
+    expect(requestedPath).toBe(`${PREFIX}/remove-admin`);
+    expect(capturedBody?.groupId).toBe('120363019502650977-group');
+    expect(capturedBody?.phones).toEqual(['5511999999999']);
   });
 });

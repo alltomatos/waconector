@@ -1,4 +1,10 @@
-import type { InstanceApi, MessagesApi, WaAdapter, WebhookInput } from '../../core/adapter';
+import type {
+  GroupsApi,
+  InstanceApi,
+  MessagesApi,
+  WaAdapter,
+  WebhookInput,
+} from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
 import { digitsOnly, isJid } from '../../core/chat-id';
 import { WaConnectorError } from '../../core/errors';
@@ -6,6 +12,10 @@ import type { CanonicalEvent, ConnectionUpdateEvent, UnknownEvent } from '../../
 import { HttpClient } from '../../core/http';
 import type {
   ConnectResult,
+  CreateGroupInput,
+  GroupInfo,
+  GroupParticipant,
+  GroupParticipantsInput,
   InstanceState,
   InstanceStatus,
   MediaKind,
@@ -61,6 +71,13 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'groups.create',
+  'groups.getInfo',
+  'groups.list',
+  'groups.addParticipants',
+  'groups.removeParticipants',
+  'groups.promoteParticipants',
+  'groups.demoteParticipants',
   'webhooks.parse',
 ];
 
@@ -89,11 +106,22 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     sendReaction: (input) => sendReaction(http, input),
   };
 
+  const groups: GroupsApi = {
+    create: (input) => createGroup(http, input),
+    getInfo: (groupId) => getGroupInfo(http, groupId),
+    list: () => listGroups(http),
+    addParticipants: (input) => updateGroupParticipants(http, input, 'add'),
+    removeParticipants: (input) => updateGroupParticipants(http, input, 'remove'),
+    promoteParticipants: (input) => updateGroupParticipants(http, input, 'promote'),
+    demoteParticipants: (input) => updateGroupParticipants(http, input, 'demote'),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: UAZAPI_CAPABILITIES,
     instance,
     messages,
+    groups,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -128,6 +156,32 @@ function toMentionDigits(entry: string): string {
   if (entry === 'all') return entry;
   if (isJid(entry)) return digitsOnly(entry.slice(0, entry.indexOf('@')));
   return digitsOnly(entry);
+}
+
+/**
+ * Converte o `groupId` opaco do waconector (ver ADR-0009) para o campo `groupjid` esperado pelos
+ * endpoints `/group/*`. Para uazapi, `GroupInfo.id` já É o JID de grupo nativo do provider
+ * (`Group.JID`, formato `<dígitos>@g.us`) — devolvido tal como veio de `getGroupInfo`/`listGroups`,
+ * então a conversão é identidade. Função existe como ponto único de mudança (mesmo padrão de
+ * `toUazapiNumber`); deliberadamente separada dela porque `groupId` NÃO passa pelo conector (não é
+ * normalizado via `normalizeChatId`), diferente do `to` de mensagens.
+ */
+function toUazapiGroupJid(groupId: string): string {
+  return groupId;
+}
+
+/**
+ * `POST /group/create` aceita participantes como dígitos de telefone CRUS — ao contrário de
+ * `POST /group/updateParticipants` (usado por add/remove/promote/demote), NÃO aceita JID. Entradas
+ * em formato JID (o conector já normaliza `CreateGroupInput.participants` como um `to` de
+ * mensagem comum) têm o sufixo `@...` removido; entradas já em dígitos passam direto. Mesma
+ * extração usada em `toMentionDigits`, mas sem o caso especial `"all"` (não se aplica a
+ * participantes de grupo).
+ */
+function toCreateGroupParticipant(participant: string): string {
+  return isJid(participant)
+    ? digitsOnly(participant.slice(0, participant.indexOf('@')))
+    : digitsOnly(participant);
 }
 
 function mapMediaKindToUazapiType(kind: MediaKind): string {
@@ -287,6 +341,111 @@ function mapSentMessage(body: unknown, requestedNumber: string): SentMessage {
   const chatId = (record ? asString(record.chatid) : undefined) ?? requestedNumber;
   const timestamp = record ? asNumber(record.messageTimestamp) : undefined;
   return { id, chatId, timestamp, raw: body };
+}
+
+// ---------------------------------------------------------------------------
+// groups.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /group/create`: body `{ name, participants }` — `participants` aqui é dígitos crus (ver
+ * `toCreateGroupParticipant`), diferente de `updateParticipants` abaixo. Resposta 200 documentada
+ * como o schema `Group` completo (mesmo shape de `getGroupInfo`), mas sem exemplo JSON literal na
+ * doc — por isso `mapGroupInfo` recebe um fallback com os valores de entrada (`subject`,
+ * `participants`), mesmo padrão de `mapSentMessage` (`chatId ?? requestedNumber`).
+ */
+async function createGroup(http: HttpClient, input: CreateGroupInput): Promise<GroupInfo> {
+  const body = {
+    name: input.subject,
+    participants: input.participants.map(toCreateGroupParticipant),
+  };
+  const response = await http.request<unknown>({ method: 'POST', path: '/group/create', body });
+  return mapGroupInfo(response, { subject: input.subject, participants: input.participants });
+}
+
+/**
+ * `POST /group/info`: body `{ groupjid }`. Resposta = schema `Group` verbatim na doc: `{ JID, Name,
+ * Topic (descrição), OwnerJID`/`OwnerPN (dono), GroupCreated, Participants: [{ JID, IsAdmin,
+ * IsSuperAdmin }] }`.
+ */
+async function getGroupInfo(http: HttpClient, groupId: string): Promise<GroupInfo> {
+  const groupjid = toUazapiGroupJid(groupId);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: '/group/info',
+    body: { groupjid },
+  });
+  return mapGroupInfo(response, { id: groupId });
+}
+
+/**
+ * `GET /group/list`: sem body; query params `force`/`noparticipants` são opcionais e omitidos por
+ * este adapter (não expostos por `GroupsApi.list()`, que não recebe parâmetros). Resposta:
+ * `{ groups: Group[] }` — mesmo shape de `getGroupInfo`, um item por grupo.
+ */
+async function listGroups(http: HttpClient): Promise<GroupInfo[]> {
+  const response = await http.request<unknown>({ method: 'GET', path: '/group/list' });
+  const record = asRecord(response);
+  const groups = record?.groups;
+  if (!Array.isArray(groups)) return [];
+  return groups.map((group) => mapGroupInfo(group));
+}
+
+/**
+ * `addParticipants`/`removeParticipants`/`promoteParticipants`/`demoteParticipants` do contrato
+ * são, na uazapi, o MESMO endpoint (`POST /group/updateParticipants`), discriminado pelo campo
+ * `action`. Diferente de `/group/create`, aqui `participants` aceita telefone OU JID — reaproveita
+ * `toUazapiNumber` (identidade), a mesma função usada para o `to` de mensagens. Resposta
+ * (`{ groupUpdated, group, needs_refresh }`) é ignorada: o contrato exige apenas `Promise<void>`.
+ */
+async function updateGroupParticipants(
+  http: HttpClient,
+  input: GroupParticipantsInput,
+  action: 'add' | 'remove' | 'promote' | 'demote',
+): Promise<void> {
+  const body = {
+    groupjid: toUazapiGroupJid(input.groupId),
+    action,
+    participants: input.participants.map(toUazapiNumber),
+  };
+  await http.request({ method: 'POST', path: '/group/updateParticipants', body });
+}
+
+/**
+ * Mapeia o schema `Group` da uazapi (`JID`, `Name`, `Topic`, `OwnerJID`/`OwnerPN`, `Participants`)
+ * para `GroupInfo`. `fallback` cobre os campos que a doc não confirma estarem sempre presentes na
+ * resposta (comum em `createGroup`, sem exemplo JSON literal): `id`/`subject` caem de volta nos
+ * valores de entrada quando ausentes, e `participants` cai de volta nos IDs de entrada (com
+ * `isAdmin`/`isSuperAdmin: false` como suposição neutra) quando o provider não devolve
+ * `Participants`.
+ */
+function mapGroupInfo(
+  body: unknown,
+  fallback: { id?: string; subject?: string; participants?: string[] } = {},
+): GroupInfo {
+  const record = asRecord(body);
+  const id = (record ? asString(record.JID) : undefined) ?? fallback.id ?? '';
+  const subject = (record ? asString(record.Name) : undefined) ?? fallback.subject ?? '';
+  const description = record ? asString(record.Topic) : undefined;
+  const owner = record ? (asString(record.OwnerJID) ?? asString(record.OwnerPN)) : undefined;
+  const participantsRaw = record?.Participants;
+  const participants = Array.isArray(participantsRaw)
+    ? participantsRaw.map(mapGroupParticipant)
+    : (fallback.participants ?? []).map(toFallbackParticipant);
+  return { id, subject, description, owner, participants, raw: body };
+}
+
+function mapGroupParticipant(value: unknown): GroupParticipant {
+  const record = asRecord(value);
+  return {
+    id: (record ? asString(record.JID) : undefined) ?? 'unknown',
+    isAdmin: (record ? asBoolean(record.IsAdmin) : undefined) ?? false,
+    isSuperAdmin: (record ? asBoolean(record.IsSuperAdmin) : undefined) ?? false,
+  };
+}
+
+function toFallbackParticipant(id: string): GroupParticipant {
+  return { id, isAdmin: false, isSuperAdmin: false };
 }
 
 // ---------------------------------------------------------------------------
