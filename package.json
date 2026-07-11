@@ -78,6 +78,16 @@
         "default": "./dist/adapters/uazapi/index.cjs"
       }
     },
+    "./zapi": {
+      "import": {
+        "types": "./dist/adapters/zapi/index.d.ts",
+        "default": "./dist/adapters/zapi/index.js"
+      },
+      "require": {
+        "types": "./dist/adapters/zapi/index.d.cts",
+        "default": "./dist/adapters/zapi/index.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.cjs",

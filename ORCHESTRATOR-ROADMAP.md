@@ -47,13 +47,16 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
 - [x] Adapter uazapi (SaaS multi-tenant) — dossiê, implementação e auditoria adversarial (achou e
       corrigiu 2 issues "major": suposição errada de `messageType` e risco de formato de envelope
       de webhook) — [PR #11](https://github.com/alltomatos/waconector/pull/11)
-- [ ] Adapters: Z-API, Wuzapi
+- [x] Adapter Z-API (SaaS brasileiro) — dossiê, implementação e auditoria adversarial (achou e
+      corrigiu 2 issues "major": endpoint /send-sticker existente mas descartado, e messageId de
+      citação em /send-text não mapeado) — PR pendente de abertura
+- [ ] Adapter: Wuzapi
 - [ ] Capabilities novas: grupos, contatos, reply/quote, reactions
 
 ## Marcos de release (v0.x)
 
 - [x] **v0.1.0** publicado no npm (2026-07-10/11) — F1 completa (WAHA + Evolution GO)
-- [ ] **v0.2.0** — uazapi (após merge do PR #11)
+- [ ] **v0.2.0** — uazapi + Z-API (changesets pendentes, aguardando decisão de quando publicar)
 
 ## Epic 4 — F3 do produto: profundidade e DX
 

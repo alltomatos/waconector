@@ -1,0 +1,10 @@
+{
+  "instanceId": "instance.id",
+  "status": "READ",
+  "ids": ["999999999999999999999"],
+  "momment": 1632234645000,
+  "phoneDevice": 0,
+  "phone": "5544999999999",
+  "type": "MessageStatusCallback",
+  "isGroup": false
+}
