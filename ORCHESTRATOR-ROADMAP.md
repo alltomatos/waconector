@@ -17,7 +17,7 @@ Estado: **done**
 
 ## Epic 2 — Governança de agente (orchestrator bootstrap)
 
-Estado: **in_progress**
+Estado: **done**
 
 - [x] `.claude/config.json` e `.claude/context7.json`
 - [x] `docs/agents/` (issue-tracker.md, triage-labels.md, domain.md) via `/setup-skills --silent`
@@ -25,8 +25,20 @@ Estado: **in_progress**
       `ready-for-human`; `wontfix` já existia)
 - [x] Bloco `## Agent skills` em `CLAUDE.md`
 - [x] Este arquivo (`ORCHESTRATOR-ROADMAP.md`)
-- [ ] Auditoria técnica (Fase 3 do orchestrator): GAPs P1-P4 classificados por tier de risco
-- [ ] Aprovação do usuário para GAPs T3 (bloqueantes), se houver
+- [x] Auditoria técnica (Fase 3): 8 GAPs (P1-P4) — ver `ESTADO_ORQUESTRATOR.md`
+- [x] Aprovação do usuário e correção de todos os GAPs (incluindo GAP1, T3 — verificação HMAC de
+      webhooks WAHA) — mergeado via [PR #6](https://github.com/alltomatos/waconector/pull/6)
+
+## Epic 2.1 — Automação de CI (não planejada originalmente, adicionada a pedido do usuário)
+
+Estado: **done**
+
+- [x] `docs-sync.yml` — pós-merge em `main`, agente revisa o diff e atualiza docs/ADRs/wiki quando
+      necessário, commitando em `develop`
+- [x] `claude-code-review.yml` — revisão automática de código em todo PR (via `/install-github-app`)
+- [x] Ambos mergeados em `main` via [PR #8](https://github.com/alltomatos/waconector/pull/8)
+- [x] Bug real na primeira execução (`docs-sync` faltava `id-token: write`) — corrigido em
+      `develop`, **pendente de PR para `main`** para a correção entrar em vigor
 
 ## Epic 3 — F2 do produto: largura
 
