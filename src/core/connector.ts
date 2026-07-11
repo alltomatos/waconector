@@ -81,6 +81,9 @@ export interface ConnectorContactsApi {
   checkExists(phone: string): Promise<CheckExistsResult>;
   getProfilePicture(chatId: string): Promise<ContactProfilePicture>;
   getAbout(chatId: string): Promise<ContactAbout>;
+  block(chatId: string): Promise<void>;
+  unblock(chatId: string): Promise<void>;
+  listBlocked(): Promise<string[]>;
 }
 
 /**
@@ -214,6 +217,14 @@ export class WaConnector {
         this.callContactsMethod('getAbout', 'contacts.getAbout', (fn) =>
           fn(this.requireChatId(chatId)),
         ),
+      block: (chatId) =>
+        this.callContactsMethod('block', 'contacts.block', (fn) => fn(this.requireChatId(chatId))),
+      unblock: (chatId) =>
+        this.callContactsMethod('unblock', 'contacts.unblock', (fn) =>
+          fn(this.requireChatId(chatId)),
+        ),
+      listBlocked: () =>
+        this.callContactsMethod('listBlocked', 'contacts.listBlocked', (fn) => fn()),
     };
 
     this.webhooks = {

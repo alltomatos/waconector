@@ -92,6 +92,9 @@ export interface ContactsApi {
   checkExists?(phone: string): Promise<CheckExistsResult>;
   getProfilePicture?(chatId: string): Promise<ContactProfilePicture>;
   getAbout?(chatId: string): Promise<ContactAbout>;
+  block?(chatId: string): Promise<void>;
+  unblock?(chatId: string): Promise<void>;
+  listBlocked?(): Promise<string[]>;
 }
 
 /**

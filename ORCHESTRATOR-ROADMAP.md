@@ -101,9 +101,14 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       `contacts.getAbout`** (nenhum endpoint/campo para recado pessoal em toda a doc oficial,
       confirmado por busca exaustiva). Nenhum adapter compõe múltiplas chamadas HTTP atrás de uma
       operação (regra de ouro do ADR-0010) — campos ausentes ficam `undefined`, documentados.
-- [ ] Capability `contacts.*` — PR2 (moderação: block/unblock/listBlocked), planejado, ainda não
-      iniciado. `getPresence` fica fora do escopo (estruturalmente assíncrono/webhook para 4 dos 5
-      providers, incremento futuro à parte).
+      Mergeado via [PR #21](https://github.com/alltomatos/waconector/pull/21).
+- [x] Capability `contacts.*` — PR2: moderação (`block`/`unblock`/`listBlocked`) nos 5 adapters.
+      **WAHA e Z-API não declaram `contacts.listBlocked`** — nenhum endpoint de listagem de
+      bloqueados existe na doc oficial de nenhum dos dois (Z-API distinguido conscientemente de
+      `privacy/get-disallowed-contacts`, uma blacklist de privacidade diferente). `block`/`unblock`
+      implementados nos 5. **Fecha as 8 operações request-response escopadas para `contacts.*`
+      (ADR-0010).** `getPresence` fica fora do escopo (estruturalmente assíncrono/webhook para 4
+      dos 5 providers, incremento futuro à parte, mesma lógica dos webhooks de grupo).
 
 ## Marcos de release (v0.x)
 

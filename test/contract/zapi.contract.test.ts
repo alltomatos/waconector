@@ -238,6 +238,10 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { link: 'https://pic.exemplo.test/link-perfil.jpg' });
     }
 
+    if (method === 'POST' && pathname === `${PREFIX}/contacts/modify-blocked`) {
+      return jsonResponse(200, { value: true });
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1456,5 +1460,67 @@ describe('zapi adapter: comportamento específico do provider', () => {
     expect(about).toHaveProperty('raw');
     // uma única chamada HTTP para esta operação (ADR-0010: nunca compor múltiplas chamadas)
     expect(calls).toHaveLength(1);
+  });
+
+  it('contacts.block chama POST .../contacts/modify-blocked com {phone, action:"block"}', async () => {
+    let requestedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/contacts/modify-blocked`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.block('5511999999999');
+
+    expect(requestedPath).toBe(`${PREFIX}/contacts/modify-blocked`);
+    expect(capturedBody?.phone).toBe('5511999999999');
+    expect(capturedBody?.action).toBe('block');
+    expect(result).toBeUndefined();
+  });
+
+  it('contacts.unblock chama o MESMO endpoint .../contacts/modify-blocked com {phone, action:"unblock"}', async () => {
+    let requestedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/contacts/modify-blocked`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.unblock('5511999999999');
+
+    expect(requestedPath).toBe(`${PREFIX}/contacts/modify-blocked`);
+    expect(capturedBody?.phone).toBe('5511999999999');
+    expect(capturedBody?.action).toBe('unblock');
+    expect(result).toBeUndefined();
+  });
+
+  it('não declara "contacts.listBlocked" (Z-API não expõe endpoint de listagem de bloqueados) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = zapi(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('contacts.listBlocked');
+    expect(adapter.contacts.listBlocked).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const failure = await wa.contacts.listBlocked().catch((error: unknown) => error);
+
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+    }
   });
 });

@@ -57,6 +57,7 @@ export class MockAdapter implements WaAdapter {
   private readonly groupsById = new Map<string, GroupInfo>();
   private readonly groupIdByInviteCode = new Map<string, string>();
   private readonly contactsById = new Map<string, Contact>();
+  private readonly blockedIds = new Set<string>();
 
   constructor(options: MockAdapterOptions = {}) {
     this.provider = options.provider ?? 'mock';
@@ -199,6 +200,22 @@ export class MockAdapter implements WaAdapter {
       getAbout: async (chatId) => {
         this.assertConnected();
         return { about: this.contactsById.get(chatId)?.about, raw: { mock: true } };
+      },
+      block: async (chatId) => {
+        this.assertConnected();
+        this.blockedIds.add(chatId);
+        const contact = this.contactsById.get(chatId);
+        if (contact) this.contactsById.set(chatId, { ...contact, isBlocked: true });
+      },
+      unblock: async (chatId) => {
+        this.assertConnected();
+        this.blockedIds.delete(chatId);
+        const contact = this.contactsById.get(chatId);
+        if (contact) this.contactsById.set(chatId, { ...contact, isBlocked: false });
+      },
+      listBlocked: async () => {
+        this.assertConnected();
+        return Array.from(this.blockedIds);
       },
     };
   }

@@ -1,6 +1,7 @@
 # ADR-0010: Capability `contacts.*` — contrato de gestão de contato
 
-- Status: aceito (PR1 — descoberta + perfil — implementado; PR2 — moderação — planejado)
+- Status: aceito e implementado (PR1 — descoberta + perfil — e PR2 — moderação). `getPresence`
+  segue fora do escopo, incremento futuro à parte — ver "Achados principais".
 - Data: 2026-07-11
 
 ## Contexto
@@ -72,7 +73,11 @@ Wuzapi): `listContacts`, `getContact`, `checkExists`, `getProfilePicture`, `getA
      `getProfilePicture`, `getAbout`. **uazapi não declara `contacts.getAbout`** — confirmado sem
      nenhum endpoint/campo para recado pessoal em toda a doc oficial (mesma lacuna já identificada
      na pesquisa). Os demais 4 adapters implementam as 5 operações completas.
-   - **PR2 (pendente)**: moderação — `block`, `unblock`, `listBlocked`.
+   - **PR2 (implementado)**: moderação — `block`, `unblock`, `listBlocked`. **WAHA e Z-API não
+     declaram `contacts.listBlocked`** — confirmado sem nenhum endpoint de listagem de bloqueados
+     em toda a doc oficial de ambos (Z-API distinguido conscientemente de
+     `privacy/get-disallowed-contacts`, uma feature diferente). `block`/`unblock` implementados
+     nos 5 adapters.
    - `getPresence`: fora do escopo, incremento futuro à parte (ver "Achados principais").
 
 ## Justificativa

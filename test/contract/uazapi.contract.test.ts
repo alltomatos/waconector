@@ -236,6 +236,19 @@ function createFetchStub(): typeof globalThis.fetch {
       ]);
     }
 
+    if (method === 'POST' && pathname === '/chat/block') {
+      return jsonResponse(200, {
+        response: 'success',
+        blockList: ['5511999999999@s.whatsapp.net'],
+      });
+    }
+
+    if (method === 'GET' && pathname === '/chat/blocklist') {
+      return jsonResponse(200, {
+        blockList: ['5511999999999@s.whatsapp.net', '5511988887777@s.whatsapp.net'],
+      });
+    }
+
     throw new Error(`fetchStub (uazapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1329,5 +1342,94 @@ describe('uazapi adapter: comportamento específico do provider', () => {
     if (isWaConnectorError(failure)) {
       expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
     }
+  });
+
+  it('contacts.block envia { number, block: true } para POST /chat/block', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    let capturedMethod: string | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/block') {
+            capturedMethod = init?.method;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.contacts.block('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedMethod).toBe('POST');
+    expect(capturedBody?.number).toBe('5511999999999');
+    expect(capturedBody?.block).toBe(true);
+  });
+
+  it('contacts.unblock envia { number, block: false } para o MESMO endpoint POST /chat/block', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    let capturedMethod: string | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/block') {
+            capturedMethod = init?.method;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.contacts.unblock('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedMethod).toBe('POST');
+    expect(capturedBody?.number).toBe('5511999999999');
+    expect(capturedBody?.block).toBe(false);
+  });
+
+  it('contacts.listBlocked chama GET /chat/blocklist e mapeia "blockList" para a lista de chatIds', async () => {
+    const calls: string[] = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const blocked = await wa.contacts.listBlocked();
+
+    expect(calls).toContain('GET /chat/blocklist');
+    expect(blocked).toEqual(['5511999999999@s.whatsapp.net', '5511988887777@s.whatsapp.net']);
+  });
+
+  it('contacts.listBlocked devolve lista vazia quando "blockList" está ausente (nunca lança)', async () => {
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/blocklist') {
+            return jsonResponse(200, {});
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const blocked = await wa.contacts.listBlocked();
+
+    expect(blocked).toEqual([]);
+  });
+
+  it('declara contacts.block/contacts.unblock/contacts.listBlocked em capabilities', () => {
+    const adapter = uazapi(buildAdapterOptions());
+    expect(adapter.capabilities).toContain('contacts.block');
+    expect(adapter.capabilities).toContain('contacts.unblock');
+    expect(adapter.capabilities).toContain('contacts.listBlocked');
   });
 });

@@ -75,7 +75,12 @@ presa permanentemente a um número). Não há conceito de "sessão" separado do 
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
 `groups.updatePicture`, `groups.getInviteLink`, `groups.revokeInviteLink`,
 `groups.joinViaInviteLink`, `groups.leaveGroup`, `contacts.list`, `contacts.get`,
-`contacts.checkExists`, `contacts.getProfilePicture`, `contacts.getAbout`, `webhooks.parse`.
+`contacts.checkExists`, `contacts.getProfilePicture`, `contacts.getAbout`, `contacts.block`,
+`contacts.unblock`, `webhooks.parse`.
+
+`contacts.listBlocked` **não** foi declarada: a Z-API não expõe um endpoint de listagem de
+contatos bloqueados (ver "### `contacts.listBlocked` — NÃO suportado pela Z-API" na seção
+"Contatos" abaixo).
 
 `instance.pairingCode` **não** foi declarada: embora a Z-API suporte pareamento por código
 (`GET /phone-code/{phone}`), `InstanceApi.connect()` não recebe telefone como parâmetro nesta
@@ -432,6 +437,24 @@ puros (idempotente quando já são dígitos puros).
 | `contacts.checkExists` | `GET /phone-exists/{phone}` | `phone` no **path** — **cuidado**: a doc oficial rotula a seção como "Query Parameters", mas o exemplo `curl` real confirma que é path; o adapter segue o `curl`, não o cabeçalho de prosa. Resposta: ARRAY com um único item, `[{ exists, phone, lid }]` (`lid` é `string \| null`). O adapter pega o primeiro item; mapeia `exists` → `exists`, e `lid` (quando presente — contato com privacidade ativada) OU `phone` → `chatId`, ambos convertidos ao canônico via `toZapiPhone`. |
 | `contacts.getProfilePicture` | `GET /profile-picture` | `phone` como **query param** (não path, diferente de `get`/`checkExists`). Resposta: `{ link: string }` → `ContactProfilePicture.url`. `link` ausente/vazio (contato sem foto, ou privacidade que bloqueia) vira `url: undefined`, nunca lança. |
 | `contacts.getAbout` | `GET /contacts/{phone}` | **MESMO endpoint de `contacts.get`** — o adapter reaproveita a mesma função interna de requisição (`fetchContactDetail`) em vez de compor uma segunda chamada (ADR-0010: uma operação canônica, uma chamada HTTP). O campo `about` já vem embutido nessa resposta. |
+| `contacts.block` | `POST /contacts/modify-blocked` | Body `{ phone, action: 'block' }` — `phone` via `toZapiPhone`. Resposta confirmada `{ value: true }` — ignorada (`void`). |
+| `contacts.unblock` | `POST /contacts/modify-blocked` | **MESMO endpoint de `contacts.block`** — discriminado só pelo valor do campo `action` (`'unblock'` em vez de `'block'`), mesmo body `{ phone, action }`. Resposta idêntica, ignorada. |
+
+### `contacts.listBlocked` — NÃO suportado pela Z-API
+
+Busca exaustiva nas 273 páginas do índice completo da documentação oficial (`contacts/*`,
+`chats/*`, `privacy/*`, etc., via `developer.z-api.io/llms.txt`) não encontrou nenhum endpoint de
+**listagem** de contatos bloqueados — só o par de escrita (`POST /contacts/modify-blocked`, ver
+tabela acima) foi confirmado. Por isso a capability `contacts.listBlocked` **não** é declarada nem
+implementada por este adapter (mesma regra já seguida para `contacts.getAbout` na uazapi — ver
+docs/providers/uazapi.md#contactsgetabout--não-suportado-pela-uazapi).
+
+**Não confundir com `GET /privacy/get-disallowed-contacts`**: esse endpoint existe e é documentado,
+mas é uma feature adjacente e DIFERENTE — uma blacklist de **privacidade** por capability (quem
+fica de fora de "visto por último", foto de perfil, descrição, etc., configurável em
+`privacy/*`), não a lista de contatos efetivamente bloqueados (que impede troca de mensagens). Um
+contato pode estar na lista de "não mostrar meu status" sem estar bloqueado, e vice-versa — por
+isso `get-disallowed-contacts` não é usado como substituto de `listBlocked`.
 
 ### Limitações e assunções não confirmadas contra uma instância real
 

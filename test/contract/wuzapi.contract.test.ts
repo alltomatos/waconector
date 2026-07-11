@@ -284,6 +284,43 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'POST' && pathname === '/user/block') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          Details: 'User blocked',
+          JID: '5511988887777@s.whatsapp.net',
+          Blocklist: ['5511988887777@s.whatsapp.net'],
+          DHash: 'contrato-dhash',
+        },
+      });
+    }
+
+    if (method === 'POST' && pathname === '/user/unblock') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          Details: 'User unblocked',
+          JID: '5511988887777@s.whatsapp.net',
+          Blocklist: [],
+          DHash: 'contrato-dhash',
+        },
+      });
+    }
+
+    if (method === 'GET' && pathname === '/user/blocklist') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          Blocklist: ['5511988887777@s.whatsapp.net'],
+          DHash: 'contrato-dhash',
+        },
+      });
+    }
+
     throw new Error(`fetchStub (wuzapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1554,5 +1591,93 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
     const picture = await wa.contacts.getProfilePicture('5511999999999');
 
     expect(picture.url).toBeUndefined();
+  });
+
+  it('contacts.block envia { Phone: chatId } para POST /user/block e ignora a resposta (Promise<void>)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const calls: string[] = [];
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          if (url.pathname === '/user/block') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.contacts.block('5511988887777')).resolves.toBeUndefined();
+
+    expect(calls).toContain('POST /user/block');
+    expect(capturedBody).toEqual({ Phone: '5511988887777' });
+  });
+
+  it('contacts.unblock envia { Phone: chatId } para POST /user/unblock e ignora a resposta (Promise<void>)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const calls: string[] = [];
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          if (url.pathname === '/user/unblock') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.contacts.unblock('5511988887777')).resolves.toBeUndefined();
+
+    expect(calls).toContain('POST /user/unblock');
+    expect(capturedBody).toEqual({ Phone: '5511988887777' });
+  });
+
+  it('contacts.listBlocked chama GET /user/blocklist (sem corpo) e mapeia data.Blocklist -> array de chatIds', async () => {
+    const calls: string[] = [];
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const blocked = await wa.contacts.listBlocked();
+
+    expect(calls).toContain('GET /user/blocklist');
+    expect(blocked).toEqual(['5511988887777@s.whatsapp.net']);
+  });
+
+  it('contacts.listBlocked devolve array vazio quando "Blocklist" vem vazio (ninguém bloqueado)', async () => {
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/user/blocklist') {
+            return jsonResponse(200, {
+              code: 200,
+              success: true,
+              data: { Blocklist: [], DHash: 'contrato-dhash-vazio' },
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const blocked = await wa.contacts.listBlocked();
+
+    expect(blocked).toEqual([]);
   });
 });

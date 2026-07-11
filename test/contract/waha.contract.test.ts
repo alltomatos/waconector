@@ -227,6 +227,15 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { about: 'Disponível' });
     }
 
+    if (
+      method === 'POST' &&
+      (pathname === '/api/contacts/block' || pathname === '/api/contacts/unblock')
+    ) {
+      // Resposta: 201, sem schema de conteúdo declarado — contrato retorna void, stub genérico
+      // basta (mesmo padrão de updateSubject/leaveGroup).
+      return jsonResponse(201, {});
+    }
+
     if (method === 'POST' && pathname.startsWith(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/`)) {
       // addParticipants/removeParticipants/promoteParticipants/demoteParticipants: contrato
       // devolve Promise<void>, resposta stub genérica basta.
@@ -947,6 +956,68 @@ describe('WAHA adapter: comportamento específico do provider', () => {
     const about = await wa.contacts.getAbout('5585888888888');
 
     expect(about.about).toBeUndefined();
+  });
+
+  it('contacts.block chama POST /api/contacts/block com { contactId, session } e resolve void', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.contacts.block('5585999999999')).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe('/api/contacts/block');
+    expect(calls[0]?.body).toEqual({ contactId: '5585999999999@c.us', session: SESSION });
+  });
+
+  it('contacts.unblock chama POST /api/contacts/unblock com { contactId, session } e resolve void', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.contacts.unblock('5585999999999')).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe('/api/contacts/unblock');
+    expect(calls[0]?.body).toEqual({ contactId: '5585999999999@c.us', session: SESSION });
+  });
+
+  it('não declara "contacts.listBlocked" (WAHA não tem endpoint nativo de listagem de bloqueados) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = waha(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('contacts.listBlocked');
+    expect(adapter.contacts.listBlocked).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const failure = await wa.contacts.listBlocked().catch((error: unknown) => error);
+
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+    }
   });
 
   it('parseWebhook normaliza "message.ack" do dossiê para MessageAckEvent', () => {

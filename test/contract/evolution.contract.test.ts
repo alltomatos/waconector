@@ -238,6 +238,27 @@ function createFetchStub(): typeof globalThis.fetch {
         },
       });
     }
+    if (method === 'POST' && url.pathname === '/user/block') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: { DHash: 'fakehash==', JIDs: ['5511999999999@s.whatsapp.net'] },
+      });
+    }
+    if (method === 'POST' && url.pathname === '/user/unblock') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: { DHash: 'fakehash==', JIDs: [] },
+      });
+    }
+    if (method === 'GET' && url.pathname === '/user/blocklist') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          DHash: 'fakehash==',
+          JIDs: ['5511999999999@s.whatsapp.net', '5511988887777@s.whatsapp.net'],
+        },
+      });
+    }
 
     throw new Error(`fetchStub (evolution): rota não configurada ${method} ${url.pathname}`);
   };
@@ -1041,6 +1062,65 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
 
     expect(failure).toBeInstanceOf(Error);
     expect((failure as Error & { code?: string }).code).toBe('PROVIDER_ERROR');
+  });
+
+  it('contacts.block envia POST /user/block com {number} e ignora o retorno data.JIDs (Promise<void>)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/user/block') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.contacts.block('5511999999999@s.whatsapp.net');
+
+    expect(capturedBody).toEqual({ number: '5511999999999@s.whatsapp.net' });
+    expect(result).toBeUndefined();
+  });
+
+  it('contacts.unblock envia POST /user/unblock com {number} e ignora o retorno data.JIDs (Promise<void>)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/user/unblock') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.contacts.unblock('5511999999999@s.whatsapp.net');
+
+    expect(capturedBody).toEqual({ number: '5511999999999@s.whatsapp.net' });
+    expect(result).toBeUndefined();
+  });
+
+  it('contacts.listBlocked envia GET /user/blocklist e mapeia data.JIDs para string[]', async () => {
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: createFetchStub(),
+    });
+    const wa = createConnector(adapter);
+
+    const blocked = await wa.contacts.listBlocked();
+
+    expect(blocked).toEqual(['5511999999999@s.whatsapp.net', '5511988887777@s.whatsapp.net']);
   });
 
   it('parseWebhook normaliza evento "Message" de imagem e popula media.url a partir da chave "URL" (maiúscula)', () => {

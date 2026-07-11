@@ -112,7 +112,8 @@ dessa identidade.
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
 `groups.updatePicture`, `groups.getInviteLink`, `groups.revokeInviteLink`,
 `groups.joinViaInviteLink`, `groups.leaveGroup`, `contacts.list`, `contacts.get`,
-`contacts.checkExists`, `contacts.getProfilePicture`, `contacts.getAbout`, `webhooks.parse`.
+`contacts.checkExists`, `contacts.getProfilePicture`, `contacts.getAbout`, `contacts.block`,
+`contacts.unblock`, `contacts.listBlocked`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada (ver justificativa acima).
 
@@ -320,12 +321,12 @@ usado em `mapSentMessage` (`chatId ?? requestedNumber`).
 
 ## Contatos
 
-5 operações implementadas (ADR-0010): `contacts.list`, `contacts.get`, `contacts.checkExists`,
-`contacts.getProfilePicture`, `contacts.getAbout`. Regra de ouro seguida à risca: cada operação
-canônica dispara **uma única chamada** ao provider — o melhor match disponível. Quando o endpoint
-mais próximo não traz um campo (nome de exibição em `contacts.get`, ou a URL real da foto), esse
-campo fica `undefined` no `Contact`/`ContactProfilePicture` retornado — não há composição de
-chamadas para completá-lo.
+8 operações implementadas (ADR-0010): `contacts.list`, `contacts.get`, `contacts.checkExists`,
+`contacts.getProfilePicture`, `contacts.getAbout`, `contacts.block`, `contacts.unblock`,
+`contacts.listBlocked`. Regra de ouro seguida à risca: cada operação canônica dispara **uma única
+chamada** ao provider — o melhor match disponível. Quando o endpoint mais próximo não traz um campo
+(nome de exibição em `contacts.get`, ou a URL real da foto), esse campo fica `undefined` no
+`Contact`/`ContactProfilePicture` retornado — não há composição de chamadas para completá-lo.
 
 | Operação canônica | Endpoint | Observações |
 | --- | --- | --- |
@@ -334,6 +335,9 @@ chamadas para completá-lo.
 | `contacts.checkExists` | `POST /user/check` | Body `{Phone: [phone]}`. Resposta (`data.Users`) é um **array** de `{Query, IsInWhatsapp, JID, VerifiedName}` (struct diferente de `contacts.get`, sem tags JSON). Ver subseção dedicada abaixo. |
 | `contacts.getProfilePicture` | `POST /user/avatar` | Body `{Phone: chatId, Preview: false}`. Ver subseção dedicada abaixo — **divergência confirmada** entre `API.md` e o código-fonte (envelope e método HTTP). |
 | `contacts.getAbout` | `POST /user/info` | **MESMO endpoint de `contacts.get`** — reaproveita a mesma função interna (`fetchUserInfoEntry`), extraindo só o campo `Status`. |
+| `contacts.block` | `POST /user/block` | Body `{Phone: chatId}` (o servidor também aceita `{JID}`, mas este adapter usa `Phone` por consistência com o resto do adapter). Resposta (`data`): `{Details: "User blocked", JID, Blocklist, DHash, RequestedJID?}` — ignorada, `Promise<void>`. |
+| `contacts.unblock` | `POST /user/unblock` | Mesmo shape de `contacts.block` (body `{Phone: chatId}`). Resposta: `{Details: "User unblocked", ...}` — ignorada, `Promise<void>`. |
+| `contacts.listBlocked` | `GET /user/blocklist` | Sem corpo. Resposta (`data`): `{Blocklist: string[] (nunca `null` — lista vazia quando ninguém está bloqueado), DHash}`. Mapeada diretamente para `string[]` (chatIds no formato canônico, mesmo formato de `Contact.id`). |
 
 ### `contacts.list` — mapa `JID -> {Found, FirstName, FullName, PushName, BusinessName, RedactedPhone?}`
 
@@ -413,6 +417,28 @@ Reaproveita a mesma função interna (`fetchUserInfoEntry`, `POST /user/info`) u
 `contacts.get` — mesma extração do campo `Status`, mesma limitação de "só uma entrada esperada no
 mapa `Users`". Cada operação ainda dispara sua **própria** chamada HTTP (uma por operação, nunca
 composta) — reaproveitar a função não significa reaproveitar a resposta entre `get`/`getAbout`.
+
+### `contacts.block` / `contacts.unblock` / `contacts.listBlocked` — moderação de contato
+
+Diferente das 5 operações de descoberta/perfil acima (retrofit anterior, ADR-0010 PR1), estas 3
+operações de moderação foram confirmadas num PR posterior — e, ao contrário do WAHA e da Z-API
+(que **não** têm cobertura confirmada de `listBlocked` na pesquisa desses dois providers), o Wuzapi
+confirma as 3 operações, então as 3 são declaradas por este adapter.
+
+- **`contacts.block`** (`POST /user/block`) e **`contacts.unblock`** (`POST /user/unblock`) usam o
+  MESMO shape de corpo: `{Phone: chatId}` (via `toWuzapiPhone`, o mesmo helper de identidade
+  reaproveitado por `messages.*`/`contacts.get`/etc.). O servidor também aceita `{JID: chatId}` como
+  alternativa — este adapter usa `Phone` por consistência com o resto do adapter, não por
+  necessidade do provider. Resposta (`data`): `{Details: "User blocked"|"User unblocked", JID,
+  Blocklist: string[], DHash, RequestedJID?}` — inteiramente ignorada, ambos retornam `Promise<void>`
+  (mesmo padrão de `leaveGroupCall`/`updateGroupSubject`, que também descartam o corpo da resposta).
+  O provider resolve internamente `@lid` -> telefone antes de bloquear quando aplicável — transparente
+  para este adapter, nenhum tratamento especial necessário.
+- **`contacts.listBlocked`** (`GET /user/blocklist`, sem corpo) mapeia `data.Blocklist` diretamente
+  para o `string[]` do contrato — a resposta confirma que o campo **nunca** vem `null` (lista vazia
+  quando ninguém está bloqueado), então nenhum fallback defensivo adicional é necessário além do já
+  existente em `asStringArray` (que também descarta itens não-string, por segurança). Os chatIds
+  retornados já vêm no formato canônico (mesmo formato usado em `Contact.id`).
 
 ## Webhooks
 

@@ -349,9 +349,10 @@ contrato explícito, não acidental.
 
 ## Contatos
 
-Capabilities implementadas nesta fase (PR1 do ADR-0010 — descoberta + perfil):
-`contacts.list`, `contacts.get`, `contacts.checkExists`, `contacts.getProfilePicture`.
-`contacts.getAbout` **não** foi declarada — ver seção dedicada abaixo.
+Capabilities implementadas nesta fase: `contacts.list`, `contacts.get`, `contacts.checkExists`,
+`contacts.getProfilePicture` (PR1 do ADR-0010 — descoberta + perfil), e `contacts.block`,
+`contacts.unblock`, `contacts.listBlocked` (moderação de contato). `contacts.getAbout` **não** foi
+declarada — ver seção dedicada abaixo.
 
 `chatId`/`phone` de contato **não são opacos** (diferente do `groupId` de grupos, ver ADR-0009):
 é o mesmo chatId canônico já usado por `messages.*`, normalizado pelo conector via
@@ -365,6 +366,8 @@ para contatos.
 | `contacts.get` | `POST /chat/details` | Body `{ number, preview: false }` — `number` recebe o chatId canônico via `toUazapiNumber`. Resposta = schema `Chat`: `{ name, phone, wa_chatid, wa_name, wa_contactName, wa_isBlocked, image, imagePreview, ... }`. Mapeamento: `wa_contactName` (fallback `wa_name`, fallback `name`) -> `name`; `wa_isBlocked` -> `isBlocked`; `image` -> `profilePictureUrl` (o endpoint já devolve isso de graça, sem custo de uma segunda chamada); `wa_chatid` (fallback: o chatId requisitado) -> `id`. **Sem `about`**: a uazapi não expõe recado pessoal em nenhum endpoint — ver seção dedicada abaixo. `hasWhatsApp` também fica `undefined` (o schema `Chat` não tem um booleano equivalente; para isso, o consumidor usa `contacts.checkExists`). |
 | `contacts.checkExists` | `POST /chat/check` | Body `{ numbers: [phone] }` — array de um único elemento, já que o contrato canônico verifica um telefone por vez. Resposta: array de `{ query, jid, lid, isInWhatsapp, verifiedName?, groupName?, error? }`, um item por número consultado; o adapter usa apenas o primeiro (único, nesta chamada). Mapeamento: `isInWhatsapp` -> `exists` (fallback `false` se a resposta vier vazia — nunca lança); `jid` -> `chatId` (fica `undefined` quando o provider não resolve um JID, ex. número sem WhatsApp). |
 | `contacts.getProfilePicture` | `POST /chat/details` | **Mesmo endpoint de `contacts.get`** — reaproveita a função interna `requestChatDetails` (regra de ouro do ADR-0010: nunca compor múltiplas chamadas HTTP atrás de uma única operação canônica; aqui as duas operações canônicas simplesmente mapeiam a mesma única chamada de formas diferentes). Campo `image` (foto completa, pedida via `preview: false` — `imagePreview` traria só a miniatura) -> `ContactProfilePicture.url`. `undefined` quando o contato não tem foto ou a privacidade dele não permite (o provider omite o campo nesse caso). |
+| `contacts.block` / `contacts.unblock` | `POST /chat/block` | **Mesmo endpoint para as duas operações**, discriminado pelo campo `block: boolean` (mesmo padrão de "um endpoint, vários verbos canônicos" já usado por `groups.addParticipants`/etc. em `POST /group/updateParticipants`). Body `{ number, block }` — `number` recebe o chatId canônico via `toUazapiNumber` (identidade), a mesma função usada pelo restante de `contacts.*`. Resposta (`{ response, blockList }` — a lista atualizada de bloqueados) é ignorada: o contrato exige apenas `Promise<void>`. |
+| `contacts.listBlocked` | `GET /chat/blocklist` | Sem body/params. Resposta: `{ blockList: string[] }` — array de JIDs dos contatos bloqueados, já no mesmo formato canônico de chatId usado em `Contact.id`; repassado sem transformação. Entradas que não sejam string (resposta malformada) são descartadas defensivamente, nunca lança. |
 
 ### `contacts.getAbout` — não suportado pela uazapi
 
