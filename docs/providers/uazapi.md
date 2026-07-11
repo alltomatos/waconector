@@ -347,6 +347,56 @@ a convenção documentada em `src/core/events.ts`. Ver testes em
 `test/contract/uazapi.contract.test.ts` que fixam o comportamento atual (fallback `unknown`) como
 contrato explícito, não acidental.
 
+## Contatos
+
+Capabilities implementadas nesta fase (PR1 do ADR-0010 — descoberta + perfil):
+`contacts.list`, `contacts.get`, `contacts.checkExists`, `contacts.getProfilePicture`.
+`contacts.getAbout` **não** foi declarada — ver seção dedicada abaixo.
+
+`chatId`/`phone` de contato **não são opacos** (diferente do `groupId` de grupos, ver ADR-0009):
+é o mesmo chatId canônico já usado por `messages.*`, normalizado pelo conector via
+`normalizeChatId` antes de chegar ao adapter. O adapter reaproveita a mesma função de conversão
+usada para o `to` de mensagens (`toUazapiNumber`, identidade) — nenhuma função nova foi criada
+para contatos.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `contacts.list` | `GET /contacts` | Lista completa, sem paginação — usada em vez do `POST /contacts/list` paginado, já que `ContactsApi.list()` não recebe parâmetros (sem cursor para repassar). Query `contactScope: 'all'` é enviada explicitamente: o default do provider é `address_book` (só contatos salvos na agenda); `'all'` cobre também contatos "fora da agenda" com quem a instância já trocou mensagem, batendo melhor com a semântica de "conhecidos" que o método `list()` sugere — **decisão explícita do adapter, não o default do provider**. Resposta: array de `{ jid, contact_name, contact_FirstName }`. Mapeamento: `jid` -> `id`; `contact_name` (fallback `contact_FirstName`) -> `name`. Sem `about`/`profilePictureUrl`/`hasWhatsApp`/`isBlocked` — o endpoint não devolve nenhum desses campos, ficam `undefined` (limitação do provider, não bug). |
+| `contacts.get` | `POST /chat/details` | Body `{ number, preview: false }` — `number` recebe o chatId canônico via `toUazapiNumber`. Resposta = schema `Chat`: `{ name, phone, wa_chatid, wa_name, wa_contactName, wa_isBlocked, image, imagePreview, ... }`. Mapeamento: `wa_contactName` (fallback `wa_name`, fallback `name`) -> `name`; `wa_isBlocked` -> `isBlocked`; `image` -> `profilePictureUrl` (o endpoint já devolve isso de graça, sem custo de uma segunda chamada); `wa_chatid` (fallback: o chatId requisitado) -> `id`. **Sem `about`**: a uazapi não expõe recado pessoal em nenhum endpoint — ver seção dedicada abaixo. `hasWhatsApp` também fica `undefined` (o schema `Chat` não tem um booleano equivalente; para isso, o consumidor usa `contacts.checkExists`). |
+| `contacts.checkExists` | `POST /chat/check` | Body `{ numbers: [phone] }` — array de um único elemento, já que o contrato canônico verifica um telefone por vez. Resposta: array de `{ query, jid, lid, isInWhatsapp, verifiedName?, groupName?, error? }`, um item por número consultado; o adapter usa apenas o primeiro (único, nesta chamada). Mapeamento: `isInWhatsapp` -> `exists` (fallback `false` se a resposta vier vazia — nunca lança); `jid` -> `chatId` (fica `undefined` quando o provider não resolve um JID, ex. número sem WhatsApp). |
+| `contacts.getProfilePicture` | `POST /chat/details` | **Mesmo endpoint de `contacts.get`** — reaproveita a função interna `requestChatDetails` (regra de ouro do ADR-0010: nunca compor múltiplas chamadas HTTP atrás de uma única operação canônica; aqui as duas operações canônicas simplesmente mapeiam a mesma única chamada de formas diferentes). Campo `image` (foto completa, pedida via `preview: false` — `imagePreview` traria só a miniatura) -> `ContactProfilePicture.url`. `undefined` quando o contato não tem foto ou a privacidade dele não permite (o provider omite o campo nesse caso). |
+
+### `contacts.getAbout` — não suportado pela uazapi
+
+**Deliberadamente não implementado nem declarado em `capabilities`.** Uma busca exaustiva nas
+~132 rotas do OpenAPI bundled (`https://docs.uazapi.com/openapi-bundled.json`), não apenas uma
+tentativa rápida por falta de tempo, não encontrou nenhum campo ou endpoint que exponha o recado
+pessoal ("about"/"status message") de um contato — nem no schema `Chat` (`POST /chat/details`),
+nem em `GET /contacts`, nem em nenhuma outra rota de perfil/contato do OpenAPI. O único achado
+adjacente foi `/business/get/profile` (perfil de conta *Business*, feature diferente — descrição
+comercial de uma conta WhatsApp Business, não o recado pessoal de um contato qualquer). Diferente
+de `getProfilePicture` (que reaproveita `/chat/details`), não há aqui nenhum endpoint "mais
+próximo" cujo campo ausente justificasse deixar `about` apenas `undefined` — é a ausência do
+próprio recurso na API, por isso a capability inteira fica de fora. Ver ADR-0010 para o
+levantamento comparativo entre os 5 adapters (uazapi é o único, dos 5, sem essa operação).
+
+### Campos que ficam sempre `undefined` (limitação do provider, não bug)
+
+- `Contact.about`: nenhum endpoint da uazapi expõe esse campo (ver seção acima) — sempre
+  `undefined` em `contacts.list`/`contacts.get`.
+- `Contact.hasWhatsApp`: nem `GET /contacts` nem `POST /chat/details` devolvem um booleano
+  equivalente — para essa informação, use `contacts.checkExists`, que é a única operação com
+  esse dado (`isInWhatsapp`).
+- `Contact.isBlocked`/`Contact.profilePictureUrl`: presentes em `contacts.get` (via
+  `wa_isBlocked`/`image` de `/chat/details`), mas **ausentes** em `contacts.list` (`GET /contacts`
+  não devolve nenhum dos dois) — reflexo direto de cada operação mapear para um único endpoint
+  diferente (ADR-0010), não uma inconsistência do adapter.
+
+**Nenhuma das 4 operações foi exercitada contra uma instância uazapi real** — mesma ressalva já
+registrada para as demais seções deste dossiê (`instance.*`, `groups.*`). Os shapes de resposta
+acima seguem os schemas documentados no OpenAPI bundled, mas sem confirmação empírica contra
+tráfego real.
+
 ## Limites e particularidades
 
 - WhatsApp Business é recomendado explicitamente sobre conta pessoal; contas pessoais podem sofrer

@@ -1,4 +1,5 @@
 import type {
+  ContactsApi,
   GroupsApi,
   InstanceApi,
   MessagesApi,
@@ -17,7 +18,11 @@ import type {
 } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  CheckExistsResult,
   ConnectResult,
+  Contact,
+  ContactAbout,
+  ContactProfilePicture,
   CreateGroupInput,
   GroupInfo,
   GroupInviteLink,
@@ -94,6 +99,11 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'groups.revokeInviteLink',
   'groups.joinViaInviteLink',
   'groups.leaveGroup',
+  'contacts.list',
+  'contacts.get',
+  'contacts.checkExists',
+  'contacts.getProfilePicture',
+  'contacts.getAbout',
   'webhooks.parse',
 ];
 
@@ -138,12 +148,21 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     leaveGroup: (groupId) => leaveGroupById(http, groupId),
   };
 
+  const contacts: ContactsApi = {
+    list: () => listContacts(http),
+    get: (chatId) => getContact(http, chatId),
+    checkExists: (phone) => checkContactExists(http, phone),
+    getProfilePicture: (chatId) => getContactProfilePicture(http, chatId),
+    getAbout: (chatId) => getContactAbout(http, chatId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: EVOLUTION_CAPABILITIES,
     instance,
     messages,
     groups,
+    contacts,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -648,6 +667,165 @@ function mapGroupInfo(
 }
 
 // ---------------------------------------------------------------------------
+// contacts.* (ver ADR-0010)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /user/contacts` — o contact store local do whatsmeow (contatos já conhecidos pela sessão,
+ * não uma busca "ao vivo" no WhatsApp). Sem corpo. Resposta:
+ * `{message:"success", data: ContactInfo[]}`, `ContactInfo = {Jid, Found, FirstName, FullName,
+ * PushName, BusinessName}`. `Jid→id`; nome escolhido pela ordem de preferência `FullName` >
+ * `FirstName` > `PushName` (o campo mais completo primeiro). Sem `about`/`profilePictureUrl`/
+ * `hasWhatsApp` aqui — este endpoint não confirma explicitamente "tem WhatsApp" (todo item já é um
+ * contato conhecido, mas isso não é o mesmo que uma checagem positiva), então `hasWhatsApp` fica
+ * `undefined` em vez de assumir `true`. Cada item carrega seu próprio `raw` (o registro individual,
+ * não o envelope inteiro) — mesmo padrão de `listGroups`.
+ */
+async function listContacts(http: HttpClient): Promise<Contact[]> {
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'GET',
+    path: '/user/contacts',
+  });
+  const items = Array.isArray(response.data) ? response.data : [];
+
+  return items
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => item !== undefined)
+    .map((data) => mapContactInfo(data));
+}
+
+function mapContactInfo(data: Record<string, unknown>): Contact {
+  return {
+    id: asString(data.Jid) ?? '',
+    // `FirstName`/`FullName`/`PushName` são campos string simples no struct Go do whatsmeow (sem
+    // ponteiro) — o zero value `""` significa "não preenchido", não "nome vazio válido". Por isso
+    // usamos `asNonEmptyString` (que trata `""` como ausente) em vez de `asString` puro: com
+    // `asString`, um `FullName:""` "venceria" o `??` e nunca cairia no fallback para
+    // `FirstName`/`PushName`, mesmo estando de fato vazio.
+    name:
+      asNonEmptyString(data.FullName) ??
+      asNonEmptyString(data.FirstName) ??
+      asNonEmptyString(data.PushName),
+    raw: data,
+  };
+}
+
+/**
+ * `POST /user/info` — endpoint compartilhado por `contacts.get` e `contacts.getAbout` (regra de
+ * ouro do ADR-0010: uma única chamada HTTP por operação canônica; aqui as DUAS operações mapeiam
+ * para o MESMO endpoint, então a chamada em si é reaproveitada via esta função interna, sem que
+ * nenhuma das duas dispare uma segunda requisição). Corpo: `{number: [chatId], formatJid: true}` —
+ * `number` é array mesmo para uma única consulta. Resposta:
+ * `{message:"success", data:{Users: {[jid]: {VerifiedName, Status, PictureID, Devices, LID}}}}` —
+ * `Users` é um MAP indexado por JID aqui (diferente de `checkContactExists`, onde `Users` é um
+ * ARRAY). Como o corpo só pede um número, extraímos a primeira (e única) entrada do mapa; a chave
+ * é o JID já resolvido pelo servidor (via `formatJid`), preferido como `id` do `Contact` sobre o
+ * `chatId` de entrada.
+ */
+async function fetchUserInfo(
+  http: HttpClient,
+  chatId: string,
+): Promise<{
+  response: EvolutionEnvelope;
+  jid: string | undefined;
+  user: Record<string, unknown> | undefined;
+}> {
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'POST',
+    path: '/user/info',
+    body: { number: [toProviderNumber(chatId)], formatJid: true },
+  });
+
+  const data = asRecord(response.data);
+  const users = asRecord(data?.Users);
+  const [jid, rawUser] = users ? (Object.entries(users)[0] ?? []) : [];
+
+  return { response, jid, user: asRecord(rawUser) };
+}
+
+/**
+ * `contacts.get` via `POST /user/info` (ver `fetchUserInfo`). **Não existe um endpoint único
+ * "getContact" ideal no Evolution GO** — este é o melhor match disponível (ver ADR-0010,
+ * "`getContact` não é uma única chamada completa em 3 dos 5 providers"). Limitações documentadas
+ * (não bugs, ver docs/providers/evolution.md):
+ * - `name` fica **sempre `undefined`**: a resposta não traz nenhum nome de exibição (nem
+ *   `PushName`/`FullName`); quem precisar do nome deve usar `contacts.list()`.
+ * - `profilePictureUrl` fica **sempre `undefined`**: `PictureID` é só um id/hash interno da foto
+ *   atual, não uma URL utilizável — popular `profilePictureUrl` a partir dele seria inventar um
+ *   dado que a resposta não contém. Quem precisar da URL deve chamar `contacts.getProfilePicture`.
+ * - `VerifiedName` (quando presente) só é preenchido para contas Business verificadas — não é o
+ *   nome comum de exibição, por isso não é usado como fallback de `name`.
+ */
+async function getContact(http: HttpClient, chatId: string): Promise<Contact> {
+  const { response, jid, user } = await fetchUserInfo(http, chatId);
+  return {
+    id: jid ?? chatId,
+    name: undefined,
+    about: asString(user?.Status),
+    profilePictureUrl: undefined,
+    raw: response,
+  };
+}
+
+/**
+ * `contacts.getAbout` reaproveita o MESMO endpoint/chamada de `contacts.get`
+ * (`POST /user/info` via `fetchUserInfo`) — `data.Users[jid].Status` é o recado (about).
+ */
+async function getContactAbout(http: HttpClient, chatId: string): Promise<ContactAbout> {
+  const { response, user } = await fetchUserInfo(http, chatId);
+  return { about: asString(user?.Status), raw: response };
+}
+
+/**
+ * `contacts.checkExists` via `POST /user/check`. Corpo: `{number: [phone], formatJid: true}`.
+ * Resposta: `{message:"success", data:{Users: [{Query, IsInWhatsapp, JID, RemoteJID, LID,
+ * VerifiedName}]}}` — `Users` é um ARRAY aqui (diferente de `fetchUserInfo`, onde `Users` é um MAP
+ * por JID). Como o corpo só pede um número, pegamos o primeiro item do array.
+ * `IsInWhatsapp→exists`, `JID→chatId` (o JID resolvido pelo servidor, útil para o chamador
+ * encadear `messages.sendText`/`contacts.get` sem re-normalizar o telefone).
+ */
+async function checkContactExists(http: HttpClient, phone: string): Promise<CheckExistsResult> {
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'POST',
+    path: '/user/check',
+    body: { number: [toProviderNumber(phone)], formatJid: true },
+  });
+
+  const data = asRecord(response.data);
+  const users = Array.isArray(data?.Users) ? data.Users : [];
+  const first = asRecord(users[0]);
+
+  return {
+    exists: asBoolean(first?.IsInWhatsapp) ?? false,
+    chatId: asString(first?.JID),
+    raw: response,
+  };
+}
+
+/**
+ * `contacts.getProfilePicture` via `POST /user/avatar`. Corpo: `{number: chatId, preview: false}`
+ * — **diferente** de `fetchUserInfo`/`checkContactExists`, aqui `number` é uma string única, não um
+ * array. Resposta: `{message:"success", data:{ID, URL, Type, DirectPath, Hash}}`; `URL→url`. Se o
+ * contato não tiver foto (`ErrProfilePictureNotSet` no whatsmeow) o servidor normalmente responde
+ * com erro HTTP 4xx/5xx — o `HttpClient` compartilhado já lança nesse caso, e este adapter
+ * deliberadamente NÃO captura/mascara esse erro (adapter é "burro", ver CLAUDE.md): ele propaga
+ * como `PROVIDER_ERROR`/erro de rede comum, igual a qualquer outra chamada deste adapter.
+ */
+async function getContactProfilePicture(
+  http: HttpClient,
+  chatId: string,
+): Promise<ContactProfilePicture> {
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'POST',
+    path: '/user/avatar',
+    body: { number: toProviderNumber(chatId), preview: false },
+  });
+
+  const data = asRecord(response.data);
+  return { url: asString(data?.URL), raw: response };
+}
+
+// ---------------------------------------------------------------------------
 // webhooks.parse
 // ---------------------------------------------------------------------------
 
@@ -1012,6 +1190,12 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+/** Como `asString`, mas trata `""` como ausente — ver `mapContactInfo`. */
+function asNonEmptyString(value: unknown): string | undefined {
+  const str = asString(value);
+  return str && str.length > 0 ? str : undefined;
 }
 
 /** Como `asString`, mas também aceita `number` (coagido para string) — ver `toSentMessage`. */

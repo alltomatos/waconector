@@ -1,4 +1,5 @@
 import type {
+  ContactsApi,
   GroupsApi,
   InstanceApi,
   MessagesApi,
@@ -11,7 +12,10 @@ import { WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, ConnectionUpdateEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  CheckExistsResult,
   ConnectResult,
+  Contact,
+  ContactProfilePicture,
   CreateGroupInput,
   GroupInfo,
   GroupInviteLink,
@@ -91,6 +95,10 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'groups.revokeInviteLink',
   'groups.joinViaInviteLink',
   'groups.leaveGroup',
+  'contacts.list',
+  'contacts.get',
+  'contacts.checkExists',
+  'contacts.getProfilePicture',
   'webhooks.parse',
 ];
 
@@ -136,12 +144,23 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     leaveGroup: (groupId) => leaveGroup(http, groupId),
   };
 
+  const contacts: ContactsApi = {
+    list: () => listContacts(http),
+    get: (chatId) => getContact(http, chatId),
+    checkExists: (phone) => checkContactExists(http, phone),
+    getProfilePicture: (chatId) => getContactProfilePicture(http, chatId),
+    // `getAbout` deliberadamente NÃO implementado nem declarado em capabilities: busca exaustiva
+    // nas ~132 rotas do OpenAPI bundled não achou nenhum campo/endpoint para o recado pessoal de
+    // um contato na uazapi. Ver docs/providers/uazapi.md#contatos.
+  };
+
   return {
     provider: PROVIDER,
     capabilities: UAZAPI_CAPABILITIES,
     instance,
     messages,
     groups,
+    contacts,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -595,6 +614,116 @@ function mapGroupParticipant(value: unknown): GroupParticipant {
 
 function toFallbackParticipant(id: string): GroupParticipant {
   return { id, isAdmin: false, isSuperAdmin: false };
+}
+
+// ---------------------------------------------------------------------------
+// contacts.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /contacts`: lista completa, sem paginação — usado em vez do `POST /contacts/list`
+ * paginado, já que o contrato canônico `ContactsApi.list()` não recebe parâmetros (sem cursor para
+ * repassar). Query `contactScope: 'all'` é enviada explicitamente (o default do provider é
+ * `address_book`, que cobriria só os contatos salvos na agenda) para bater melhor com a semântica
+ * de "conhecidos" que `list()` sugere — inclui também contatos "fora da agenda" com quem a
+ * instância já trocou mensagem. Resposta: array de `{ jid, contact_name, contact_FirstName }`. Ver
+ * docs/providers/uazapi.md#contatos.
+ */
+async function listContacts(http: HttpClient): Promise<Contact[]> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: '/contacts',
+    query: { contactScope: 'all' },
+  });
+  if (!Array.isArray(response)) return [];
+  return response.map(mapContactListItem);
+}
+
+function mapContactListItem(value: unknown): Contact {
+  const record = asRecord(value);
+  const id = (record ? asString(record.jid) : undefined) ?? '';
+  const name = record
+    ? (asString(record.contact_name) ?? asString(record.contact_FirstName))
+    : undefined;
+  return { id, name, raw: value };
+}
+
+/**
+ * `contacts.get` e `contacts.getProfilePicture` reaproveitam o MESMO endpoint
+ * (`POST /chat/details`, body `{ number, preview: false }`) — regra de ouro do ADR-0010: nunca
+ * compor múltiplas chamadas HTTP atrás de uma única operação canônica. `preview: false` pede o
+ * campo `image` (foto completa) em vez de `imagePreview` (miniatura). `number` recebe o chatId
+ * canônico via `toUazapiNumber` (identidade), a mesma função usada para o `to` de mensagens — o
+ * chatId de contato NÃO é opaco (ver ADR-0010), diferente de `groupId`.
+ */
+async function requestChatDetails(http: HttpClient, chatId: string): Promise<unknown> {
+  const number = toUazapiNumber(chatId);
+  return http.request<unknown>({
+    method: 'POST',
+    path: '/chat/details',
+    body: { number, preview: false },
+  });
+}
+
+/**
+ * Resposta = schema `Chat`: `{ name, phone, wa_chatid, wa_name, wa_contactName, wa_isBlocked,
+ * image, imagePreview, ... }`. Mapeamento: `wa_contactName` (fallback `wa_name`, fallback `name`)
+ * -> `name`; `wa_isBlocked` -> `isBlocked`; `image` -> `profilePictureUrl` (o endpoint já devolve
+ * isso de graça, então preenchido aqui mesmo sem uma segunda chamada — ver `Contact.profilePictureUrl`
+ * em `src/core/types.ts`). SEM `about`: a uazapi não expõe esse campo em endpoint nenhum — capability
+ * `contacts.getAbout` deliberadamente não declarada nem implementada (ver
+ * docs/providers/uazapi.md#contactsgetabout--não-suportado-pela-uazapi). `id` recebe `wa_chatid`
+ * quando presente, com fallback para o chatId requisitado (mesmo padrão de
+ * `mapSentMessage`/`chatId ?? requestedNumber`).
+ */
+function mapContactFromChatDetails(body: unknown, requestedChatId: string): Contact {
+  const record = asRecord(body);
+  const id = (record ? asString(record.wa_chatid) : undefined) ?? requestedChatId;
+  const name = record
+    ? (asString(record.wa_contactName) ?? asString(record.wa_name) ?? asString(record.name))
+    : undefined;
+  const isBlocked = record ? asBoolean(record.wa_isBlocked) : undefined;
+  const profilePictureUrl = record ? asString(record.image) : undefined;
+  return { id, name, isBlocked, profilePictureUrl, raw: body };
+}
+
+async function getContact(http: HttpClient, chatId: string): Promise<Contact> {
+  const response = await requestChatDetails(http, chatId);
+  return mapContactFromChatDetails(response, chatId);
+}
+
+async function getContactProfilePicture(
+  http: HttpClient,
+  chatId: string,
+): Promise<ContactProfilePicture> {
+  const response = await requestChatDetails(http, chatId);
+  const record = asRecord(response);
+  return { url: record ? asString(record.image) : undefined, raw: response };
+}
+
+/**
+ * `POST /chat/check`: body `{ numbers: [phone] }` — array de um único elemento, já que o contrato
+ * canônico `checkExists(phone)` verifica um telefone por vez. Resposta: array de `{ query, jid,
+ * lid, isInWhatsapp, verifiedName?, groupName?, error? }`, um item por número consultado; só o
+ * primeiro (único, nesta chamada) é usado. Mapeamento: `isInWhatsapp` -> `exists` (fallback
+ * `false` quando ausente/resposta vazia, nunca lança); `jid` -> `chatId` (ausente quando o
+ * provider não resolve um JID para números que não têm WhatsApp). Ver docs/providers/uazapi.md#contatos.
+ */
+async function checkContactExists(http: HttpClient, phone: string): Promise<CheckExistsResult> {
+  const number = toUazapiNumber(phone);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: '/chat/check',
+    body: { numbers: [number] },
+  });
+  return mapCheckExistsResult(response);
+}
+
+function mapCheckExistsResult(body: unknown): CheckExistsResult {
+  const first = Array.isArray(body) ? asRecord(body[0]) : undefined;
+  const exists = (first ? asBoolean(first.isInWhatsapp) : undefined) ?? false;
+  const chatId = first ? asString(first.jid) : undefined;
+  return { exists, chatId, raw: body };
 }
 
 // ---------------------------------------------------------------------------

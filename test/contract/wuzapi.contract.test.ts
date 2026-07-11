@@ -215,6 +215,75 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'GET' && pathname === '/user/contacts') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          '5511999999999@s.whatsapp.net': {
+            Found: true,
+            FirstName: 'Fulano',
+            FullName: 'Fulano da Silva',
+            PushName: 'Fulaninho',
+          },
+          '5511988887777@s.whatsapp.net': {
+            Found: true,
+            FirstName: 'Beltrano',
+            PushName: 'Beltraninho',
+          },
+        },
+      });
+    }
+
+    if (method === 'POST' && pathname === '/user/info') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          Users: {
+            '5511999999999@s.whatsapp.net': {
+              VerifiedName: '',
+              Status: 'Disponível',
+              PictureID: 'contrato-picture-id',
+              Devices: [],
+              LID: '',
+            },
+          },
+        },
+      });
+    }
+
+    if (method === 'POST' && pathname === '/user/check') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          Users: [
+            {
+              Query: '5511999999999',
+              IsInWhatsapp: true,
+              JID: '5511999999999@s.whatsapp.net',
+              VerifiedName: '',
+            },
+          ],
+        },
+      });
+    }
+
+    if (method === 'POST' && pathname === '/user/avatar') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          url: 'https://pps.exemplo.test/foto.jpg',
+          id: 'contrato-avatar-id',
+          type: 'image',
+          direct_path: '/v/contrato-direct-path',
+          hash: 'contrato-hash',
+        },
+      });
+    }
+
     throw new Error(`fetchStub (wuzapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1276,5 +1345,214 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
 
     await adapter.instance.status();
     expect(calls[0]?.get('token')).toBe(TOKEN);
+  });
+
+  it('contacts.list chama GET /user/contacts (sem corpo) e mapeia a chave do mapa -> id, FullName (fallback FirstName/PushName) -> name', async () => {
+    const calls: string[] = [];
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const contacts = await wa.contacts.list();
+
+    expect(calls).toContain('GET /user/contacts');
+    expect(contacts).toEqual([
+      { id: '5511999999999@s.whatsapp.net', name: 'Fulano da Silva', raw: expect.anything() },
+      { id: '5511988887777@s.whatsapp.net', name: 'Beltrano', raw: expect.anything() },
+    ]);
+  });
+
+  it('contacts.list cai para FirstName e depois PushName quando FullName está ausente', async () => {
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/user/contacts') {
+            return jsonResponse(200, {
+              code: 200,
+              success: true,
+              data: {
+                '5511977776666@s.whatsapp.net': { Found: true, PushName: 'Só PushName' },
+              },
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const contacts = await wa.contacts.list();
+
+    expect(contacts).toEqual([
+      { id: '5511977776666@s.whatsapp.net', name: 'Só PushName', raw: expect.anything() },
+    ]);
+  });
+
+  it('contacts.get envia { Phone: [chatId] } para POST /user/info e mapeia Status -> about, deixando name/profilePictureUrl undefined (limitação do provider)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/user/info') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const contact = await wa.contacts.get('5511999999999');
+
+    expect(capturedBody?.Phone).toEqual(['5511999999999']);
+    expect(contact.id).toBe('5511999999999');
+    expect(contact.about).toBe('Disponível');
+    // sem nome de exibição nesta resposta (mesma limitação do Evolution GO, mesma lib whatsmeow).
+    expect(contact.name).toBeUndefined();
+    // PictureID não é a URL da foto (só um id/hash interno) — não populado a partir dele.
+    expect(contact.profilePictureUrl).toBeUndefined();
+    expect(contact).toHaveProperty('raw');
+  });
+
+  it('contacts.getAbout reaproveita o MESMO endpoint de contacts.get (POST /user/info) e mapeia Status -> about', async () => {
+    const calls: string[] = [];
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const about = await wa.contacts.getAbout('5511999999999');
+
+    expect(calls).toContain('POST /user/info');
+    expect(about.about).toBe('Disponível');
+    expect(about).toHaveProperty('raw');
+  });
+
+  it('contacts.checkExists envia { Phone: [phone] } para POST /user/check e mapeia IsInWhatsapp->exists, JID->chatId (primeiro item)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/user/check') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists('5511999999999');
+
+    expect(capturedBody?.Phone).toEqual(['5511999999999']);
+    expect(result.exists).toBe(true);
+    expect(result.chatId).toBe('5511999999999@s.whatsapp.net');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('contacts.checkExists mapeia JID mesmo quando IsInWhatsapp é false (JID sintetizado, não confirmação de existência)', async () => {
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/user/check') {
+            return jsonResponse(200, {
+              code: 200,
+              success: true,
+              data: {
+                Users: [
+                  {
+                    Query: '5511000000000',
+                    IsInWhatsapp: false,
+                    JID: '5511000000000@s.whatsapp.net',
+                    VerifiedName: '',
+                  },
+                ],
+              },
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists('5511000000000');
+
+    expect(result.exists).toBe(false);
+    // JID vem preenchido mesmo com IsInWhatsapp: false — é só o JID sintetizado a partir do
+    // número consultado, não uma confirmação de existência (ver docs/providers/wuzapi.md).
+    expect(result.chatId).toBe('5511000000000@s.whatsapp.net');
+  });
+
+  it('contacts.checkExists devolve exists: false sem chatId quando a resposta vem sem "Users" (nunca lança)', async () => {
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/user/check') {
+            return jsonResponse(200, { code: 200, success: true, data: { Users: [] } });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists('5511000000000');
+
+    expect(result.exists).toBe(false);
+    expect(result.chatId).toBeUndefined();
+  });
+
+  it('contacts.getProfilePicture envia { Phone: chatId, Preview: false } (POST, não GET — API.md diverge do código-fonte) e mapeia data.url -> url', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const calls: string[] = [];
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          if (url.pathname === '/user/avatar') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const picture = await wa.contacts.getProfilePicture('5511999999999');
+
+    expect(calls).toContain('POST /user/avatar');
+    expect(capturedBody).toEqual({ Phone: '5511999999999', Preview: false });
+    expect(picture.url).toBe('https://pps.exemplo.test/foto.jpg');
+    expect(picture).toHaveProperty('raw');
+  });
+
+  it('contacts.getProfilePicture devolve url undefined quando a resposta não inclui "url"', async () => {
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/user/avatar') {
+            return jsonResponse(200, { code: 200, success: true, data: { id: 'sem-url' } });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const picture = await wa.contacts.getProfilePicture('5511999999999');
+
+    expect(picture.url).toBeUndefined();
   });
 });

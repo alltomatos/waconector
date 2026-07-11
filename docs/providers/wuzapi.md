@@ -111,7 +111,8 @@ dessa identidade.
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
 `groups.updatePicture`, `groups.getInviteLink`, `groups.revokeInviteLink`,
-`groups.joinViaInviteLink`, `groups.leaveGroup`, `webhooks.parse`.
+`groups.joinViaInviteLink`, `groups.leaveGroup`, `contacts.list`, `contacts.get`,
+`contacts.checkExists`, `contacts.getProfilePicture`, `contacts.getAbout`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada (ver justificativa acima).
 
@@ -316,6 +317,102 @@ chamar o adapter, e este reaproveita `toWuzapiPhone` (identidade) — mesmo help
 (variação de versão do servidor), o adapter cai de volta em `input.subject`/nos participantes
 requisitados (com `isAdmin`/`isSuperAdmin` assumidos como `false`) — mesmo padrão de fallback já
 usado em `mapSentMessage` (`chatId ?? requestedNumber`).
+
+## Contatos
+
+5 operações implementadas (ADR-0010): `contacts.list`, `contacts.get`, `contacts.checkExists`,
+`contacts.getProfilePicture`, `contacts.getAbout`. Regra de ouro seguida à risca: cada operação
+canônica dispara **uma única chamada** ao provider — o melhor match disponível. Quando o endpoint
+mais próximo não traz um campo (nome de exibição em `contacts.get`, ou a URL real da foto), esse
+campo fica `undefined` no `Contact`/`ContactProfilePicture` retornado — não há composição de
+chamadas para completá-lo.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `contacts.list` | `GET /user/contacts` | Sem corpo. Resposta (`data`) é um **mapa** `JID(string) -> {Found, FirstName, FullName, PushName, BusinessName, RedactedPhone?}` (chaves PascalCase, sem tags JSON no struct Go). Ver subseção dedicada abaixo. |
+| `contacts.get` | `POST /user/info` | Body `{Phone: [chatId]}`. Não existe um endpoint único ideal para "getContact" — este é o melhor match (uma única chamada, ADR-0010). Ver subseção dedicada abaixo — **sem nome de exibição**. |
+| `contacts.checkExists` | `POST /user/check` | Body `{Phone: [phone]}`. Resposta (`data.Users`) é um **array** de `{Query, IsInWhatsapp, JID, VerifiedName}` (struct diferente de `contacts.get`, sem tags JSON). Ver subseção dedicada abaixo. |
+| `contacts.getProfilePicture` | `POST /user/avatar` | Body `{Phone: chatId, Preview: false}`. Ver subseção dedicada abaixo — **divergência confirmada** entre `API.md` e o código-fonte (envelope e método HTTP). |
+| `contacts.getAbout` | `POST /user/info` | **MESMO endpoint de `contacts.get`** — reaproveita a mesma função interna (`fetchUserInfoEntry`), extraindo só o campo `Status`. |
+
+### `contacts.list` — mapa `JID -> {Found, FirstName, FullName, PushName, BusinessName, RedactedPhone?}`
+
+A chave do mapa vira `Contact.id`; `name` usa `FullName` (fallback `FirstName`, fallback
+`PushName`) — nenhum dos três é garantido presente para todo contato. Igual a `groups.list`
+(`mapGroupInfo`), `raw` é o objeto DAQUELE contato específico (não o mapa inteiro), para que cada
+`Contact` preserve só o payload que o descreve.
+
+**Sem `about`/`profilePictureUrl`/`hasWhatsApp`/`isBlocked` neste endpoint** — nenhum campo
+equivalente na resposta de `GET /user/contacts`; ficam `undefined` (usar `contacts.getAbout` /
+`contacts.getProfilePicture` separadamente quando necessário).
+
+### `contacts.get` — `POST /user/info`, sem nome de exibição, `PictureID` não é a URL
+
+Body `{Phone: [chatId]}` — o array tem só um elemento por chamada. Resposta (`data`): `{Users:
+{<JID>: {VerifiedName, Status, PictureID, Devices, LID}, ...}}` — **também um mapa** (mesmo
+formato de `contacts.list`), mas como só uma `Phone` é enviada, só uma entrada é esperada; a
+primeira (e única) é usada, na ordem de inserção do objeto (`fetchUserInfoEntry`/
+`firstRecordValue`).
+
+Mapeamento: `Status` -> `Contact.about`.
+
+- **`name` fica `undefined`** — a resposta não traz nome de exibição algum. Mesma limitação já
+  documentada para o adapter Evolution GO (mesma lib `whatsmeow` subjacente): nenhum campo do
+  tipo `PushName`/`FullName` aparece em `/user/info`.
+- **`profilePictureUrl` fica `undefined`** — `PictureID` é só um identificador/hash interno da
+  foto atual do contato, **não é a URL**. Popular `profilePictureUrl` a partir dele exigiria uma
+  segunda chamada (`POST /user/avatar`, usada por `contacts.getProfilePicture`), que este adapter
+  **não compõe** (regra de ouro do ADR-0010, ver topo desta seção) — quem precisar da URL da foto
+  deve chamar `contacts.getProfilePicture` separadamente.
+- **`id`** é o próprio `chatId` requisitado (já canônico, mesmo padrão de fallback de
+  `mapSentMessage`), não a chave do mapa `Users` — evita depender do formato exato do JID
+  devolvido pelo servidor.
+- `hasWhatsApp`/`isBlocked` também ficam `undefined` — sem campo equivalente confirmado na
+  pesquisa para este endpoint.
+
+### `contacts.checkExists` — `POST /user/check`, `JID` não confirma existência
+
+Body `{Phone: [phone]}`. Resposta (`data.Users`) é um **array** — struct diferente do mapa usado
+por `contacts.get`/`contacts.list`, sem tags JSON (`{Query, IsInWhatsapp, JID, VerifiedName}`). Só
+uma `Phone` é enviada por chamada, então o primeiro item do array é usado.
+
+Mapeamento: `IsInWhatsapp` -> `exists`, `JID` -> `chatId`.
+
+> ⚠️ **`JID` vem preenchido MESMO QUANDO `IsInWhatsapp` é `false`** — é o JID **sintetizado** a
+> partir do número consultado (`<dígitos>@s.whatsapp.net`), não uma confirmação de que o número
+> existe no WhatsApp. Este adapter ainda assim mapeia `JID` -> `CheckExistsResult.chatId` sempre
+> que presente (o contrato central já documenta que "nem todo provider devolve isso quando
+> `exists` é `false`" — aqui o Wuzapi devolve um valor, só que sem significado de confirmação).
+> Consumidores que dependem de `chatId` como sinal de existência confirmada devem checar `exists`
+> primeiro.
+
+Resposta vazia (`Users: []`, ex. array vazio quando o telefone é inválido) mapeia para `exists:
+false`, `chatId: undefined`, sem lançar.
+
+### `contacts.getProfilePicture` — `POST /user/avatar`, divergência doc-vs-código confirmada
+
+Body `{Phone: chatId, Preview: false}`.
+
+> ⚠️ **Divergência de formato de resposta confirmada entre a doc e o código-fonte**: o `API.md`
+> documenta um exemplo de resposta **diferente** (objeto bare em PascalCase, sem o envelope
+> `{code,success,data}` usado por todo o resto da API). O código-fonte real (`handlers.go`) usa
+> tags JSON **minúsculas** e sempre embrulha a resposta no envelope padrão — este adapter confia
+> no código-fonte, não na prosa da doc (mesmo critério já usado nas demais divergências deste
+> dossiê): `data = {url, id, type, direct_path, hash}`, mapeado como `data.url` -> `url`.
+>
+> ⚠️ **Divergência de método HTTP confirmada**: `API.md` documenta esta rota como `GET`, mas
+> `routes.go` registra o handler em `POST` — este adapter usa `POST`, confiando no registro de
+> rotas do código-fonte.
+
+`url` fica `undefined` quando a resposta não inclui o campo (contato sem foto, ou privacidade não
+permite) — nunca lança.
+
+### `contacts.getAbout` — mesmo endpoint de `contacts.get`
+
+Reaproveita a mesma função interna (`fetchUserInfoEntry`, `POST /user/info`) usada por
+`contacts.get` — mesma extração do campo `Status`, mesma limitação de "só uma entrada esperada no
+mapa `Users`". Cada operação ainda dispara sua **própria** chamada HTTP (uma por operação, nunca
+composta) — reaproveitar a função não significa reaproveitar a resposta entre `get`/`getAbout`.
 
 ## Webhooks
 

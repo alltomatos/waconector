@@ -1,4 +1,5 @@
 import type {
+  ContactsApi,
   GroupsApi,
   InstanceApi,
   MessagesApi,
@@ -17,7 +18,11 @@ import type {
 } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  CheckExistsResult,
   ConnectResult,
+  Contact,
+  ContactAbout,
+  ContactProfilePicture,
   CreateGroupInput,
   GroupInfo,
   GroupInviteLink,
@@ -105,6 +110,11 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'groups.revokeInviteLink',
   'groups.joinViaInviteLink',
   'groups.leaveGroup',
+  'contacts.list',
+  'contacts.get',
+  'contacts.checkExists',
+  'contacts.getProfilePicture',
+  'contacts.getAbout',
   'webhooks.parse',
 ];
 
@@ -150,12 +160,21 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     leaveGroup: (groupId) => leaveGroupCall(http, groupId),
   };
 
+  const contacts: ContactsApi = {
+    list: () => listContacts(http),
+    get: (chatId) => getContact(http, chatId),
+    checkExists: (phone) => checkContactExists(http, phone),
+    getProfilePicture: (chatId) => getContactProfilePicture(http, chatId),
+    getAbout: (chatId) => getContactAbout(http, chatId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WUZAPI_CAPABILITIES,
     instance,
     messages,
     groups,
+    contacts,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -678,6 +697,150 @@ function mapGroupParticipants(value: unknown): GroupParticipant[] | undefined {
 /** Fallback usado por `createGroup` quando a resposta não ecoa `Participants`: assume não-admin. */
 function toFallbackParticipant(id: string): GroupParticipant {
   return { id, isAdmin: false, isSuperAdmin: false };
+}
+
+// ---------------------------------------------------------------------------
+// contacts.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /user/contacts` — sem corpo. Resposta (`data`): um MAPA `JID(string) -> {Found, FirstName,
+ * FullName, PushName, BusinessName, RedactedPhone?}` (chaves PascalCase, sem tags JSON no struct
+ * Go — confirmado na pesquisa). A chave do mapa vira `Contact.id`; `name` usa `FullName` (fallback
+ * `FirstName`, fallback `PushName`) — nenhum dos três é garantido presente para todo contato.
+ *
+ * Igual a `listGroups`, `raw` é o objeto DAQUELE contato específico (não o mapa inteiro) — cada
+ * `Contact` preserva só o payload que o descreve.
+ *
+ * SEM `about`/`profilePictureUrl`/`hasWhatsApp` neste endpoint (nenhum campo equivalente na
+ * resposta) — ficam `undefined` (ver `contacts.getAbout`/`contacts.getProfilePicture` para isso).
+ */
+async function listContacts(http: HttpClient): Promise<Contact[]> {
+  const response = await http.request<WuzapiEnvelope>({ method: 'GET', path: '/user/contacts' });
+  const data = asRecord(response.data);
+  if (!data) return [];
+  return Object.entries(data).map(([jid, value]) => {
+    const record = asRecord(value);
+    const name =
+      asString(record?.FullName) ?? asString(record?.FirstName) ?? asString(record?.PushName);
+    return { id: jid, name, raw: value };
+  });
+}
+
+/**
+ * `POST /user/info`, body `{Phone: [chatId]}` — compartilhado por `contacts.get` e
+ * `contacts.getAbout` (mesmo endpoint, mesma extração; ver pesquisa do dossiê). Cada operação
+ * canônica ainda dispara SUA PRÓPRIA chamada HTTP (uma por operação, ver ADR-0010) — esta função
+ * só evita duplicar a extração da resposta entre as duas.
+ *
+ * Resposta (`data`): `{Users: {<JID>: {VerifiedName, Status, PictureID, Devices, LID}, ...}}` — um
+ * MAPA (mesmo formato de `/user/contacts`), mas como só uma `Phone` é enviada por chamada, só uma
+ * entrada é esperada; a primeira (e única) é usada, na ordem de inserção do objeto.
+ */
+async function fetchUserInfoEntry(
+  http: HttpClient,
+  chatId: string,
+): Promise<{ entry: Record<string, unknown> | undefined; response: WuzapiEnvelope }> {
+  const phone = toWuzapiPhone(chatId);
+  const response = await http.request<WuzapiEnvelope>({
+    method: 'POST',
+    path: '/user/info',
+    body: { Phone: [phone] },
+  });
+  const data = asRecord(response.data);
+  const usersMap = asRecord(data?.Users);
+  const entry = usersMap ? firstRecordValue(usersMap) : undefined;
+  return { entry, response };
+}
+
+/**
+ * Não existe um endpoint único ideal de "getContact" no Wuzapi — `POST /user/info` é o melhor
+ * match disponível (única chamada, ver ADR-0010). Mapeia `Status` -> `about`.
+ *
+ * - `name` fica `undefined`: a resposta não traz nome de exibição (mesma limitação do adapter
+ *   Evolution GO, que usa a mesma lib `whatsmeow` subjacente).
+ * - `profilePictureUrl` fica `undefined`: `PictureID` é só um identificador/hash interno da foto
+ *   atual, NÃO a URL — popular a partir dele exigiria uma segunda chamada (`contacts.
+ *   getProfilePicture`), que este adapter não compõe (regra de ouro do ADR-0010).
+ * - `id` é o próprio `chatId` requisitado (já canônico, mesmo padrão de `mapSentMessage`), não a
+ *   chave do mapa `Users` — evita depender do formato exato do JID de retorno.
+ */
+async function getContact(http: HttpClient, chatId: string): Promise<Contact> {
+  const { entry, response } = await fetchUserInfoEntry(http, chatId);
+  return { id: chatId, about: asString(entry?.Status), raw: response };
+}
+
+/**
+ * `POST /user/check`, body `{Phone: [phone]}`. Resposta (`data`): `{Users: [{Query,
+ * IsInWhatsapp, JID, VerifiedName}, ...]}` — um ARRAY (struct diferente do mapa de `getContact`,
+ * sem tags JSON). Só uma `Phone` é enviada por chamada, então o primeiro item é usado.
+ *
+ * `JID` vem preenchido MESMO QUANDO `IsInWhatsapp` é `false` — é o JID sintetizado a partir do
+ * número consultado, não uma confirmação de existência (documentado em
+ * docs/providers/wuzapi.md). Ainda assim é mapeado para `chatId` sempre que presente, seguindo o
+ * contrato de `CheckExistsResult.chatId` ("nem todos [providers] devolvem isso quando `exists` é
+ * `false`" — aqui o Wuzapi devolve, só que sem valor de confirmação).
+ */
+async function checkContactExists(http: HttpClient, phone: string): Promise<CheckExistsResult> {
+  const target = toWuzapiPhone(phone);
+  const response = await http.request<WuzapiEnvelope>({
+    method: 'POST',
+    path: '/user/check',
+    body: { Phone: [target] },
+  });
+  const data = asRecord(response.data);
+  const users = Array.isArray(data?.Users) ? data.Users : [];
+  const first = asRecord(users[0]);
+  return {
+    exists: asBoolean(first?.IsInWhatsapp) ?? false,
+    chatId: asString(first?.JID),
+    raw: response,
+  };
+}
+
+/**
+ * `POST /user/avatar`, body `{Phone: chatId, Preview: false}`.
+ *
+ * ⚠️ **Divergência confirmada entre a doc e o código-fonte**: o `API.md` documenta um exemplo de
+ * resposta DIFERENTE (objeto bare em PascalCase, sem o envelope `{code,success,data}`) — o
+ * código-fonte real (`handlers.go`) usa tags JSON minúsculas e sempre embrulha em
+ * `{code,success,data}`, igual a todo o resto da API. Este adapter confia no código-fonte:
+ * `data = {url, id, type, direct_path, hash}`, e mapeia `data.url` -> `url`.
+ *
+ * ⚠️ **Divergência de método HTTP confirmada**: `API.md` documenta esta rota como `GET`, mas
+ * `routes.go` registra o handler em `POST` — este adapter usa `POST` (confiando no código, não na
+ * prosa da doc, mesmo critério já usado em outras divergências deste dossiê).
+ */
+async function getContactProfilePicture(
+  http: HttpClient,
+  chatId: string,
+): Promise<ContactProfilePicture> {
+  const phone = toWuzapiPhone(chatId);
+  const response = await http.request<WuzapiEnvelope>({
+    method: 'POST',
+    path: '/user/avatar',
+    body: { Phone: phone, Preview: false },
+  });
+  const data = asRecord(response.data);
+  return { url: asString(data?.url), raw: response };
+}
+
+/** MESMO endpoint de `contacts.get` (`POST /user/info`) — reaproveita `fetchUserInfoEntry`, campo `Status`. */
+async function getContactAbout(http: HttpClient, chatId: string): Promise<ContactAbout> {
+  const { entry, response } = await fetchUserInfoEntry(http, chatId);
+  return { about: asString(entry?.Status), raw: response };
+}
+
+/**
+ * Extrai o primeiro valor de um mapa (`Record`), na ordem de inserção do objeto — usado quando a
+ * resposta é um mapa `JID -> objeto` e só se espera uma única entrada (uma única `Phone`
+ * requisitada por chamada, ver `fetchUserInfoEntry`).
+ */
+function firstRecordValue(record: Record<string, unknown>): Record<string, unknown> | undefined {
+  for (const value of Object.values(record)) {
+    return asRecord(value);
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import type {
+  ContactsApi,
   GroupsApi,
   InstanceApi,
   MessagesApi,
@@ -11,7 +12,11 @@ import { WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  CheckExistsResult,
   ConnectResult,
+  Contact,
+  ContactAbout,
+  ContactProfilePicture,
   CreateGroupInput,
   GroupInfo,
   GroupInviteLink,
@@ -98,6 +103,11 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'groups.revokeInviteLink',
   'groups.joinViaInviteLink',
   'groups.leaveGroup',
+  'contacts.list',
+  'contacts.get',
+  'contacts.checkExists',
+  'contacts.getProfilePicture',
+  'contacts.getAbout',
   'webhooks.parse',
 ];
 
@@ -154,12 +164,21 @@ export function zapi(options: ZapiOptions): WaAdapter {
     leaveGroup: (groupId) => leaveGroupCall(http, prefix, groupId),
   };
 
+  const contacts: ContactsApi = {
+    list: () => listContacts(http, prefix),
+    get: (chatId) => getContact(http, prefix, chatId),
+    checkExists: (phone) => checkContactExists(http, prefix, phone),
+    getProfilePicture: (chatId) => getContactProfilePicture(http, prefix, chatId),
+    getAbout: (chatId) => getContactAbout(http, prefix, chatId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: ZAPI_CAPABILITIES,
     instance,
     messages,
     groups,
+    contacts,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -766,6 +785,154 @@ async function leaveGroupCall(http: HttpClient, prefix: string, groupId: string)
     path: `${prefix}/leave-group`,
     body: { groupId },
   });
+}
+
+// ---------------------------------------------------------------------------
+// contacts.* (ver ADR-0010)
+// ---------------------------------------------------------------------------
+//
+// NOTA CRÍTICA: diferente de `groupId` (opaco, ver seção groups.* acima), o chatId de contato NÃO
+// é opaco — é o MESMO chatId canônico usado por `messages.*`. Este bloco reaproveita `toZapiPhone`
+// (definida em "map-out" acima) nos DOIS sentidos: canônico → Z-API (para montar path/query) E
+// Z-API → canônico (para mapear o "phone"/"lid" de uma resposta de volta para `Contact.id`/
+// `CheckExistsResult.chatId`). Isso é seguro porque a regra de `toZapiPhone` é simétrica: um JID
+// explícito (qualquer string com "@") sempre passa intacto, e qualquer outra string sempre vira
+// dígitos puros — não importa se ela já veio em dígitos puros (idempotente) ou como um "@lid"
+// opaco (contato com privacidade ativada, tratado como JID pela mesma checagem `isJid`).
+//
+// Regra de ouro desta capability (ADR-0010): cada operação mapeia para UMA ÚNICA chamada HTTP ao
+// provider — nunca duas chamadas compostas atrás de uma única operação canônica. `getAbout`
+// reaproveita a mesma função interna de `get` (`fetchContactDetail`) porque ambas apontam para o
+// MESMO endpoint (`GET /contacts/{phone}`), não porque uma chama a outra.
+
+/**
+ * `GET /contacts` — exige paginação (`page`, `pageSize`) como query params; `ContactsApi.list()`
+ * não expõe paginação no contrato canônico, então usamos o mesmo default fixo já adotado por
+ * `groups.list` (`page=1, pageSize=100`). Resposta: array de `{ name?, short?, notify?, vname?,
+ * phone }`. **Limitação documentada**: este endpoint NÃO devolve `about`/`imgUrl`/confirmação de
+ * "tem WhatsApp" — por isso todo `Contact` desta lista vem com `about`/`profilePictureUrl`/
+ * `hasWhatsApp` indefinidos (use `contacts.get`/`getProfilePicture`/`checkExists` para esses
+ * campos, um contato por vez).
+ */
+async function listContacts(http: HttpClient, prefix: string): Promise<Contact[]> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: `${prefix}/contacts`,
+    query: { page: 1, pageSize: 100 },
+  });
+  return asRecordArray(response).map(mapContactListItem);
+}
+
+function mapContactListItem(record: Record<string, unknown>): Contact {
+  const phone = asString(record.phone) ?? '';
+  return {
+    id: toZapiPhone(phone),
+    name: asString(record.name) ?? asString(record.notify) ?? asString(record.short),
+    raw: record,
+  };
+}
+
+/**
+ * `GET /contacts/{phone}` — `phone` no PATH, convertido do chatId canônico via `toZapiPhone`. É a
+ * resposta MAIS RICA entre os providers pesquisados para esta capability: `{ name, phone, notify,
+ * short, imgUrl, about }` num único endpoint. Reaproveitada também por `getContactAbout` (mesmo
+ * endpoint, ver nota acima) — por isso a chamada HTTP em si vive em `fetchContactDetail`.
+ */
+async function fetchContactDetail(http: HttpClient, prefix: string, chatId: string) {
+  const phone = toZapiPhone(chatId);
+  return http.request<unknown>({ method: 'GET', path: `${prefix}/contacts/${phone}` });
+}
+
+async function getContact(http: HttpClient, prefix: string, chatId: string): Promise<Contact> {
+  const response = await fetchContactDetail(http, prefix, chatId);
+  return mapContact(response, chatId);
+}
+
+/**
+ * SEM `hasWhatsApp` explícito nesta resposta (é isso que `contacts.checkExists` confirma) —
+ * mapeamento direto: `name` (fallback `notify`) → `name`, `imgUrl` → `profilePictureUrl`, `about`
+ * → `about`. `id` cai de volta no `phone` da resposta (convertido de volta ao formato canônico via
+ * `toZapiPhone`, ver nota do bloco), com fallback no chatId requisitado (mesmo padrão de fallback
+ * já usado em `mapGroupInfo`/`mapSentMessage`).
+ */
+function mapContact(body: unknown, requestedChatId: string): Contact {
+  const record = asRecord(body);
+  const responsePhone = record ? asString(record.phone) : undefined;
+  return {
+    id: responsePhone ? toZapiPhone(responsePhone) : requestedChatId,
+    name:
+      (record ? asString(record.name) : undefined) ??
+      (record ? asString(record.notify) : undefined),
+    about: record ? asString(record.about) : undefined,
+    profilePictureUrl: record ? asString(record.imgUrl) : undefined,
+    raw: body,
+  };
+}
+
+/**
+ * `GET /phone-exists/{phone}` — `phone` no PATH (a doc oficial rotula a seção como "Query
+ * Parameters", mas o exemplo `curl` real confirma path — o adapter segue o `curl`, não o cabeçalho
+ * de prosa). Resposta: ARRAY com um único item, `[{ exists, phone, lid }]` (`lid` é `string |
+ * null`). Pega o primeiro item; mapeia `exists` → `exists`, e `lid` (quando presente, contato com
+ * privacidade ativada) OU `phone` → `chatId` — ambos passam por `toZapiPhone` (reverso) para
+ * garantir o formato canônico (JID intacto se `lid` vier como `"...@lid"`, dígitos puros senão).
+ */
+async function checkContactExists(
+  http: HttpClient,
+  prefix: string,
+  phone: string,
+): Promise<CheckExistsResult> {
+  const zapiPhone = toZapiPhone(phone);
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: `${prefix}/phone-exists/${zapiPhone}`,
+  });
+  const items = asRecordArray(response);
+  const item = items[0];
+  if (!item) {
+    return { exists: false, raw: response };
+  }
+  const resolvedId = asString(item.lid) ?? asString(item.phone);
+  return {
+    exists: asBoolean(item.exists) ?? false,
+    chatId: resolvedId ? toZapiPhone(resolvedId) : undefined,
+    raw: response,
+  };
+}
+
+/**
+ * `GET /profile-picture` — `phone` como QUERY param (não path, diferente de `get`/`checkExists`).
+ * Resposta: `{ link: string }` → `ContactProfilePicture.url`. `link` ausente/vazio (contato sem
+ * foto ou privacidade que bloqueia) vira `url: undefined`, nunca lança.
+ */
+async function getContactProfilePicture(
+  http: HttpClient,
+  prefix: string,
+  chatId: string,
+): Promise<ContactProfilePicture> {
+  const phone = toZapiPhone(chatId);
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: `${prefix}/profile-picture`,
+    query: { phone },
+  });
+  const record = asRecord(response);
+  return { url: record ? asString(record.link) : undefined, raw: response };
+}
+
+/**
+ * MESMO endpoint de `getContact` (`GET /contacts/{phone}`) — reaproveita `fetchContactDetail` em
+ * vez de compor uma segunda chamada (ADR-0010: uma operação canônica, uma chamada HTTP). O campo
+ * `about` já vem embutido nessa resposta.
+ */
+async function getContactAbout(
+  http: HttpClient,
+  prefix: string,
+  chatId: string,
+): Promise<ContactAbout> {
+  const response = await fetchContactDetail(http, prefix, chatId);
+  const record = asRecord(response);
+  return { about: record ? asString(record.about) : undefined, raw: response };
 }
 
 // ---------------------------------------------------------------------------

@@ -191,6 +191,53 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { value: true });
     }
 
+    if (method === 'GET' && pathname === `${PREFIX}/contacts`) {
+      return jsonResponse(200, [
+        {
+          name: 'Fulano',
+          notify: 'Notify Fulano',
+          short: 'Curto Fulano',
+          vname: 'Biz Fulano',
+          phone: '5511999999999',
+        },
+        { notify: 'Só Notify', short: 'Só Curto', phone: '5511988887777' },
+      ]);
+    }
+
+    if (method === 'GET' && pathname === `${PREFIX}/contacts/5511999999999`) {
+      return jsonResponse(200, {
+        name: 'Fulano da Silva',
+        phone: '5511999999999',
+        notify: 'Fulano',
+        short: 'Fulano',
+        imgUrl: 'https://pic.exemplo.test/foto.jpg',
+        about: 'Ocupado no momento',
+      });
+    }
+
+    if (method === 'GET' && pathname === `${PREFIX}/contacts/5511988887777`) {
+      return jsonResponse(200, {
+        phone: '5511988887777',
+        notify: 'Só Notify (sem name)',
+      });
+    }
+
+    if (method === 'GET' && pathname === `${PREFIX}/phone-exists/5511999999999`) {
+      return jsonResponse(200, [{ exists: true, phone: '5511999999999', lid: null }]);
+    }
+
+    if (method === 'GET' && pathname === `${PREFIX}/phone-exists/5511977776666`) {
+      return jsonResponse(200, [{ exists: false, phone: null, lid: null }]);
+    }
+
+    if (method === 'GET' && pathname === `${PREFIX}/phone-exists/5511966665555`) {
+      return jsonResponse(200, [{ exists: true, phone: '5511966665555', lid: '123456789@lid' }]);
+    }
+
+    if (method === 'GET' && pathname === `${PREFIX}/profile-picture`) {
+      return jsonResponse(200, { link: 'https://pic.exemplo.test/link-perfil.jpg' });
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1263,5 +1310,151 @@ describe('zapi adapter: comportamento específico do provider', () => {
     expect(requestedPath).toBe(`${PREFIX}/leave-group`);
     expect(capturedBody?.groupId).toBe('120363019502650977-group');
     expect(result).toBeUndefined();
+  });
+
+  it('contacts.list chama GET .../contacts com paginação default e mapeia name com fallback notify/short (sem about/profilePictureUrl/hasWhatsApp)', async () => {
+    let requestedUrl: URL | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/contacts`) {
+            requestedUrl = url;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const contacts = await wa.contacts.list();
+
+    expect(requestedUrl?.searchParams.get('page')).toBe('1');
+    expect(requestedUrl?.searchParams.get('pageSize')).toBe('100');
+    expect(contacts).toHaveLength(2);
+    expect(contacts[0]?.id).toBe('5511999999999');
+    expect(contacts[0]?.name).toBe('Fulano');
+    expect(contacts[0]?.about).toBeUndefined();
+    expect(contacts[0]?.profilePictureUrl).toBeUndefined();
+    expect(contacts[0]?.hasWhatsApp).toBeUndefined();
+    // segundo item não tem "name" -> cai no fallback "notify"
+    expect(contacts[1]?.id).toBe('5511988887777');
+    expect(contacts[1]?.name).toBe('Só Notify');
+    expect(contacts[0]).toHaveProperty('raw');
+  });
+
+  it('contacts.get chama GET .../contacts/{phone} e mapeia name/imgUrl/about (sem hasWhatsApp explícito)', async () => {
+    let requestedPath: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/contacts/5511999999999`) {
+            requestedPath = url.pathname;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const contact = await wa.contacts.get('5511999999999');
+
+    expect(requestedPath).toBe(`${PREFIX}/contacts/5511999999999`);
+    expect(contact.id).toBe('5511999999999');
+    expect(contact.name).toBe('Fulano da Silva');
+    expect(contact.about).toBe('Ocupado no momento');
+    expect(contact.profilePictureUrl).toBe('https://pic.exemplo.test/foto.jpg');
+    expect(contact.hasWhatsApp).toBeUndefined();
+    expect(contact).toHaveProperty('raw');
+  });
+
+  it('contacts.get cai no fallback "notify" quando a resposta não traz "name"', async () => {
+    const adapter = zapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const contact = await wa.contacts.get('5511988887777');
+
+    expect(contact.name).toBe('Só Notify (sem name)');
+  });
+
+  it('contacts.checkExists chama GET .../phone-exists/{phone} (path, apesar do rótulo "Query Parameters" da doc) e mapeia exists/chatId a partir de "phone"', async () => {
+    let requestedPath: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/phone-exists/5511999999999`) {
+            requestedPath = url.pathname;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists('5511999999999');
+
+    expect(requestedPath).toBe(`${PREFIX}/phone-exists/5511999999999`);
+    expect(result.exists).toBe(true);
+    expect(result.chatId).toBe('5511999999999');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('contacts.checkExists mapeia exists:false sem "phone"/"lid" para chatId undefined (nunca lança)', async () => {
+    const adapter = zapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists('5511977776666');
+
+    expect(result.exists).toBe(false);
+    expect(result.chatId).toBeUndefined();
+  });
+
+  it('contacts.checkExists prefere "lid" sobre "phone" para chatId quando o contato tem privacidade ativada', async () => {
+    const adapter = zapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists('5511966665555');
+
+    expect(result.exists).toBe(true);
+    expect(result.chatId).toBe('123456789@lid');
+  });
+
+  it('contacts.getProfilePicture chama GET .../profile-picture com "phone" em query e mapeia "link" -> url', async () => {
+    let requestedUrl: URL | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/profile-picture`) {
+            requestedUrl = url;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const picture = await wa.contacts.getProfilePicture('5511999999999');
+
+    expect(requestedUrl?.searchParams.get('phone')).toBe('5511999999999');
+    expect(picture.url).toBe('https://pic.exemplo.test/link-perfil.jpg');
+    expect(picture).toHaveProperty('raw');
+  });
+
+  it('contacts.getAbout reaproveita o MESMO endpoint de contacts.get (GET /contacts/{phone}) e mapeia o campo "about" já embutido, com uma única chamada HTTP', async () => {
+    const calls: string[] = [];
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/contacts/5511999999999`) {
+            calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const about = await wa.contacts.getAbout('5511999999999');
+
+    expect(about.about).toBe('Ocupado no momento');
+    expect(about).toHaveProperty('raw');
+    // uma única chamada HTTP para esta operação (ADR-0010: nunca compor múltiplas chamadas)
+    expect(calls).toHaveLength(1);
   });
 });

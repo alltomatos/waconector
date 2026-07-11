@@ -1,9 +1,13 @@
-import type { GroupsApi, InstanceApi, WaAdapter, WebhookInput } from './adapter';
+import type { ContactsApi, GroupsApi, InstanceApi, WaAdapter, WebhookInput } from './adapter';
 import { type Capability, type CapabilitySet, hasCapability } from './capabilities';
 import { normalizeChatId, normalizeInviteLink } from './chat-id';
 import { UnsupportedCapabilityError, WaConnectorError } from './errors';
 import type { CanonicalEvent, CanonicalEventType, EventOf, UnknownEvent } from './events';
 import type {
+  CheckExistsResult,
+  Contact,
+  ContactAbout,
+  ContactProfilePicture,
   CreateGroupInput,
   GroupInfo,
   GroupInviteLink,
@@ -67,6 +71,19 @@ export interface ConnectorGroupsApi {
 }
 
 /**
+ * `ContactsApi` exposta pelo conector: todo método sempre presente (diferente da interface do
+ * adapter, onde todos são opcionais — ver ADR-0010), gateado por capability + guard-rail
+ * `PROVIDER_ERROR` quando o adapter declara a capability sem implementar o método.
+ */
+export interface ConnectorContactsApi {
+  list(): Promise<Contact[]>;
+  get(chatId: string): Promise<Contact>;
+  checkExists(phone: string): Promise<CheckExistsResult>;
+  getProfilePicture(chatId: string): Promise<ContactProfilePicture>;
+  getAbout(chatId: string): Promise<ContactAbout>;
+}
+
+/**
  * Camada de ergonomia e política sobre um adapter: checagem de capabilities,
  * validação e normalização de entrada, eventos e parsing seguro de webhooks.
  */
@@ -77,6 +94,7 @@ export class WaConnector {
   readonly instance: InstanceApi;
   readonly messages: ConnectorMessagesApi;
   readonly groups: ConnectorGroupsApi;
+  readonly contacts: ConnectorContactsApi;
   readonly webhooks: WebhooksApi;
 
   private readonly listeners = new Map<string, Set<AnyListener>>();
@@ -180,6 +198,24 @@ export class WaConnector {
         ),
     };
 
+    this.contacts = {
+      list: () => this.callContactsMethod('list', 'contacts.list', (fn) => fn()),
+      get: (chatId) =>
+        this.callContactsMethod('get', 'contacts.get', (fn) => fn(this.requireChatId(chatId))),
+      checkExists: (phone) =>
+        this.callContactsMethod('checkExists', 'contacts.checkExists', (fn) =>
+          fn(normalizeChatId(this.requireTo(phone))),
+        ),
+      getProfilePicture: (chatId) =>
+        this.callContactsMethod('getProfilePicture', 'contacts.getProfilePicture', (fn) =>
+          fn(this.requireChatId(chatId)),
+        ),
+      getAbout: (chatId) =>
+        this.callContactsMethod('getAbout', 'contacts.getAbout', (fn) =>
+          fn(this.requireChatId(chatId)),
+        ),
+    };
+
     this.webhooks = {
       parse: (input) => this.parseWebhook(input),
       dispatch: async (input) => {
@@ -280,6 +316,36 @@ export class WaConnector {
       );
     }
     return invoke(fn as NonNullable<GroupsApi[K]>);
+  }
+
+  /**
+   * Guard-rail comum aos 5 métodos de `contacts.*`: mesmo padrão de `callGroupsMethod` (ADR-0009),
+   * reaproveitado para `contacts.*` (ADR-0010).
+   */
+  private async callContactsMethod<K extends keyof ContactsApi, R>(
+    method: K,
+    capability: Capability,
+    invoke: (fn: NonNullable<ContactsApi[K]>) => Promise<R>,
+  ): Promise<R> {
+    this.assertCapability(capability);
+    const fn = this.adapter.contacts[method];
+    if (!fn) {
+      throw new WaConnectorError(
+        'PROVIDER_ERROR',
+        `Adapter "${this.provider}" declara a capability "${capability}" mas não implementa ` +
+          `contacts.${String(method)} — isso é um bug no adapter, não uma entrada inválida.`,
+        { provider: this.provider },
+      );
+    }
+    return invoke(fn as NonNullable<ContactsApi[K]>);
+  }
+
+  /**
+   * `chatId` de contato NÃO é opaco (diferente de `groupId` — ver ADR-0010): é o mesmo chatId
+   * canônico de `messages.*`, então passa por `normalizeChatId` normalmente.
+   */
+  private requireChatId(chatId: unknown): string {
+    return normalizeChatId(this.requireTo(chatId));
   }
 
   private prepareCreateGroup(input: CreateGroupInput): CreateGroupInput {

@@ -147,6 +147,86 @@ function createFetchStub(): typeof globalThis.fetch {
       return new Response(null, { status: 204 });
     }
 
+    if (method === 'GET' && pathname === '/api/contacts/all') {
+      // Schema WWebJSContact (openapi.json). Um contato com "name" preenchido e outro só com
+      // "pushname" (exercita o fallback de mapContact).
+      return jsonResponse(200, [
+        {
+          id: '5585999999999@c.us',
+          number: '5585999999999',
+          name: 'Contrato Contato',
+          pushname: 'ContratoPush',
+          shortName: 'Contrato',
+          isMe: false,
+          isGroup: false,
+          isWAContact: true,
+          isMyContact: true,
+          isBlocked: false,
+        },
+        {
+          id: '5585888888888@c.us',
+          number: '5585888888888',
+          pushname: 'SoPushname',
+          isMe: false,
+          isGroup: false,
+          isWAContact: false,
+          isMyContact: false,
+          isBlocked: true,
+        },
+      ]);
+    }
+
+    if (method === 'GET' && pathname === '/api/contacts') {
+      // Mesmo shape de /api/contacts/all, um objeto só. "contactId" na query decide qual devolver.
+      if (url.searchParams.get('contactId') === '5585888888888@c.us') {
+        return jsonResponse(200, {
+          id: '5585888888888@c.us',
+          number: '5585888888888',
+          pushname: 'SoPushname',
+          isMe: false,
+          isGroup: false,
+          isWAContact: false,
+          isMyContact: false,
+          isBlocked: true,
+        });
+      }
+      return jsonResponse(200, {
+        id: '5585999999999@c.us',
+        number: '5585999999999',
+        name: 'Contrato Contato',
+        pushname: 'ContratoPush',
+        isMe: false,
+        isGroup: false,
+        isWAContact: true,
+        isMyContact: true,
+        isBlocked: false,
+      });
+    }
+
+    if (method === 'GET' && pathname === '/api/contacts/check-exists') {
+      // Schema WANumberExistResult. "phone" decide exists/not-exists.
+      if (url.searchParams.get('phone') === '5585000000000') {
+        return jsonResponse(200, { numberExists: false });
+      }
+      return jsonResponse(200, { numberExists: true, chatId: '5585999999999@c.us' });
+    }
+
+    if (method === 'GET' && pathname === '/api/contacts/profile-picture') {
+      // "profilePictureURL" pode vir null (privacidade não permite).
+      if (url.searchParams.get('contactId') === '5585888888888@c.us') {
+        return jsonResponse(200, { profilePictureURL: null });
+      }
+      return jsonResponse(200, { profilePictureURL: 'https://waha.example.com/picture.jpg' });
+    }
+
+    if (method === 'GET' && pathname === '/api/contacts/about') {
+      // "about" pode vir null (privacidade não permite).
+      if (url.searchParams.get('contactId') === '5585888888888@c.us') {
+        return jsonResponse(200, { about: null });
+      }
+      return jsonResponse(200, { about: 'Disponível' });
+    }
+
     if (method === 'POST' && pathname.startsWith(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/`)) {
       // addParticipants/removeParticipants/promoteParticipants/demoteParticipants: contrato
       // devolve Promise<void>, resposta stub genérica basta.
@@ -695,6 +775,178 @@ describe('WAHA adapter: comportamento específico do provider', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.method).toBe('POST');
     expect(calls[0]?.path).toBe(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/leave`);
+  });
+
+  it('contacts.list chama GET /api/contacts/all com { session } e mapeia name/pushname/isWAContact/isBlocked', async () => {
+    const calls: Array<{ method: string; path: string; query: URLSearchParams }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            query: url.searchParams,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const contacts = await wa.contacts.list();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('GET');
+    expect(calls[0]?.path).toBe('/api/contacts/all');
+    expect(calls[0]?.query.get('session')).toBe(SESSION);
+
+    expect(contacts).toHaveLength(2);
+    // Primeiro contato: "name" presente -> usado diretamente.
+    expect(contacts[0]).toMatchObject({
+      id: '5585999999999@c.us',
+      name: 'Contrato Contato',
+      hasWhatsApp: true,
+      isBlocked: false,
+    });
+    expect(contacts[0]).toHaveProperty('raw');
+    // Não há endpoint próprio de about/foto de perfil em /api/contacts/all — ficam undefined
+    // por limitação do provider (ver docs/providers/waha.md#contatos), não por bug.
+    expect(contacts[0]?.about).toBeUndefined();
+    expect(contacts[0]?.profilePictureUrl).toBeUndefined();
+    // Segundo contato: sem "name" -> cai para "pushname".
+    expect(contacts[1]).toMatchObject({
+      id: '5585888888888@c.us',
+      name: 'SoPushname',
+      hasWhatsApp: false,
+      isBlocked: true,
+    });
+  });
+
+  it('contacts.get converte o chatId canônico para "@c.us" na query "contactId" e mapeia o mesmo schema de list', async () => {
+    const calls: Array<{ path: string; query: URLSearchParams }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ path: url.pathname, query: url.searchParams });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const contact = await wa.contacts.get('5585999999999');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.path).toBe('/api/contacts');
+    expect(calls[0]?.query.get('contactId')).toBe('5585999999999@c.us');
+    expect(calls[0]?.query.get('session')).toBe(SESSION);
+
+    expect(contact.id).toBe('5585999999999@c.us');
+    expect(contact.name).toBe('Contrato Contato');
+    expect(contact.hasWhatsApp).toBe(true);
+    expect(contact.isBlocked).toBe(false);
+    expect(contact).toHaveProperty('raw');
+  });
+
+  it('contacts.get usa "pushname" quando "name" está ausente na resposta', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const contact = await wa.contacts.get('5585888888888');
+
+    expect(contact.id).toBe('5585888888888@c.us');
+    expect(contact.name).toBe('SoPushname');
+    expect(contact.hasWhatsApp).toBe(false);
+    expect(contact.isBlocked).toBe(true);
+  });
+
+  it('contacts.checkExists converte o telefone canônico para DÍGITOS na query "phone" (não "@c.us") e mapeia numberExists/chatId', async () => {
+    const calls: Array<{ query: URLSearchParams }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ query: url.searchParams });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists('5585999999999');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.query.get('phone')).toBe('5585999999999');
+    expect(calls[0]?.query.get('session')).toBe(SESSION);
+
+    expect(result.exists).toBe(true);
+    expect(result.chatId).toBe('5585999999999@c.us');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('contacts.checkExists mapeia numberExists:false sem "chatId" (ausente quando o número não existe)', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists('5585000000000');
+
+    expect(result.exists).toBe(false);
+    expect(result.chatId).toBeUndefined();
+  });
+
+  it('contacts.getProfilePicture chama GET /api/contacts/profile-picture com contactId "@c.us" e mapeia profilePictureURL -> url', async () => {
+    const calls: Array<{ path: string; query: URLSearchParams }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ path: url.pathname, query: url.searchParams });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const picture = await wa.contacts.getProfilePicture('5585999999999');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.path).toBe('/api/contacts/profile-picture');
+    expect(calls[0]?.query.get('contactId')).toBe('5585999999999@c.us');
+    expect(picture.url).toBe('https://waha.example.com/picture.jpg');
+    expect(picture).toHaveProperty('raw');
+  });
+
+  it('contacts.getProfilePicture trata profilePictureURL:null como url ausente (privacidade), não como erro', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const picture = await wa.contacts.getProfilePicture('5585888888888');
+
+    expect(picture.url).toBeUndefined();
+  });
+
+  it('contacts.getAbout chama GET /api/contacts/about com contactId "@c.us" e mapeia about', async () => {
+    const calls: Array<{ path: string; query: URLSearchParams }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ path: url.pathname, query: url.searchParams });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const about = await wa.contacts.getAbout('5585999999999');
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.path).toBe('/api/contacts/about');
+    expect(calls[0]?.query.get('contactId')).toBe('5585999999999@c.us');
+    expect(about.about).toBe('Disponível');
+    expect(about).toHaveProperty('raw');
+  });
+
+  it('contacts.getAbout trata about:null como ausente (privacidade), não como erro', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const about = await wa.contacts.getAbout('5585888888888');
+
+    expect(about.about).toBeUndefined();
   });
 
   it('parseWebhook normaliza "message.ack" do dossiê para MessageAckEvent', () => {

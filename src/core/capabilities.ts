@@ -28,6 +28,11 @@ export const CAPABILITIES = [
   'groups.revokeInviteLink',
   'groups.joinViaInviteLink',
   'groups.leaveGroup',
+  'contacts.list',
+  'contacts.get',
+  'contacts.checkExists',
+  'contacts.getProfilePicture',
+  'contacts.getAbout',
   'webhooks.parse',
 ] as const;
 

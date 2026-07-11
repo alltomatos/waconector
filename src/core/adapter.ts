@@ -1,7 +1,11 @@
 import type { CapabilitySet } from './capabilities';
 import type { CanonicalEvent } from './events';
 import type {
+  CheckExistsResult,
   ConnectResult,
+  Contact,
+  ContactAbout,
+  ContactProfilePicture,
   CreateGroupInput,
   GroupInfo,
   GroupInviteLink,
@@ -78,6 +82,19 @@ export interface GroupsApi {
 }
 
 /**
+ * Todo método é opcional (ver ADR-0010, mesmo padrão de `GroupsApi`/ADR-0009). Diferente de
+ * `groups`, o identificador de contato (`chatId`) NÃO é opaco — é o mesmo chatId canônico de
+ * `messages.*`, normalizado pelo conector via `normalizeChatId` antes de chegar ao adapter.
+ */
+export interface ContactsApi {
+  list?(): Promise<Contact[]>;
+  get?(chatId: string): Promise<Contact>;
+  checkExists?(phone: string): Promise<CheckExistsResult>;
+  getProfilePicture?(chatId: string): Promise<ContactProfilePicture>;
+  getAbout?(chatId: string): Promise<ContactAbout>;
+}
+
+/**
  * Contrato que todo adapter de provider implementa.
  *
  * O adapter é "burro" de propósito: apenas traduz o modelo canônico de/para o
@@ -90,5 +107,6 @@ export interface WaAdapter {
   readonly instance: InstanceApi;
   readonly messages: MessagesApi;
   readonly groups: GroupsApi;
+  readonly contacts: ContactsApi;
   parseWebhook(input: WebhookInput): CanonicalEvent[];
 }

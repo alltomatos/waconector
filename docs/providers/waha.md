@@ -97,6 +97,13 @@ Mais 4 capabilities de convite/saída de grupo (`groups.getInviteLink`, `groups.
 Suportado: ver seção "Grupos: convite e saída
 (getInviteLink/revokeInviteLink/joinViaInviteLink/leaveGroup)" abaixo.
 
+## Capability adicional: `contacts.*` — descoberta + perfil (retrofit F2, ADR-0010, PR1)
+
+As 5 capabilities de descoberta/perfil de `ContactsApi` (`contacts.list`, `contacts.get`,
+`contacts.checkExists`, `contacts.getProfilePicture`, `contacts.getAbout`) foram adicionadas a
+este adapter num retrofit posterior (ADR-0010, PR1 — moderação `block`/`unblock`/`listBlocked`
+fica para o PR2). Suportado: ver seção "Contatos" abaixo.
+
 ## Operações core
 
 | Operação canônica | Endpoint | Observações |
@@ -271,6 +278,60 @@ código/link do convite.
   exato de erro quando o convite expirou ou o bot já é membro do grupo.
 - Se o bot precisa ser admin do grupo para `revokeInviteLink` (comportamento esperado do WhatsApp,
   não documentado explicitamente pelo WAHA).
+
+## Contatos (`contacts.*`, retrofit F2, ADR-0010, PR1)
+
+5 operações de descoberta/perfil de `ContactsApi` (`list`, `get`, `checkExists`,
+`getProfilePicture`, `getAbout`) confirmadas no `openapi.json` oficial (tag "👤 Contacts"). Todas
+as 5 são declaradas por este adapter. As 3 operações de moderação (`block`, `unblock`,
+`listBlocked`) ficam fora do escopo deste PR (ver ADR-0010) — o WAHA não tem cobertura confirmada
+de `listBlocked` nesta pesquisa (nenhuma rota "blocklist"/"blocked" nos 18 tags do OpenAPI), então
+provavelmente não será declarada nem quando `block`/`unblock` entrarem num PR futuro.
+
+Regra de ouro desta capability (ADR-0010): cada operação mapeia para **UMA ÚNICA chamada HTTP** —
+nunca compõe múltiplas requisições atrás de uma operação canônica. Quando o endpoint mais próximo
+não traz um campo, ele fica `undefined` no tipo normalizado (limitação documentada, não bug).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `contacts.list` | `GET /api/contacts/all` | Query: `{ session }`. Resposta: array no schema `WWebJSContact` (`id`, `number`, `name`, `pushname`, `shortName`, `isMe`, `isGroup`, `isWAContact`, `isMyContact`, `isBlocked`). `id`/`number` já vêm em formato `@c.us`, mas passam por `toWahaChatId` (a MESMA conversão usada por `sendText`/`sendMedia`/`groups.*`) para garantir o formato canônico consistente mesmo se um dos dois campos vier sem domínio. **Sem `about`/`profilePictureUrl` neste endpoint** — ficam `undefined` (endpoints próprios, ver `getAbout`/`getProfilePicture` abaixo). |
+| `contacts.get` | `GET /api/contacts` | Query: `{ contactId, session }`. A doc aceita `contactId` como dígitos ou `@c.us`, mas o adapter sempre envia o formato `@c.us` (canônico do provider) via `toWahaChatId`. Mesmo shape de resposta de `list`, um objeto só — mesmo mapeamento, mesma limitação de `about`/`profilePictureUrl` ausentes. |
+| `contacts.checkExists` | `GET /api/contacts/check-exists` | Query: `{ phone, session }`. **Diferente de `get`**: este endpoint quer o telefone em DÍGITOS, não `@c.us` — `toWahaPhoneDigits` reaproveita `toWahaChatId` (chega a um JID canônico, tratando os mesmos casos de domínio: `@s.whatsapp.net` → `@c.us`, JIDs já reconhecidos intactos) e então corta a parte antes do `@`. Resposta (schema `WANumberExistResult`): `{ numberExists: boolean, chatId?: string }` → `numberExists` vira `exists`; `chatId` (quando presente) passa por `toWahaChatId` pela mesma razão de canonicalização de `list`/`get`, e fica `undefined` quando o provider não o devolve (comum quando `numberExists` é `false`). |
+| `contacts.getProfilePicture` | `GET /api/contacts/profile-picture` | Query: `{ contactId, session }` (`refresh` é opcional, default `false` na doc — omitido, sem necessidade de forçar refresh nesta operação). Resposta: `{ profilePictureURL: string \| null }` → `null` (privacidade do contato não permite) mapeia para `url: undefined`, não erro. |
+| `contacts.getAbout` | `GET /api/contacts/about` | Query: `{ contactId, session }`. Resposta: `{ about: string \| null }` → `null` (privacidade não permite) mapeia para `about: undefined`, não erro. |
+
+### Campos de `Contact` que este provider NÃO preenche numa única chamada
+
+- `about` e `profilePictureUrl` ficam **sempre `undefined`** em `contacts.list`/`contacts.get` —
+  o WAHA expõe esses dois campos só via endpoints dedicados (`getAbout`/`getProfilePicture`), e a
+  regra de ouro do ADR-0010 proíbe compor uma segunda chamada HTTP para completá-los. Um consumidor
+  que precise dos dois campos deve chamar `getProfilePicture`/`getAbout` separadamente para o
+  `chatId` de interesse.
+- `hasWhatsApp` mapeia de `isWAContact` (presente em `list`/`get`) — este SIM é preenchido numa
+  única chamada, diferente de outros providers pesquisados (ex.: Evolution GO/Wuzapi não devolvem
+  isso no endpoint mais próximo).
+
+### Mapeamento de `chatId`/`phone` em `contacts.*`
+
+Reaproveita a mesma função `toWahaChatId` já usada por `messages.*`/`groups.*` (ver seção
+"Mapeamento de `chatId` canônico → WAHA" acima) — nenhuma conversão nova foi introduzida:
+
+- `get`/`getProfilePicture`/`getAbout`: `chatId` canônico (já normalizado pelo conector via
+  `normalizeChatId`) → `toWahaChatId` → query `contactId` no formato `@c.us`.
+- `checkExists`: `phone` canônico → `toWahaChatId` → `toWahaPhoneDigits` extrai só a parte antes do
+  `@` → query `phone` em dígitos crus (o único dos 5 endpoints que quer o telefone sem domínio).
+- `list`/`get` (map-in): `id`/`number` da resposta → `toWahaChatId` (mesma função, agora aplicada
+  ao valor vindo do provider) → `Contact.id` sempre em formato `@c.us` canônico, mesmo se `number`
+  vier sem domínio.
+
+**Não confirmado nesta pesquisa** (a validar contra uma instância WAHA real):
+
+- Se `contactId` aceita de fato dígitos crus (sem `@c.us`) em `get`/`getProfilePicture`/`getAbout`
+  como a prosa da doc sugere — o adapter sempre envia `@c.us` (formato confirmado), então essa
+  ambiguidade não afeta o comportamento do adapter.
+- O shape exato de `WWebJSContact` quando o contato é um `@lid` (formato de privacidade) — a
+  pesquisa não encontrou um exemplo de resposta nesse caso específico, diferente do que já é
+  documentado para participantes de grupo (campo `pn`, ver "Mapeamento de participantes" acima).
 
 ## Webhooks
 
