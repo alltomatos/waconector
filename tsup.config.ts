@@ -9,6 +9,7 @@ export default defineConfig({
     'adapters/uazapi/index': 'src/adapters/uazapi/index.ts',
     'adapters/zapi/index': 'src/adapters/zapi/index.ts',
     'adapters/wuzapi/index': 'src/adapters/wuzapi/index.ts',
+    'adapters/whapi/index': 'src/adapters/whapi/index.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,

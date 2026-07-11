@@ -12,7 +12,7 @@
     "whapi",
     "wuzapi",
     "quepasa",
-    "zapo",
+    "wppconnect",
     "chatbot",
     "sdk"
   ],
@@ -96,6 +96,16 @@
       "require": {
         "types": "./dist/adapters/wuzapi/index.d.cts",
         "default": "./dist/adapters/wuzapi/index.cjs"
+      }
+    },
+    "./whapi": {
+      "import": {
+        "types": "./dist/adapters/whapi/index.d.ts",
+        "default": "./dist/adapters/whapi/index.js"
+      },
+      "require": {
+        "types": "./dist/adapters/whapi/index.d.cts",
+        "default": "./dist/adapters/whapi/index.cjs"
       }
     },
     "./package.json": "./package.json"

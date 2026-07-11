@@ -13,8 +13,8 @@ abaixo. O dossiê é a fonte de verdade do adapter; os payloads capturados viram
 | uazapi | <https://docs.uazapi.com/> | SaaS/self | F2 — feito, ver [uazapi.md](uazapi.md) |
 | Z-API | <https://developer.z-api.io/api-reference/introduction> | SaaS | F2 — feito, ver [zapi.md](zapi.md) |
 | Wuzapi | <https://github.com/asternic/wuzapi/blob/main/API.md> | self-hosted | F2 — feito, ver [wuzapi.md](wuzapi.md) |
-| Whapi | <https://whapi.readme.io/> | SaaS | F3 |
-| Zapo | <https://zapo.to/en/introduction> | SaaS | F3 |
+| Whapi | <https://whapi.readme.io/> | SaaS | F3 — feito, ver [whapi.md](whapi.md) |
+| WPPConnect | <https://wppconnect.io/swagger/wppconnect-server/> | self-hosted (Docker) | F3 |
 | QuePasa | <https://docs.quepasa.ai/reference> | self-hosted | F3 |
 
 ## Template do dossiê (`<nome>.md`)

@@ -42,7 +42,10 @@ Estado: **done**
 
 ## Epic 3 — F2 do produto: largura
 
-Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
+Estado: **done** (detalhe completo em docs/CONTEXT.md#roadmap). `getPresence` fica deliberadamente
+fora do escopo original — majoritariamente assíncrono/webhook em 4 dos 5 providers, precisa de
+desenho próprio (provavelmente um evento canônico novo, não uma capability request-response) —
+tratado como incremento futuro separado, não uma pendência desta Epic.
 
 - [x] Adapter uazapi (SaaS multi-tenant) — dossiê, implementação e auditoria adversarial (achou e
       corrigiu 2 issues "major": suposição errada de `messageType` e risco de formato de envelope
@@ -108,7 +111,8 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       `privacy/get-disallowed-contacts`, uma blacklist de privacidade diferente). `block`/`unblock`
       implementados nos 5. **Fecha as 8 operações request-response escopadas para `contacts.*`
       (ADR-0010).** `getPresence` fica fora do escopo (estruturalmente assíncrono/webhook para 4
-      dos 5 providers, incremento futuro à parte, mesma lógica dos webhooks de grupo).
+      dos 5 providers, incremento futuro à parte, mesma lógica dos webhooks de grupo). Mergeado
+      via [PR #22](https://github.com/alltomatos/waconector/pull/22).
 
 ## Marcos de release (v0.x)
 
@@ -118,9 +122,24 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
 
 ## Epic 4 — F3 do produto: profundidade e DX
 
-Estado: **todo**
+Estado: **in_progress**
 
-- [ ] Adapters: Whapi, Zapo, QuePasa
+- [x] Adapter Whapi.Cloud (SaaS) — dossiê (pesquisa em 3 frentes: auth/instância, mensagens,
+      webhooks), implementação das capabilities núcleo (`instance.connect/status/logout`,
+      `messages.sendText/sendMedia`, `webhooks.parse`), auditoria adversarial encontrou e corrigiu
+      1 bug real (legenda de mídia recebida via webhook — `image`/`video`/`document` — nunca
+      extraída para `WaMessage.text`, inconsistente com o adapter Z-API que já fazia isso
+      corretamente; o fixture de teste também mascarava o bug, mesmo padrão do bug histórico do QR
+      no Wuzapi). `messages.sendReaction`/`instance.pairingCode`/`groups.*`/`contacts.*`
+      confirmados suportados pelo provider mas deliberadamente adiados (fora do escopo desta fase).
+- [ ] Adapter QuePasa (self-hosted, Docker) — próximo (instrução direta do usuário: "faça whapi e
+      depois o quepasa")
+- [ ] Adapter WPPConnect Server (self-hosted, Docker) — substitui Zapo na lista de providers-alvo
+      F3: Zapo (`zapo-js`) é uma biblioteca cliente Node importada diretamente, não uma API HTTP —
+      incompatível com o modelo de adapter do waconector (`HttpClient`), confirmado pelo usuário.
+      WPPConnect Server já trocado em `docs/providers/README.md`, `docs/CONTEXT.md`,
+      `docs/adr/0009-capability-groups.md`, `package.json` (keywords) e `USAGE.md` via
+      [PR #23](https://github.com/alltomatos/waconector/pull/23).
 - [ ] Site de docs com matriz de capabilities gerada do código
 - [ ] Exemplos de bot (Express/Next), `npx waconector doctor`
 

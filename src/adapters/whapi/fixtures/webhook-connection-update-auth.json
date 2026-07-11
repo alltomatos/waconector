@@ -1,0 +1,10 @@
+{
+  "health": {
+    "start_at": 1713774883,
+    "uptime": 900,
+    "status": { "code": 4, "text": "AUTH" },
+    "version": "1.8.3-74-gf7df472"
+  },
+  "event": { "type": "channel", "event": "post" },
+  "channel_id": "MANTIS-M72HC"
+}

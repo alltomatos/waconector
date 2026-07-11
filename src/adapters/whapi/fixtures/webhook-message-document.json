@@ -1,0 +1,28 @@
+{
+  "messages": [
+    {
+      "id": "tGZmYoiXecvbKahzwpwKmg-gEcTwl0rVw",
+      "from_me": false,
+      "type": "document",
+      "chat_id": "919984351847@s.whatsapp.net",
+      "timestamp": 1713201784,
+      "source": "mobile",
+      "document": {
+        "id": "pdf-b487668896662779cbdb29a3c29c0a9a-804713c25d2b57",
+        "mime_type": "application/pdf",
+        "file_size": 1438781,
+        "sha256": "TdxdgX8lBzV6/SYW96F/BEh19ob0eFAn4wKAWhWpUyk=",
+        "file_name": "File_example.pdf",
+        "link": "https://s3.eu-central-1.wasabisys.com/in-files/61371989950/pdf-b487668896662779cbdb29a3c29c0a9a-804713c25d2b57.pdf",
+        "caption": "This is text with file",
+        "filename": "File_example.pdf",
+        "page_count": 14,
+        "preview": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQAB.........."
+      },
+      "from": "919984351847",
+      "from_name": "Gerald"
+    }
+  ],
+  "event": { "type": "messages", "event": "post" },
+  "channel_id": "MANTIS-M72HC"
+}

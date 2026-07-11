@@ -1,6 +1,6 @@
 ---
 name: waconector
-description: Domain expertise for the waconector project — a contract-first universal connector for unofficial WhatsApp APIs (WAHA, Evolution GO, uazapi, Z-API, Wuzapi, Whapi, Zapo, QuePasa). Covers both extending the package (adding/reviewing a provider adapter, core conventions) and consuming it (wiring an adapter, handling webhooks, testing with MockAdapter). Use when working in the waconector repo, implementing or reviewing a provider adapter, or integrating the `waconector` npm package into a bot/app.
+description: Domain expertise for the waconector project — a contract-first universal connector for unofficial WhatsApp APIs (WAHA, Evolution GO, uazapi, Z-API, Wuzapi, Whapi, WPPConnect, QuePasa). Covers both extending the package (adding/reviewing a provider adapter, core conventions) and consuming it (wiring an adapter, handling webhooks, testing with MockAdapter). Use when working in the waconector repo, implementing or reviewing a provider adapter, or integrating the `waconector` npm package into a bot/app.
 ---
 
 # waconector
