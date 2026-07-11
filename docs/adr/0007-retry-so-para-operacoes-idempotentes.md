@@ -55,7 +55,7 @@ quanto tempo de mais (segurando uma retentativa que o provider já liberaria ant
   Precedência total, não uma combinação com o backoff calculado, mantém a regra simples e
   previsível.
 - **Por que só o formato numérico**: nenhum provider-alvo (WAHA, Evolution GO, uazapi, Z-API,
-  Wuzapi, Whapi, Zapo, QuePasa) documenta o formato de data HTTP para esse header; suportar só
+  Wuzapi, Whapi, WPPConnect, QuePasa) documenta o formato de data HTTP para esse header; suportar só
   segundos evita complexidade (parsing de datas, fuso horário) sem perda prática.
 - **Por que o valor viaja via `WaConnectorError` e não por um campo separado no retorno de
   `attempt()`**: o laço de retry em `request()` já captura o erro lançado por `attempt()` para

@@ -132,10 +132,14 @@ Estado: **in_progress**
       corretamente; o fixture de teste também mascarava o bug, mesmo padrão do bug histórico do QR
       no Wuzapi). `messages.sendReaction`/`instance.pairingCode`/`groups.*`/`contacts.*`
       confirmados suportados pelo provider mas deliberadamente adiados (fora do escopo desta fase).
-- [ ] Adapter QuePasa (self-hosted, Docker) — próximo
-- [ ] Adapter Zapo — **avaliado como possivelmente fora de escopo**: parece ser uma biblioteca
-      cliente, não uma API HTTP (observação do usuário) — precisa confirmação antes de decidir
-      definitivamente incluir/excluir
+- [ ] Adapter QuePasa (self-hosted, Docker) — próximo (instrução direta do usuário: "faça whapi e
+      depois o quepasa")
+- [ ] Adapter WPPConnect Server (self-hosted, Docker) — substitui Zapo na lista de providers-alvo
+      F3: Zapo (`zapo-js`) é uma biblioteca cliente Node importada diretamente, não uma API HTTP —
+      incompatível com o modelo de adapter do waconector (`HttpClient`), confirmado pelo usuário.
+      WPPConnect Server já trocado em `docs/providers/README.md`, `docs/CONTEXT.md`,
+      `docs/adr/0009-capability-groups.md`, `package.json` (keywords) e `USAGE.md` via
+      [PR #23](https://github.com/alltomatos/waconector/pull/23).
 - [ ] Site de docs com matriz de capabilities gerada do código
 - [ ] Exemplos de bot (Express/Next), `npx waconector doctor`
 
