@@ -95,6 +95,20 @@ subconjunto honesto (documentado no dossiê) é melhor que fingir suporte comple
   diretamente ou via um branch de feature de vida curta que abre PR para `develop`.
 - Quando `develop` estiver pronto para virar release, abra um PR `develop` → `main`.
 
+### Sincronização automática de docs/wiki após merge em main
+
+Todo merge em `main` dispara [`.github/workflows/docs-sync.yml`](.github/workflows/docs-sync.yml):
+um agente (Claude Code Action) olha o diff do PR mesclado e atualiza `docs/CONTEXT.md`,
+`docs/adr/`, `docs/providers/*.md`, `README.md`, `CONTRIBUTING.md`, a skill `waconector` e/ou as
+páginas da wiki quando genuinamente ficaram desatualizados — commitando direto em `develop` (nunca
+em `main`) ou na wiki. Se nada precisar mudar, não faz nenhum commit.
+
+Requer o secret `CLAUDE_CODE_OAUTH_TOKEN` no repositório (o mesmo usado por
+[`claude-code-review.yml`](.github/workflows/claude-code-review.yml)) — configurado via
+`/install-github-app` no `claude` CLI local, que instala o GitHub App e o secret
+automaticamente. Sem o secret configurado, o job falha sem afetar o merge em si (não é um
+required check).
+
 ## Commits e Pull Requests
 
 - Mensagens de commit em português ou inglês, no imperativo, descrevendo o "porquê" quando não for

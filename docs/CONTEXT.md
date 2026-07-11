@@ -45,6 +45,7 @@ significar trocar apenas a configuração.
 - **Versionamento/publicação:** changesets + GitHub Actions (`release.yml`, requer secret `NPM_TOKEN`; publica com provenance). Pré-1.0: breaking changes em minors, documentadas.
 - **Contribuição:** [CONTRIBUTING.md](../CONTRIBUTING.md), templates de issue (bug/feature/novo adapter) e template de PR com checklist de QA em `.github/`. Dependabot para deps (npm + GitHub Actions), semanal.
 - **Branches:** `main` protegido (sem push/merge direto); `develop` é o branch de integração. PRs para `main` só são aceitos vindos de `develop` — aplicado pelo job `guard-main-source` em `ci.yml` (o GitHub não tem regra de proteção nativa para restringir a origem de um PR). A configuração de branch protection em si é feita pelo dono do repo no GitHub, não por um agente.
+- **Docs/wiki sempre em dia:** `docs-sync.yml` roda a cada merge em `main` (Claude Code Action) e atualiza docs/ADRs/wiki quando o diff genuinamente exigir, commitando em `develop` (nunca em `main`). Requer secret `CLAUDE_CODE_OAUTH_TOKEN` (mesmo usado por `claude-code-review.yml`) — ver CONTRIBUTING.md.
 - **Estrutura:**
   - `src/core/` — tipos, erros, capabilities, http client, eventos, conector.
   - `src/adapters/<provider>/` — (F1+) um diretório por adapter, com `fixtures/`.
