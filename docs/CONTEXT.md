@@ -44,6 +44,7 @@ significar trocar apenas a configuração.
 - **Lint/format:** Biome.
 - **Versionamento/publicação:** changesets + GitHub Actions (`release.yml`, requer secret `NPM_TOKEN`; publica com provenance). Pré-1.0: breaking changes em minors, documentadas.
 - **Contribuição:** [CONTRIBUTING.md](../CONTRIBUTING.md), templates de issue (bug/feature/novo adapter) e template de PR com checklist de QA em `.github/`. Dependabot para deps (npm + GitHub Actions), semanal.
+- **Branches:** `main` protegido (sem push/merge direto); `develop` é o branch de integração. PRs para `main` só são aceitos vindos de `develop` — aplicado pelo job `guard-main-source` em `ci.yml` (o GitHub não tem regra de proteção nativa para restringir a origem de um PR). A configuração de branch protection em si é feita pelo dono do repo no GitHub, não por um agente.
 - **Estrutura:**
   - `src/core/` — tipos, erros, capabilities, http client, eventos, conector.
   - `src/adapters/<provider>/` — (F1+) um diretório por adapter, com `fixtures/`.

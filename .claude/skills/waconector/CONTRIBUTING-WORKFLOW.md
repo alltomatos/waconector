@@ -16,6 +16,18 @@ Para quem está estendendo ou mantendo o pacote waconector em si — não para q
 Leia [docs/CONTEXT.md](../../../docs/CONTEXT.md) e [docs/adr/](../../../docs/adr/) antes de mexer em
 `src/core/` — toda regra não óbvia ali tem um porquê registrado num ADR.
 
+## Modelo de branches
+
+- **`main`** é protegido: sem push direto, sem merge direto. Só atualiza via PR **vindo de
+  `develop`** — aplicado tecnicamente pelo job `guard-main-source` em
+  `.github/workflows/ci.yml` (o GitHub não tem uma regra de proteção nativa para restringir de
+  qual branch um PR pode vir).
+- **`develop`** é o branch de integração — é onde trabalho novo acontece (direto ou via um branch
+  de feature curto com PR para `develop`).
+- Nunca abra PR direto de um branch de feature para `main`; sempre passe por `develop` primeiro.
+- Branch protection em si (exigir PR, bloquear push direto) é configurado pelo humano dono do
+  repo em Settings → Branches no GitHub — não é algo que um agente deva configurar sozinho.
+
 ## Adicionando um adapter de provider novo (dossiê primeiro)
 
 1. **Dossiê antes de código.** Escreva `docs/providers/<nome>.md` a partir da documentação oficial

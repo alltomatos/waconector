@@ -2,10 +2,23 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
 
 jobs:
+  guard-main-source:
+    # main só recebe merge vindo de develop (ver CONTRIBUTING.md e a skill waconector).
+    # O GitHub não tem uma regra de proteção nativa para "só aceitar PR de um branch
+    # específico" — este job é a aplicação técnica dessa regra.
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: PRs para main devem vir de develop
+        if: github.head_ref != 'develop'
+        run: |
+          echo "PRs para main só são aceitos a partir de develop (branch atual: ${{ github.head_ref }})." >&2
+          exit 1
+
   ci:
     runs-on: ubuntu-latest
     strategy:

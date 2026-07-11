@@ -78,6 +78,16 @@ A metodologia completa está em [docs/providers/README.md](docs/providers/README
 Não é necessário implementar todas as capabilities de um provider de uma vez — declarar um
 subconjunto honesto (documentado no dossiê) é melhor que fingir suporte completo.
 
+## Modelo de branches
+
+- **`main`** é protegido: nenhum push direto, nenhum merge direto. A única forma de atualizar
+  `main` é via Pull Request **vindo de `develop`** (aplicado tecnicamente pelo job
+  `guard-main-source` em [`.github/workflows/ci.yml`](.github/workflows/ci.yml), já que o GitHub
+  não tem uma regra de proteção nativa para restringir de qual branch um PR pode vir).
+- **`develop`** é o branch de integração. Trabalho novo (adapter, feature, fix) é commitado ali
+  diretamente ou via um branch de feature de vida curta que abre PR para `develop`.
+- Quando `develop` estiver pronto para virar release, abra um PR `develop` → `main`.
+
 ## Commits e Pull Requests
 
 - Mensagens de commit em português ou inglês, no imperativo, descrevendo o "porquê" quando não for

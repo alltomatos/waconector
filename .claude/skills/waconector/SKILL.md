@@ -43,3 +43,9 @@ npm run lint && npm run typecheck && npm test && npm run build && npm run smoke
 Checklist completo (incluindo o específico de PRs de adapter) em
 [CONTRIBUTING-WORKFLOW.md](CONTRIBUTING-WORKFLOW.md) e em
 [.github/pull_request_template.md](../../../.github/pull_request_template.md).
+
+## Branches
+
+`main` é protegido (sem push/merge direto); trabalho novo acontece em `develop` (direto ou via
+branch de feature curto); PRs para `main` só são aceitos vindos de `develop`. Detalhe em
+[CONTRIBUTING-WORKFLOW.md](CONTRIBUTING-WORKFLOW.md#modelo-de-branches).
