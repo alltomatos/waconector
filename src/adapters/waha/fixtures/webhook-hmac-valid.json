@@ -1,0 +1,6 @@
+{
+  "_comment": "Fixture sintética (NÃO capturada de uma instância WAHA real — WAHA não publica um exemplo oficial de payload assinado). rawBody é JSON.stringify do mesmo envelope de webhook-message-received.json; signature é o HMAC-SHA512 hex desse rawBody com hmacKey abaixo (node:crypto createHmac). Usada para testar a verificação de assinatura em parseWebhook (ver docs/providers/waha.md#verificação-hmac-de-webhooks e ADR-0006).",
+  "hmacKey": "waconector-hmac-fixture-key",
+  "rawBody": "{\"id\":\"evt_2222222222222222222222222222\",\"timestamp\":1741249702485,\"event\":\"message\",\"session\":\"default\",\"metadata\":{\"user.id\":\"123\",\"user.email\":\"email@example.com\"},\"me\":{\"id\":\"71111111111@c.us\",\"pushName\":\"~\"},\"payload\":{\"id\":\"false_11111111111@c.us_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\",\"timestamp\":1667561485,\"from\":\"11111111111@c.us\",\"fromMe\":false,\"to\":\"71111111111@c.us\",\"body\":\"Hi there!\",\"hasMedia\":false,\"ack\":1,\"vCards\":[],\"_data\":{}},\"engine\":\"WEBJS\",\"environment\":{\"tier\":\"CORE\",\"version\":\"2023.10.12\"}}",
+  "signature": "7730db52bd90b7435cc5485c110b44232ce3de636233568c959b445fd9b1147c3352ad05d5b660c38cca7fe066885a8dee6c5f67729dea2221a50af504ec1836"
+}

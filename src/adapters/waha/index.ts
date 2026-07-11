@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { InstanceApi, MessagesApi, WaAdapter, WebhookInput } from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
 import { WaConnectorError } from '../../core/errors';
@@ -31,6 +32,21 @@ export interface WahaOptions {
   retries?: number;
   /** Injetável para testes (mesmo padrão de HttpClientOptions). */
   fetch?: typeof globalThis.fetch;
+  /**
+   * Chave HMAC configurada no lado do servidor WAHA (`config.webhooks[].hmac.key` na sessão, ou
+   * `WHATSAPP_HOOK_HMAC_KEY` globalmente). Quando definida, `parseWebhook` verifica a assinatura
+   * `X-Webhook-Hmac` (HMAC-SHA512, conforme `X-Webhook-Hmac-Algorithm: sha512`) antes de processar
+   * o payload — ver docs/providers/waha.md#verificação-hmac-de-webhooks.
+   *
+   * **Exige `WebhookInput.rawBody`**: a verificação precisa do corpo bruto do request (bytes
+   * originais, antes do `JSON.parse` do framework do consumidor) — reserializar `body` já
+   * parseado não é garantidamente idêntico byte-a-byte ao que o WAHA assinou. Se `webhookHmacKey`
+   * estiver configurada mas `rawBody` não vier em `parseWebhook`, o adapter falha fechado: trata o
+   * webhook como não verificável e devolve evento `unknown` (nunca processa o payload como se a
+   * assinatura fosse válida). Opt-in: se `webhookHmacKey` não for configurada, o comportamento é
+   * o mesmo de antes (sem verificação).
+   */
+  webhookHmacKey?: string;
 }
 
 const PROVIDER = 'waha';
@@ -146,7 +162,7 @@ export function waha(options: WahaOptions): WaAdapter {
     capabilities: WAHA_CAPABILITIES,
     instance,
     messages,
-    parseWebhook: (input) => parseWahaWebhook(input, session),
+    parseWebhook: (input) => parseWahaWebhook(input, session, options.webhookHmacKey),
   };
 }
 
@@ -193,6 +209,8 @@ interface WahaBinaryFile {
   data: string;
 }
 
+// Checagem de último recurso (o conector já valida isso) para quem instancia o adapter sem
+// createConnector — ver CONTRIBUTING.md, seção "Convenções inegociáveis".
 function buildWahaFile(media: MediaRef): WahaRemoteFile | WahaBinaryFile {
   const mimetype = media.mimeType ?? 'application/octet-stream';
   if (media.url !== undefined) {
@@ -373,9 +391,25 @@ function mapWahaMessage(payload: Record<string, unknown>): WaMessage {
 /**
  * Traduz um webhook WAHA para eventos canônicos. Nunca lança: eventos não mapeados nesta fase
  * (F1: `message`, `message.ack`, `session.status`) viram `unknown`. Ver docs/providers/waha.md.
+ *
+ * Quando `webhookHmacKey` é fornecida, a assinatura é verificada ANTES de qualquer mapeamento —
+ * payload com assinatura ausente/inválida, ou sem `rawBody` disponível para verificar, nunca chega
+ * a ser processado (vira `unknown`). Ver docs/providers/waha.md#verificação-hmac-de-webhooks.
  */
-function parseWahaWebhook(input: WebhookInput, defaultSession: string): CanonicalEvent[] {
+function parseWahaWebhook(
+  input: WebhookInput,
+  defaultSession: string,
+  webhookHmacKey: string | undefined,
+): CanonicalEvent[] {
   const body = input.body;
+
+  if (webhookHmacKey !== undefined) {
+    const verification = verifyWahaHmac(input, webhookHmacKey);
+    if (!verification.valid) {
+      return [unknownEvent(body, verification.reason)];
+    }
+  }
+
   const envelope = asRecord(body);
   if (!envelope) {
     return [unknownEvent(body, 'Corpo do webhook WAHA não é um objeto JSON.')];
@@ -442,6 +476,74 @@ function parseWahaWebhook(input: WebhookInput, defaultSession: string): Canonica
 
 function unknownEvent(raw: unknown, reason: string): UnknownEvent {
   return { type: 'unknown', provider: PROVIDER, raw, reason };
+}
+
+// ---------------------------------------------------------------------------
+// verificação HMAC de webhooks (opt-in, ver ADR-0006 e docs/providers/waha.md)
+// ---------------------------------------------------------------------------
+
+interface HmacVerification {
+  valid: boolean;
+  reason: string;
+}
+
+/**
+ * Verifica a assinatura `X-Webhook-Hmac` (HMAC-SHA512) de um webhook WAHA contra `webhookHmacKey`.
+ * Falha fechado: sem `rawBody` (corpo bruto) não há como calcular o HMAC de forma confiável, então
+ * o webhook é tratado como não verificável — nunca como válido por omissão.
+ */
+function verifyWahaHmac(input: WebhookInput, webhookHmacKey: string): HmacVerification {
+  if (input.rawBody === undefined) {
+    return {
+      valid: false,
+      reason:
+        'webhookHmacKey está configurada, mas WebhookInput.rawBody não foi fornecido — a verificação ' +
+        'HMAC exige o corpo bruto do request (ver docs/providers/waha.md#verificação-hmac-de-webhooks). ' +
+        'Falhando fechado: webhook tratado como não verificável, não processado.',
+    };
+  }
+
+  const receivedSignature = firstHeaderValue(input.headers, 'x-webhook-hmac');
+  if (receivedSignature === undefined) {
+    return {
+      valid: false,
+      reason: 'webhookHmacKey está configurada, mas o header "X-Webhook-Hmac" não veio no webhook.',
+    };
+  }
+
+  const expectedSignature = createHmac('sha512', webhookHmacKey)
+    .update(input.rawBody)
+    .digest('hex');
+
+  const expectedBuffer = Buffer.from(expectedSignature, 'utf8');
+  const receivedBuffer = Buffer.from(receivedSignature, 'utf8');
+  // timingSafeEqual lança se os buffers tiverem tamanhos diferentes — checar antes evita a
+  // exceção (uma assinatura de tamanho errado é simplesmente inválida, não um erro interno).
+  if (
+    expectedBuffer.length !== receivedBuffer.length ||
+    !timingSafeEqual(expectedBuffer, receivedBuffer)
+  ) {
+    return {
+      valid: false,
+      reason: 'Assinatura HMAC do webhook WAHA inválida ("X-Webhook-Hmac" não confere).',
+    };
+  }
+
+  return { valid: true, reason: '' };
+}
+
+/**
+ * Nomes de header chegam em capitalização variada dependendo do framework do consumidor (Express
+ * lower-case tudo; outros preservam a grafia original) — busca case-insensitive.
+ */
+function firstHeaderValue(headers: WebhookInput['headers'], name: string): string | undefined {
+  if (!headers) return undefined;
+  const lowerName = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== lowerName) continue;
+    return Array.isArray(value) ? value[0] : value;
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------

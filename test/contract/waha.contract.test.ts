@@ -3,6 +3,7 @@ import { createConnector, isWaConnectorError, type SentMessage } from '../../src
 import { type WahaOptions, waha } from '../../src/adapters/waha';
 import ackFixture from '../../src/adapters/waha/fixtures/webhook-ack.json';
 import connectionUpdateFixture from '../../src/adapters/waha/fixtures/webhook-connection-update.json';
+import hmacValidFixture from '../../src/adapters/waha/fixtures/webhook-hmac-valid.json';
 import messageReceivedFixture from '../../src/adapters/waha/fixtures/webhook-message-received.json';
 import { describeAdapterContract } from './adapter-contract';
 
@@ -227,5 +228,63 @@ describe('WAHA adapter: comportamento específico do provider', () => {
 
     await adapter.instance.status();
     expect(calls[0]?.get('X-Api-Key')).toBe(API_KEY);
+  });
+});
+
+describe('WAHA adapter: verificação HMAC de webhooks (opt-in, ADR-0006)', () => {
+  const { hmacKey, rawBody, signature } = hmacValidFixture;
+  const parsedBody: unknown = JSON.parse(rawBody);
+
+  /** Assinatura com o mesmo tamanho da válida, mas com o último caractere trocado. */
+  function tamperedSignature(): string {
+    const last = signature.at(-1) ?? '0';
+    return `${signature.slice(0, -1)}${last === '0' ? '1' : '0'}`;
+  }
+
+  it('(a) sem webhookHmacKey configurado, processa normalmente (comportamento atual, sem regressão)', () => {
+    const adapter = waha(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: parsedBody });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('message.received');
+  });
+
+  it('(b) com webhookHmacKey configurado e rawBody + assinatura válidos, processa normalmente', () => {
+    const adapter = waha(buildAdapterOptions({ webhookHmacKey: hmacKey }));
+    const events = adapter.parseWebhook({
+      body: parsedBody,
+      rawBody,
+      headers: { 'x-webhook-hmac': signature },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('message.received');
+  });
+
+  it('(c) com webhookHmacKey configurado e assinatura inválida (ou ausente), vira evento "unknown"', () => {
+    const adapter = waha(buildAdapterOptions({ webhookHmacKey: hmacKey }));
+
+    const eventsWrongSignature = adapter.parseWebhook({
+      body: parsedBody,
+      rawBody,
+      headers: { 'x-webhook-hmac': tamperedSignature() },
+    });
+    expect(eventsWrongSignature).toHaveLength(1);
+    expect(eventsWrongSignature[0]?.type).toBe('unknown');
+
+    const eventsMissingSignature = adapter.parseWebhook({ body: parsedBody, rawBody });
+    expect(eventsMissingSignature).toHaveLength(1);
+    expect(eventsMissingSignature[0]?.type).toBe('unknown');
+  });
+
+  it('(d) com webhookHmacKey configurado mas rawBody ausente, vira evento "unknown" (falha fechada)', () => {
+    const adapter = waha(buildAdapterOptions({ webhookHmacKey: hmacKey }));
+    const events = adapter.parseWebhook({
+      body: parsedBody,
+      headers: { 'x-webhook-hmac': signature },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('unknown');
+    if (events[0]?.type === 'unknown') {
+      expect(events[0].reason).toContain('rawBody');
+    }
   });
 });

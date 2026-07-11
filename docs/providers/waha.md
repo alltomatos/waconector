@@ -134,6 +134,68 @@ environment, payload }`. Nesta fase (F1) o adapter mapeia apenas `message` (→
 `group.join`, `presence.update`, `call.received`, ...) vira evento canônico `unknown` — não é um
 erro, é escopo de fases futuras (F2/F3).
 
+### Verificação HMAC de webhooks
+
+Sem verificação de assinatura, qualquer um que descubra a URL do webhook pode forjar eventos. O
+WAHA suporta assinar a entrega com HMAC-SHA512 quando `hmac.key` (por sessão, em
+`config.webhooks[]`) ou `WHATSAPP_HOOK_HMAC_KEY` (global) está configurado no servidor — ver seção
+acima. O adapter WAHA verifica isso de forma **opt-in** (ADR-0006):
+
+1. Configure `webhookHmacKey` em `WahaOptions` com o mesmo valor da chave HMAC do servidor:
+
+   ```ts
+   const adapter = waha({
+     baseUrl: 'http://localhost:3000',
+     apiKey: process.env.WAHA_API_KEY!,
+     webhookHmacKey: process.env.WAHA_WEBHOOK_HMAC_KEY,
+   });
+   ```
+
+2. **Passe `rawBody`** ao chamar `parseWebhook`/`wa.webhooks.dispatch`. Isso é obrigatório para a
+   verificação funcionar: HMAC precisa dos bytes brutos do request, e a maioria dos frameworks já
+   consumiu e parseou o body antes do seu handler rodar — reserializar o objeto parseado
+   (`JSON.stringify(req.body)`) não reproduz de forma confiável o corpo original byte-a-byte, então
+   não pode ser usado para a comparação de assinatura.
+
+   Exemplo com Express (captura o corpo bruto no `verify` callback do `express.json()`):
+
+   ```ts
+   import express from 'express';
+
+   declare module 'express-serve-static-core' {
+     interface Request {
+       rawBody?: string;
+     }
+   }
+
+   const app = express();
+   app.use(
+     express.json({
+       verify: (req, _res, buf) => {
+         (req as express.Request & { rawBody?: string }).rawBody = buf.toString('utf8');
+       },
+     }),
+   );
+
+   app.post('/webhooks/waha', (req, res) => {
+     const events = wa.webhooks.dispatch({
+       headers: req.headers as Record<string, string | string[] | undefined>,
+       body: req.body,
+       rawBody: req.rawBody,
+     });
+     res.status(200).json({ ok: true });
+     // ... encaminhar `events` para o resto da aplicação
+   });
+   ```
+
+3. Comportamento resultante:
+   - `webhookHmacKey` **não** configurada ⇒ sem mudança (comportamento anterior, sem verificação).
+   - `webhookHmacKey` configurada + `rawBody` presente + assinatura válida ⇒ processa normalmente.
+   - `webhookHmacKey` configurada + assinatura ausente/inválida ⇒ vira evento `unknown` (nunca
+     processa o payload; nunca lança, ADR-0003).
+   - `webhookHmacKey` configurada + `rawBody` ausente ⇒ vira evento `unknown` (falha fechada: não
+     dá pra verificar, então não assume válido).
+
 ### Payloads capturados / fixtures
 
 - **`fixtures/webhook-ack.json`** — **verbatim**, copiado sem alteração do exemplo oficial
