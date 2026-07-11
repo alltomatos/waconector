@@ -73,6 +73,9 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'groups.removeParticipants',
   'groups.promoteParticipants',
   'groups.demoteParticipants',
+  'groups.updateSubject',
+  'groups.updateDescription',
+  'groups.updatePicture',
   'webhooks.parse',
 ];
 
@@ -255,6 +258,41 @@ export function waha(options: WahaOptions): WaAdapter {
         body: { participants: toWahaParticipants(input.participants) },
       });
     },
+
+    updateSubject: async (input) => {
+      // PUT /api/{session}/groups/{id}/subject, body { subject }. Resposta sem schema declarado
+      // (mesmo gap já visto em `create`) — não precisa processar, contrato retorna void.
+      await http.request({
+        method: 'PUT',
+        path: groupParticipantsPath(session, input.groupId, 'subject'),
+        body: { subject: input.subject },
+      });
+    },
+
+    updateDescription: async (input) => {
+      // PUT /api/{session}/groups/{id}/description, body { description }. String vazia é um caso
+      // válido (limpa a descrição) — já validado pelo conector, o adapter só repassa.
+      await http.request({
+        method: 'PUT',
+        path: groupParticipantsPath(session, input.groupId, 'description'),
+        body: { description: input.description },
+      });
+    },
+
+    updatePicture: async (input) => {
+      // PUT /api/{session}/groups/{id}/picture, body ProfilePictureRequest = { file }. `file`
+      // segue o mesmo shape RemoteFile/BinaryFile de sendMedia (buildWahaFile), mas com mimetype
+      // padrão 'image/jpeg' em vez de 'application/octet-stream' — grupos só aceitam foto.
+      // Resposta documentada como `{ success: boolean }`; ignorada de propósito (contrato retorna
+      // void e a doc não deixa claro o que fazer com `success: false`, mesmo padrão de "pode
+      // retornar false silenciosamente" já observado em subject/description).
+      const file = buildWahaFile(input.media, 'image/jpeg');
+      await http.request({
+        method: 'PUT',
+        path: groupParticipantsPath(session, input.groupId, 'picture'),
+        body: { file },
+      });
+    },
   };
 
   return {
@@ -319,7 +357,12 @@ function toWahaParticipants(participants: readonly string[]): Array<{ id: string
   return participants.map((participant) => ({ id: toWahaChatId(participant) }));
 }
 
-/** Monta o path `/api/{session}/groups/{id}/<suffix>` com `groupId` já convertido para `@g.us`. */
+/**
+ * Monta o path `/api/{session}/groups/{id}/<suffix>` com `groupId` já convertido para `@g.us`.
+ * Nome vem do uso original (endpoints de participantes/admin), mas é genérico o bastante para ser
+ * reaproveitado por `updateSubject`/`updateDescription`/`updatePicture` (suffixes `subject`,
+ * `description`, `picture`) — todos seguem o mesmo padrão de path.
+ */
 function groupParticipantsPath(session: string, groupId: string, suffix: string): string {
   return `/api/${encodeURIComponent(session)}/groups/${encodeURIComponent(toWahaGroupId(groupId))}/${suffix}`;
 }
@@ -337,9 +380,15 @@ interface WahaBinaryFile {
 }
 
 // Checagem de último recurso (o conector já valida isso) para quem instancia o adapter sem
-// createConnector — ver CONTRIBUTING.md, seção "Convenções inegociáveis".
-function buildWahaFile(media: MediaRef): WahaRemoteFile | WahaBinaryFile {
-  const mimetype = media.mimeType ?? 'application/octet-stream';
+// createConnector — ver CONTRIBUTING.md, seção "Convenções inegociáveis". `defaultMimetype`
+// existe porque o mimetype-padrão difere por chamador: `sendMedia` cai em
+// 'application/octet-stream' (mídia genérica), `groups.updatePicture` cai em 'image/jpeg' (grupos
+// só aceitam foto).
+function buildWahaFile(
+  media: MediaRef,
+  defaultMimetype = 'application/octet-stream',
+): WahaRemoteFile | WahaBinaryFile {
+  const mimetype = media.mimeType ?? defaultMimetype;
   if (media.url !== undefined) {
     return { mimetype, filename: media.filename, url: media.url };
   }

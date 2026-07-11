@@ -26,6 +26,9 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  UpdateGroupDescriptionInput,
+  UpdateGroupPictureInput,
+  UpdateGroupSubjectInput,
   WaMessage,
 } from '../../core/types';
 
@@ -86,6 +89,9 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'groups.removeParticipants',
   'groups.promoteParticipants',
   'groups.demoteParticipants',
+  'groups.updateSubject',
+  'groups.updateDescription',
+  'groups.updatePicture',
   'webhooks.parse',
 ];
 
@@ -133,6 +139,9 @@ export function zapi(options: ZapiOptions): WaAdapter {
     removeParticipants: (input) => removeGroupParticipants(http, prefix, input),
     promoteParticipants: (input) => promoteGroupParticipants(http, prefix, input),
     demoteParticipants: (input) => demoteGroupParticipants(http, prefix, input),
+    updateSubject: (input) => updateGroupSubject(http, prefix, input),
+    updateDescription: (input) => updateGroupDescription(http, prefix, input),
+    updatePicture: (input) => updateGroupPicture(http, prefix, input),
   };
 
   return {
@@ -616,6 +625,59 @@ async function demoteGroupParticipants(
     method: 'POST',
     path: `${prefix}/remove-admin`,
     body: { groupId: input.groupId, phones: input.participants.map(toZapiPhone) },
+  });
+}
+
+/**
+ * `POST /update-group-name`. Corpo `{ groupId, groupName }` — `groupId` no corpo, verbatim (opaco,
+ * ver nota acima); `subject` (não vazio, já validado pelo conector) mapeado para `groupName`.
+ * Resposta confirmada `{ value: true }` — sem informação adicional a extrair, por isso `void`.
+ */
+async function updateGroupSubject(
+  http: HttpClient,
+  prefix: string,
+  input: UpdateGroupSubjectInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/update-group-name`,
+    body: { groupId: input.groupId, groupName: input.subject },
+  });
+}
+
+/**
+ * `POST /update-group-description`. Corpo `{ groupId, groupDescription }` — `groupDescription`
+ * vazia é permitida (o conector já valida que `description` é string, inclusive vazia, para
+ * limpar a descrição do grupo). Resposta confirmada `{ value: true }` — `void`.
+ */
+async function updateGroupDescription(
+  http: HttpClient,
+  prefix: string,
+  input: UpdateGroupDescriptionInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/update-group-description`,
+    body: { groupId: input.groupId, groupDescription: input.description },
+  });
+}
+
+/**
+ * `POST /update-group-photo`. Corpo `{ groupId, groupPhoto }` — `groupPhoto` aceita URL OU data URI
+ * base64, mesma convenção já usada por `messages.sendMedia` (`resolveMediaValue`, reaproveitada
+ * aqui): se `media.url` estiver presente, é usado como está; senão `media.base64` é embrulhado numa
+ * data URI (usando `media.mimeType` ou o mimetype-padrão de imagem, se ausente). `media.kind` já
+ * chega garantido como `'image'` pelo conector. Resposta confirmada `{ value: true }` — `void`.
+ */
+async function updateGroupPicture(
+  http: HttpClient,
+  prefix: string,
+  input: UpdateGroupPictureInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/update-group-photo`,
+    body: { groupId: input.groupId, groupPhoto: resolveMediaValue(input.media) },
   });
 }
 

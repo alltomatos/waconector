@@ -30,6 +30,9 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  UpdateGroupDescriptionInput,
+  UpdateGroupPictureInput,
+  UpdateGroupSubjectInput,
   WaMessage,
 } from '../../core/types';
 
@@ -81,6 +84,9 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'groups.removeParticipants',
   'groups.promoteParticipants',
   'groups.demoteParticipants',
+  'groups.updateSubject',
+  'groups.updateDescription',
+  'groups.updatePicture',
   'webhooks.parse',
 ];
 
@@ -116,6 +122,9 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     removeParticipants: (input) => updateGroupParticipants(http, input, 'remove'),
     promoteParticipants: (input) => updateGroupParticipants(http, input, 'promote'),
     demoteParticipants: (input) => updateGroupParticipants(http, input, 'demote'),
+    updateSubject: (input) => updateGroupSubject(http, input),
+    updateDescription: (input) => updateGroupDescription(http, input),
+    updatePicture: (input) => updateGroupPicture(http, input),
   };
 
   return {
@@ -446,6 +455,86 @@ async function updateGroupParticipants(
       action,
     },
   });
+}
+
+/**
+ * `POST /group/name` (`SetGroupNameStruct`). Corpo: `{groupJid, name}`. Resposta
+ * `{message:"success"}`, sem `data` — a operação canônica retorna `Promise<void>`, então basta
+ * disparar a chamada.
+ */
+async function updateGroupSubject(http: HttpClient, input: UpdateGroupSubjectInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/name',
+    body: {
+      groupJid: toProviderGroupJid(input.groupId),
+      name: input.subject,
+    },
+  });
+}
+
+/**
+ * `POST /group/description`. Corpo: `{groupJid, description}` — `description` pode ser string
+ * vazia para limpar a descrição do grupo (o handler permite explicitamente, sem validação de
+ * tamanho mínimo; o conector já valida que `description` é sempre uma string — ver
+ * `WaConnector.prepareUpdateGroupDescription`). Resposta `{message:"success"}`.
+ */
+async function updateGroupDescription(
+  http: HttpClient,
+  input: UpdateGroupDescriptionInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/description',
+    body: {
+      groupJid: toProviderGroupJid(input.groupId),
+      description: input.description,
+    },
+  });
+}
+
+/**
+ * `POST /group/photo`. Corpo: `{groupJid, image}`. Resposta `{message:"success",
+ * data:<novo pictureID string>}` — ignorada (a operação canônica retorna `Promise<void>`). Ver
+ * `toGroupPictureImage` para a conversão de `MediaRef` para o formato exigido pelo campo `image`.
+ */
+async function updateGroupPicture(http: HttpClient, input: UpdateGroupPictureInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/group/photo',
+    body: {
+      groupJid: toProviderGroupJid(input.groupId),
+      image: toGroupPictureImage(input.media),
+    },
+  });
+}
+
+/**
+ * Constrói o valor esperado pelo campo `image` de `POST /group/photo`. **Diferente** de
+ * `/send/media` (onde o mesmo servidor decodifica base64 cru sem prefixo no campo `url` — ver
+ * `sendMedia`), este endpoint só aceita OU uma URL `http(s)` OU uma data-URI com prefixo EXATO
+ * `data:image/jpeg;base64,`/`data:image/png;base64,`; base64 cru sem prefixo não é reconhecido.
+ * Repassamos `media.url` diretamente quando presente; caso contrário montamos a data-URI a partir
+ * de `media.base64`, escolhendo o prefixo por `media.mimeType`. `mimeType` ausente ou não
+ * reconhecido como `image/jpeg`/`image/png` cai no default `data:image/jpeg;base64,` — suposição
+ * da pesquisa deste dossiê (não validada contra uma instância real; ver
+ * docs/providers/evolution.md).
+ * Checagem de último recurso (o conector já garante `media.kind === 'image'` e pelo menos um
+ * entre `url`/`base64`) para quem instancia o adapter sem `createConnector` — mesmo padrão de
+ * `sendMedia`.
+ */
+function toGroupPictureImage(media: MediaRef): string {
+  if (media.url) return media.url;
+  if (media.base64) {
+    const prefix =
+      media.mimeType === 'image/png' ? 'data:image/png;base64,' : 'data:image/jpeg;base64,';
+    return `${prefix}${media.base64}`;
+  }
+  throw new WaConnectorError(
+    'INVALID_INPUT',
+    'Evolution GO (adapter F2): groups.updatePicture requer "media.url" ou "media.base64".',
+    { provider: PROVIDER },
+  );
 }
 
 /**

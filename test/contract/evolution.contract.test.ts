@@ -145,6 +145,15 @@ function createFetchStub(): typeof globalThis.fetch {
     if (method === 'POST' && url.pathname === '/group/participant') {
       return jsonResponse(200, { message: 'success' });
     }
+    if (method === 'POST' && url.pathname === '/group/name') {
+      return jsonResponse(200, { message: 'success' });
+    }
+    if (method === 'POST' && url.pathname === '/group/description') {
+      return jsonResponse(200, { message: 'success' });
+    }
+    if (method === 'POST' && url.pathname === '/group/photo') {
+      return jsonResponse(200, { message: 'success', data: 'fake-picture-id' });
+    }
 
     throw new Error(`fetchStub (evolution): rota não configurada ${method} ${url.pathname}`);
   };
@@ -488,6 +497,177 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
     await wa.groups.demoteParticipants({ groupId, participants });
 
     expect(capturedActions).toEqual(['remove', 'promote', 'demote']);
+  });
+
+  it('groups.updateSubject envia POST /group/name com {groupJid, name}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/name') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.groups.updateSubject({
+      groupId: '123456789-987654321@g.us',
+      subject: 'Novo nome do grupo',
+    });
+
+    expect(capturedBody).toEqual({
+      groupJid: '123456789-987654321@g.us',
+      name: 'Novo nome do grupo',
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it('groups.updateDescription envia POST /group/description com {groupJid, description}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/description') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.groups.updateDescription({
+      groupId: '123456789-987654321@g.us',
+      description: 'Nova descrição do grupo',
+    });
+
+    expect(capturedBody).toEqual({
+      groupJid: '123456789-987654321@g.us',
+      description: 'Nova descrição do grupo',
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it('groups.updateDescription com description vazia limpa a descrição (o handler permite string vazia)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/description') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await wa.groups.updateDescription({
+      groupId: '123456789-987654321@g.us',
+      description: '',
+    });
+
+    expect(capturedBody).toEqual({
+      groupJid: '123456789-987654321@g.us',
+      description: '',
+    });
+  });
+
+  it('groups.updatePicture com media.url envia POST /group/photo repassando a URL diretamente no campo "image"', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/photo') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.groups.updatePicture({
+      groupId: '123456789-987654321@g.us',
+      media: { kind: 'image', url: 'https://cdn.exemplo.test/foto-grupo.jpg' },
+    });
+
+    expect(capturedBody).toEqual({
+      groupJid: '123456789-987654321@g.us',
+      image: 'https://cdn.exemplo.test/foto-grupo.jpg',
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it('groups.updatePicture com media.base64 monta uma data-URI com prefixo "data:image/jpeg;base64," por padrão', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/photo') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await wa.groups.updatePicture({
+      groupId: '123456789-987654321@g.us',
+      media: { kind: 'image', base64: 'ZmFrZS1mb3RvLWdydXBv' },
+    });
+
+    expect(capturedBody).toEqual({
+      groupJid: '123456789-987654321@g.us',
+      image: 'data:image/jpeg;base64,ZmFrZS1mb3RvLWdydXBv',
+    });
+  });
+
+  it('groups.updatePicture com media.base64 e mimeType "image/png" monta a data-URI com o prefixo correspondente', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/photo') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await wa.groups.updatePicture({
+      groupId: '123456789-987654321@g.us',
+      media: { kind: 'image', base64: 'ZmFrZS1mb3RvLXBuZw==', mimeType: 'image/png' },
+    });
+
+    expect(capturedBody).toEqual({
+      groupJid: '123456789-987654321@g.us',
+      image: 'data:image/png;base64,ZmFrZS1mb3RvLXBuZw==',
+    });
   });
 
   it('parseWebhook normaliza evento "Message" de imagem e popula media.url a partir da chave "URL" (maiúscula)', () => {

@@ -1,7 +1,7 @@
 # ADR-0009: Capability `groups.*` — contrato de gestão de grupo
 
-- Status: aceito (núcleo + participantes implementado; configurações e convites/saída
-  planejados como incrementos separados — ver "Consequências")
+- Status: aceito (núcleo + participantes + configurações implementados; convites/saída
+  planejado como incremento separado — ver "Consequências")
 - Data: 2026-07-11
 
 ## Contexto
@@ -89,7 +89,14 @@ existência de eventos de webhook de atualização de grupo (o tipo `GroupUpdate
   em fatias, não um único PR monolítico. Fatiamento confirmado com o usuário:
   1. **PR1 (implementado)**: núcleo + participantes — `create`, `getInfo`, `list`,
      `addParticipants`, `removeParticipants`, `promoteParticipants`, `demoteParticipants`.
-  2. **PR2 (pendente)**: configurações — `updateSubject`, `updateDescription`, `updatePicture`.
+  2. **PR2 (implementado)**: configurações — `updateSubject`, `updateDescription`,
+     `updatePicture`. `updatePicture` recebe um `MediaRef` (mesmo tipo de `messages.sendMedia`)
+     com `media.kind` obrigatoriamente `'image'`; cada adapter converte para o formato de imagem
+     exigido pelo provider (nem todos aceitam os mesmos formatos de `sendMedia` — ex.: Evolution
+     GO e Wuzapi exigem data-URI com prefixo explícito em vez do base64 cru aceito por
+     `sendMedia`; Wuzapi de fato só aceita JPEG, verificado por magic bytes no servidor).
+     "Remover foto" não foi incluído (não fazia parte das 14 operações originalmente escopadas);
+     pode ser um incremento futuro se necessário.
   3. **PR3 (pendente)**: convites + saída — `getInviteLink`, `revokeInviteLink`,
      `joinViaInviteLink`, `leaveGroup`.
   4. **Webhooks de grupo (pendente, incremento à parte)**: popular `GroupUpdateEvent` — confiança

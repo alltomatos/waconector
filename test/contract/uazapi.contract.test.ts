@@ -139,6 +139,30 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'POST' && pathname === '/group/updateName') {
+      return jsonResponse(200, {
+        response: 'Group name updated successfully',
+        group: { JID: '120363000000000000@g.us', Name: 'Novo nome' },
+        needs_refresh: false,
+      });
+    }
+
+    if (method === 'POST' && pathname === '/group/updateDescription') {
+      return jsonResponse(200, {
+        response: 'Group description updated successfully',
+        group: { JID: '120363000000000000@g.us', Topic: 'Nova descrição' },
+        needs_refresh: false,
+      });
+    }
+
+    if (method === 'POST' && pathname === '/group/updateImage') {
+      return jsonResponse(200, {
+        response: 'Group image updated successfully',
+        group: { JID: '120363000000000000@g.us' },
+        needs_refresh: false,
+      });
+    }
+
     throw new Error(`fetchStub (uazapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -728,6 +752,149 @@ describe('uazapi adapter: comportamento específico do provider', () => {
     });
 
     expect(capturedActions).toEqual(['remove', 'promote', 'demote']);
+  });
+
+  it('groups.updateSubject envia { groupjid, name } para POST /group/updateName', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/updateName') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updateSubject({
+        groupId: '120363000000000000@g.us',
+        subject: 'Novo nome',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody?.groupjid).toBe('120363000000000000@g.us');
+    expect(capturedBody?.name).toBe('Novo nome');
+  });
+
+  it('groups.updateDescription envia { groupjid, description } para POST /group/updateDescription', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/updateDescription') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updateDescription({
+        groupId: '120363000000000000@g.us',
+        description: 'Nova descrição',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody?.groupjid).toBe('120363000000000000@g.us');
+    expect(capturedBody?.description).toBe('Nova descrição');
+  });
+
+  it('groups.updateDescription envia "description" vazia (limpa a descrição do grupo) sem lançar', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/updateDescription') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updateDescription({
+        groupId: '120363000000000000@g.us',
+        description: '',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody?.description).toBe('');
+  });
+
+  it('groups.updatePicture envia { groupjid, image } com media.url repassada diretamente', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/updateImage') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updatePicture({
+        groupId: '120363000000000000@g.us',
+        media: { kind: 'image', url: 'https://cdn.exemplo.test/foto-grupo.jpg' },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody?.groupjid).toBe('120363000000000000@g.us');
+    expect(capturedBody?.image).toBe('https://cdn.exemplo.test/foto-grupo.jpg');
+  });
+
+  it('groups.updatePicture monta uma data-URI a partir de media.base64 quando media.url está ausente', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/updateImage') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.updatePicture({
+      groupId: '120363000000000000@g.us',
+      media: { kind: 'image', base64: 'ZmFrZS1mb3RvLWdydXBv', mimeType: 'image/png' },
+    });
+
+    expect(capturedBody?.image).toBe('data:image/png;base64,ZmFrZS1mb3RvLWdydXBv');
+  });
+
+  it('groups.updatePicture usa o default "image/jpeg" quando media.mimeType está ausente (só base64)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/updateImage') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.updatePicture({
+      groupId: '120363000000000000@g.us',
+      media: { kind: 'image', base64: 'ZmFrZS1mb3RvLWdydXBv' },
+    });
+
+    expect(capturedBody?.image).toBe('data:image/jpeg;base64,ZmFrZS1mb3RvLWdydXBv');
   });
 
   it('envia o header "token" configurado em toda chamada', async () => {

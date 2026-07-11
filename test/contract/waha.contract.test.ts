@@ -125,6 +125,17 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(201, {});
     }
 
+    if (
+      method === 'PUT' &&
+      (pathname === `/api/${SESSION}/groups/${GROUP_ID_ENCODED}/subject` ||
+        pathname === `/api/${SESSION}/groups/${GROUP_ID_ENCODED}/description` ||
+        pathname === `/api/${SESSION}/groups/${GROUP_ID_ENCODED}/picture`)
+    ) {
+      // updateSubject/updateDescription/updatePicture: contrato devolve Promise<void>; a doc não
+      // declara schema para subject/description, e picture devolve Result { success } (ignorado).
+      return jsonResponse(200, { success: true });
+    }
+
     throw new Error(`fetchStub: rota não configurada — ${method} ${pathname}`);
   };
 }
@@ -404,6 +415,140 @@ describe('WAHA adapter: comportamento específico do provider', () => {
       `/api/${SESSION}/groups/${GROUP_ID_ENCODED}/admin/promote`,
       `/api/${SESSION}/groups/${GROUP_ID_ENCODED}/admin/demote`,
     ]);
+  });
+
+  it('groups.updateSubject envia PUT .../groups/{id}/subject com { subject }', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updateSubject({ groupId: GROUP_ID, subject: 'Novo assunto' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.method).toBe('PUT');
+    expect(call?.path).toBe(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/subject`);
+    expect(call?.body).toEqual({ subject: 'Novo assunto' });
+  });
+
+  it('groups.updateDescription envia PUT .../groups/{id}/description com { description }', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updateDescription({ groupId: GROUP_ID, description: 'Nova descrição' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.method).toBe('PUT');
+    expect(call?.path).toBe(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/description`);
+    expect(call?.body).toEqual({ description: 'Nova descrição' });
+  });
+
+  it('groups.updateDescription com description vazia é um caso válido (limpa a descrição), não erro', async () => {
+    const calls: Array<{ body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          calls.push({ body: init?.body ? JSON.parse(String(init.body)) : undefined });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updateDescription({ groupId: GROUP_ID, description: '' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect((calls[0]?.body as Record<string, unknown> | undefined)?.description).toBe('');
+  });
+
+  it('groups.updatePicture com media.url monta ProfilePictureRequest RemoteFile {mimetype, filename, url}', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updatePicture({
+        groupId: GROUP_ID,
+        media: {
+          kind: 'image',
+          url: 'https://picsum.photos/200',
+          mimeType: 'image/png',
+          filename: 'foto.png',
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.method).toBe('PUT');
+    expect(call?.path).toBe(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/picture`);
+    expect(call?.body).toEqual({
+      file: { mimetype: 'image/png', filename: 'foto.png', url: 'https://picsum.photos/200' },
+    });
+  });
+
+  it('groups.updatePicture com media.base64 (sem url) monta ProfilePictureRequest BinaryFile {mimetype, filename, data} e usa "image/jpeg" como mimetype-padrão', async () => {
+    const calls: Array<{ body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          calls.push({ body: init?.body ? JSON.parse(String(init.body)) : undefined });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updatePicture({
+        groupId: GROUP_ID,
+        media: { kind: 'image', base64: 'ZmFrZS1pbWFnZS1ieXRlcw==' },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body).toEqual({
+      file: { mimetype: 'image/jpeg', filename: undefined, data: 'ZmFrZS1pbWFnZS1ieXRlcw==' },
+    });
   });
 
   it('parseWebhook normaliza "message.ack" do dossiê para MessageAckEvent', () => {

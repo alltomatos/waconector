@@ -158,6 +158,30 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'POST' && pathname === '/group/name') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Group Name set successfully' },
+      });
+    }
+
+    if (method === 'POST' && pathname === '/group/topic') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Group Topic set successfully' },
+      });
+    }
+
+    if (method === 'POST' && pathname === '/group/photo') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Group Photo set successfully', PictureID: 'contrato-picture-id' },
+      });
+    }
+
     throw new Error(`fetchStub (wuzapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -859,6 +883,163 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
     });
 
     expect(capturedActions).toEqual(['remove', 'promote', 'demote']);
+  });
+
+  it('groups.updateSubject envia { GroupJID, Name } para POST /group/name', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/name') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updateSubject({
+        groupId: '120363000000000000@g.us',
+        subject: 'Novo nome do grupo',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({
+      GroupJID: '120363000000000000@g.us',
+      Name: 'Novo nome do grupo',
+    });
+  });
+
+  it('groups.updateDescription envia { GroupJID, Topic } para POST /group/topic', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/topic') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updateDescription({
+        groupId: '120363000000000000@g.us',
+        description: 'Nova descrição do grupo',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({
+      GroupJID: '120363000000000000@g.us',
+      Topic: 'Nova descrição do grupo',
+    });
+  });
+
+  it('groups.updateDescription envia Topic vazio (string vazia limpa a descrição no servidor)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/topic') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updateDescription({ groupId: '120363000000000000@g.us', description: '' }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ GroupJID: '120363000000000000@g.us', Topic: '' });
+  });
+
+  it('groups.updatePicture (via media.url) repassa a URL como está em "Image", sem conversão', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/photo') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updatePicture({
+        groupId: '120363000000000000@g.us',
+        media: { kind: 'image', url: 'https://cdn.exemplo.test/foto-grupo.jpg' },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({
+      GroupJID: '120363000000000000@g.us',
+      Image: 'https://cdn.exemplo.test/foto-grupo.jpg',
+    });
+  });
+
+  it('groups.updatePicture (via media.base64 cru) monta data URI FORÇANDO image/jpeg (único formato aceito pelo servidor)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/photo') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    // mimeType 'image/png' é intencionalmente ignorado: o servidor só aceita JPEG de fato.
+    await expect(
+      wa.groups.updatePicture({
+        groupId: '120363000000000000@g.us',
+        media: { kind: 'image', base64: 'ZmFrZS1mb3RvLWdydXBv', mimeType: 'image/png' },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({
+      GroupJID: '120363000000000000@g.us',
+      Image: 'data:image/jpeg;base64,ZmFrZS1mb3RvLWdydXBv',
+    });
+  });
+
+  it('groups.updatePicture (via media.base64 já como data URI) extrai a porção base64 e remonta forçando image/jpeg', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/group/photo') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updatePicture({
+        groupId: '120363000000000000@g.us',
+        media: { kind: 'image', base64: 'data:image/png;base64,ZmFrZS1mb3RvLWdydXBv' },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({
+      GroupJID: '120363000000000000@g.us',
+      Image: 'data:image/jpeg;base64,ZmFrZS1mb3RvLWdydXBv',
+    });
   });
 
   it('envia o header "token" configurado em toda chamada', async () => {

@@ -109,7 +109,8 @@ dessa identidade.
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
 `messages.sendMedia`, `messages.sendReaction`, `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
-`groups.demoteParticipants`, `webhooks.parse`.
+`groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
+`groups.updatePicture`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada (ver justificativa acima).
 
@@ -212,9 +213,10 @@ demais adapters deste pacote).
 
 ## Grupos (núcleo)
 
-7 operações implementadas (ADR-0009): `groups.create`, `groups.getInfo`, `groups.list`,
+10 operações implementadas (ADR-0009): `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
-`groups.demoteParticipants`.
+`groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
+`groups.updatePicture`.
 
 | Operação canônica | Endpoint | Observações |
 | --- | --- | --- |
@@ -222,6 +224,35 @@ demais adapters deste pacote).
 | `groups.getInfo` | `GET /group/info` | `groupJID` vai na **query string** (`?groupJID=...`), **não** no corpo. Resposta (`data`) = `types.GroupInfo`: `{JID, OwnerJID, Name, Topic (=descrição), IsLocked, GroupCreated, Participants: [{JID, IsAdmin, IsSuperAdmin}]}`. |
 | `groups.list` | `GET /group/list` | Sem parâmetros. Resposta (`data`): `{Groups: [<mesmo shape de getGroupInfo>, ...]}`. |
 | `groups.addParticipants` / `removeParticipants` / `promoteParticipants` / `demoteParticipants` | `POST /group/updateparticipants` (tudo minúsculo) | **As 4 operações são o mesmo endpoint**, variando só `Action` (`"add"`\|`"remove"`\|`"promote"`\|`"demote"`). Body `{GroupJID, Phone: string[], Action}` — **atenção**: o campo se chama `Phone`, não `Participants`. Resposta: `{Details: "Group Participants updated successfully"}`, sem detalhe por participante (por isso o contrato retorna `Promise<void>` para as 4). |
+| `groups.updateSubject` | `POST /group/name` | Body `{GroupJID, Name}`. `Name` recebe `input.subject` (já validado não-vazio pelo conector). Resposta: `{Details: "Group Name set successfully"}` — `Promise<void>`. |
+| `groups.updateDescription` | `POST /group/topic` | Body `{GroupJID, Topic}`. `Topic` **vazio é permitido** — limpa a descrição do grupo (internamente o provider passa `previousID`/`newID` vazios ao whatsmeow); não é tratado como erro. Resposta: `{Details: "Group Topic set successfully"}` — `Promise<void>`. |
+| `groups.updatePicture` | `POST /group/photo` | Body `{GroupJID, Image}`. Ver subseção dedicada abaixo — **só aceita JPEG de fato**. Resposta: `{Details: "Group Photo set successfully", PictureID}` — `PictureID` é ignorado, `Promise<void>`. |
+
+### `groups.updatePicture` — só aceita JPEG de fato (requisito rígido confirmado no código-fonte)
+
+O handler de `POST /group/photo` confere tanto o prefixo `"data:image/"` quanto os **magic bytes
+reais** (`0xFF 0xD8 0xFF`, assinatura JPEG) e rejeita com 400 qualquer outro formato — inclusive se
+o prefixo textual disser `data:image/png` ou `data:image/webp`. Uma mensagem de erro do servidor
+(não relacionada a este check específico) sugere que png/gif/webp também seriam aceitos — **isso é
+enganoso**; confirmado lendo o código-fonte, não a prosa da mensagem de erro.
+
+Conversão de `MediaRef` feita pelo adapter (`toWuzapiGroupPhoto`):
+
+- **`media.base64` presente**: monta a data URI **forçando** `image/jpeg`
+  (`data:image/jpeg;base64,<...>`), **ignorando** `media.mimeType` caso informado — o adapter
+  assume/força que o payload já está codificado como JPEG, já que é a única coisa que o servidor
+  aceita de fato. Se `media.base64` já chegar como uma data URI completa (com qualquer mimetype no
+  prefixo, ex. `data:image/png;base64,...`), o adapter extrai só a porção após a vírgula antes de
+  remontar com o prefixo forçado — evita produzir uma string com dois cabeçalhos concatenados.
+  **Responsabilidade do chamador**: garantir que os bytes reais sejam JPEG; este pacote não
+  reencoda imagens client-side (ADR-0004, zero dependências de runtime).
+- **Só `media.url` presente (sem `media.base64`)**: repassada como está, sem nenhuma conversão —
+  não há como baixar/reencodar a imagem localmente. **Assunção não validada contra instância
+  real**: a pesquisa original confirma que `POST /group/photo` aceita uma data URI JPEG, mas **não
+  há confirmação de que este endpoint específico aceite uma URL `http(s)` crua** (diferente de
+  `messages.sendMedia`, cujo suporte a URL é confirmado). Se o servidor rejeitar URLs cruas neste
+  endpoint, o consumidor precisa fornecer `media.base64` em vez de `media.url` para
+  `groups.updatePicture`.
 
 ### ⚠️ Divergência confirmada: doc vs. código em `GET /group/info`
 

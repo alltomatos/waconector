@@ -151,6 +151,18 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { value: true });
     }
 
+    if (method === 'POST' && pathname === `${PREFIX}/update-group-name`) {
+      return jsonResponse(200, { value: true });
+    }
+
+    if (method === 'POST' && pathname === `${PREFIX}/update-group-description`) {
+      return jsonResponse(200, { value: true });
+    }
+
+    if (method === 'POST' && pathname === `${PREFIX}/update-group-photo`) {
+      return jsonResponse(200, { value: true });
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -857,5 +869,130 @@ describe('zapi adapter: comportamento específico do provider', () => {
     expect(requestedPath).toBe(`${PREFIX}/remove-admin`);
     expect(capturedBody?.groupId).toBe('120363019502650977-group');
     expect(capturedBody?.phones).toEqual(['5511999999999']);
+  });
+
+  it('groups.updateSubject envia {groupId, groupName} para POST /update-group-name', async () => {
+    let requestedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/update-group-name`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.updateSubject({
+      groupId: '120363019502650977-group',
+      subject: 'Novo nome do grupo',
+    });
+
+    expect(requestedPath).toBe(`${PREFIX}/update-group-name`);
+    expect(capturedBody?.groupId).toBe('120363019502650977-group');
+    expect(capturedBody?.groupName).toBe('Novo nome do grupo');
+    expect(result).toBeUndefined();
+  });
+
+  it('groups.updateDescription envia {groupId, groupDescription} para POST /update-group-description', async () => {
+    let requestedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/update-group-description`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.updateDescription({
+      groupId: '120363019502650977-group',
+      description: 'Nova descrição',
+    });
+
+    expect(requestedPath).toBe(`${PREFIX}/update-group-description`);
+    expect(capturedBody?.groupId).toBe('120363019502650977-group');
+    expect(capturedBody?.groupDescription).toBe('Nova descrição');
+  });
+
+  it('groups.updateDescription com description vazia envia groupDescription:"" (limpa a descrição, não é erro)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/update-group-description`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.updateDescription({
+      groupId: '120363019502650977-group',
+      description: '',
+    });
+
+    expect(capturedBody?.groupDescription).toBe('');
+    expect(result).toBeUndefined();
+  });
+
+  it('groups.updatePicture envia {groupId, groupPhoto} para POST /update-group-photo usando media.url diretamente', async () => {
+    let requestedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/update-group-photo`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.updatePicture({
+      groupId: '120363019502650977-group',
+      media: { kind: 'image', url: 'https://cdn.exemplo.test/foto-grupo.jpg' },
+    });
+
+    expect(requestedPath).toBe(`${PREFIX}/update-group-photo`);
+    expect(capturedBody?.groupId).toBe('120363019502650977-group');
+    expect(capturedBody?.groupPhoto).toBe('https://cdn.exemplo.test/foto-grupo.jpg');
+    expect(result).toBeUndefined();
+  });
+
+  it('groups.updatePicture monta data URI a partir de media.base64 sem prefixo "data:" (reaproveita resolveMediaValue de sendMedia)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/update-group-photo`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.updatePicture({
+      groupId: '120363019502650977-group',
+      media: { kind: 'image', base64: 'ZmFrZS1mb3RvLWdydXBv' },
+    });
+
+    expect(capturedBody?.groupPhoto).toBe('data:image/png;base64,ZmFrZS1mb3RvLWdydXBv');
   });
 });

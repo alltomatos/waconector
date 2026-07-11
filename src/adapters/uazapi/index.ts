@@ -19,12 +19,16 @@ import type {
   InstanceState,
   InstanceStatus,
   MediaKind,
+  MediaRef,
   MessageAck,
   MessageKind,
   SendMediaInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  UpdateGroupDescriptionInput,
+  UpdateGroupPictureInput,
+  UpdateGroupSubjectInput,
   WaMessage,
 } from '../../core/types';
 
@@ -78,6 +82,9 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'groups.removeParticipants',
   'groups.promoteParticipants',
   'groups.demoteParticipants',
+  'groups.updateSubject',
+  'groups.updateDescription',
+  'groups.updatePicture',
   'webhooks.parse',
 ];
 
@@ -114,6 +121,9 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     removeParticipants: (input) => updateGroupParticipants(http, input, 'remove'),
     promoteParticipants: (input) => updateGroupParticipants(http, input, 'promote'),
     demoteParticipants: (input) => updateGroupParticipants(http, input, 'demote'),
+    updateSubject: (input) => updateGroupSubject(http, input),
+    updateDescription: (input) => updateGroupDescription(http, input),
+    updatePicture: (input) => updateGroupPicture(http, input),
   };
 
   return {
@@ -409,6 +419,61 @@ async function updateGroupParticipants(
     participants: input.participants.map(toUazapiNumber),
   };
   await http.request({ method: 'POST', path: '/group/updateParticipants', body });
+}
+
+/**
+ * `POST /group/updateName`: body `{ groupjid, name }`. `name` é o limite do próprio WhatsApp
+ * (1-25 caracteres) — não validado por este adapter (ver docs/providers/uazapi.md#grupos-núcleo).
+ * Resposta (`{ response, group, needs_refresh }`) é ignorada: o contrato exige `Promise<void>`.
+ */
+async function updateGroupSubject(http: HttpClient, input: UpdateGroupSubjectInput): Promise<void> {
+  const body = { groupjid: toUazapiGroupJid(input.groupId), name: input.subject };
+  await http.request({ method: 'POST', path: '/group/updateName', body });
+}
+
+/**
+ * `POST /group/updateDescription`: body `{ groupjid, description }`. `description` vazia é
+ * permitida e limpa a descrição do grupo (já validado como caso válido pelo conector, não um erro
+ * — ver `prepareUpdateGroupDescription` em `src/core/connector.ts`). Limite documentado de 512
+ * caracteres, não validado por este adapter. Resposta ignorada (`Promise<void>`).
+ */
+async function updateGroupDescription(
+  http: HttpClient,
+  input: UpdateGroupDescriptionInput,
+): Promise<void> {
+  const body = { groupjid: toUazapiGroupJid(input.groupId), description: input.description };
+  await http.request({ method: 'POST', path: '/group/updateDescription', body });
+}
+
+/**
+ * `POST /group/updateImage`: body `{ groupjid, image }`. `image` aceita URL ou uma data-URI
+ * base64 (o literal `"remove"`/`"delete"` também é aceito pelo provider para apagar a foto, mas
+ * essa capability só cobre "definir" a foto — não usado aqui). Construído a partir de `MediaRef`
+ * via `toUazapiGroupImage`: `media.url` é repassada diretamente quando presente; caso contrário,
+ * `media.base64` é envolvida numa data-URI com o prefixo derivado de `media.mimeType` (fallback
+ * `image/jpeg`, já que o próprio WhatsApp exige JPEG para foto de grupo — resolução máxima 640x640,
+ * requisito do WhatsApp, não validado no código). Resposta ignorada (`Promise<void>`).
+ */
+async function updateGroupPicture(http: HttpClient, input: UpdateGroupPictureInput): Promise<void> {
+  const body = {
+    groupjid: toUazapiGroupJid(input.groupId),
+    image: toUazapiGroupImage(input.media),
+  };
+  await http.request({ method: 'POST', path: '/group/updateImage', body });
+}
+
+/**
+ * Converte `MediaRef` (garantido pelo conector com `kind === 'image'` e ao menos um de
+ * `url`/`base64` presente — ver `requireImageMedia` em `src/core/connector.ts`) para a string
+ * única esperada pelo campo `image` de `POST /group/updateImage`. `url` tem prioridade (mesmo
+ * padrão de `sendMedia`/`file`); sem `url`, monta uma data-URI a partir de `base64` com o prefixo
+ * `data:<mimeType>;base64,` — `mimeType` ausente cai em `image/jpeg` (default neutro, alinhado ao
+ * requisito de formato do próprio WhatsApp para foto de grupo).
+ */
+function toUazapiGroupImage(media: MediaRef): string {
+  if (media.url) return media.url;
+  const mimeType = media.mimeType ?? 'image/jpeg';
+  return `data:${mimeType};base64,${media.base64}`;
 }
 
 /**
