@@ -27,6 +27,10 @@ Leia [docs/CONTEXT.md](../../../docs/CONTEXT.md) e [docs/adr/](../../../docs/adr
 - Nunca abra PR direto de um branch de feature para `main`; sempre passe por `develop` primeiro.
 - Branch protection em si (exigir PR, bloquear push direto) é configurado pelo humano dono do
   repo em Settings → Branches no GitHub — não é algo que um agente deva configurar sozinho.
+- Todo merge em `main` dispara `.github/workflows/docs-sync.yml` (Claude Code Action): um agente
+  olha o diff e atualiza docs/ADRs/wiki quando necessário, commitando em `develop` (nunca em
+  `main`). Se você é o agente rodando dentro desse workflow: só edite o que o diff realmente tornou
+  desatualizado, nunca dê push em `main`, e não faça nada se nada precisar mudar.
 
 ## Adicionando um adapter de provider novo (dossiê primeiro)
 

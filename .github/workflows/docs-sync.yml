@@ -1,0 +1,70 @@
+name: Docs & Wiki Sync (pós-merge em main)
+
+# Dispara quando um PR fecha mesclado em main (ou seja, todo merge develop -> main).
+# Usa o Claude Code Action oficial (https://github.com/anthropics/claude-code-action) em modo
+# automação (prompt explícito): decide se docs/ADRs/wiki precisam de atualização por causa do
+# que mudou, e só edita o que genuinamente ficou desatualizado.
+#
+# Requer o secret ANTHROPIC_API_KEY (ou CLAUDE_CODE_OAUTH_TOKEN) — configure rodando
+# `/install-github-app` no `claude` CLI local, ou manualmente em Settings > Secrets and
+# variables > Actions. Ver CONTRIBUTING.md.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  docs-sync:
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - name: Clonar a wiki (repositório git separado) para o agente poder editar
+        run: |
+          git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki-repo
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          base_branch: develop
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR mesclado em main: #${{ github.event.pull_request.number }} ("${{ github.event.pull_request.title }}")
+
+            Você está com checkout completo (fetch-depth 0) do branch `develop`, logo após esse PR
+            ter sido mesclado em `main`. A wiki do repositório (é um git separado) está clonada em
+            ./wiki-repo (branch `master`).
+
+            1. Rode `git diff ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} --stat`
+               para ver exatamente o que mudou neste merge.
+            2. Decida se algo ficou desatualizado por causa dessa mudança:
+               - docs/CONTEXT.md (linguagem do domínio, princípios, roadmap)
+               - docs/adr/ (a mudança implica uma decisão de arquitetura nova/revisada que ainda
+                 não tem ADR?)
+               - docs/providers/*.md (mudou comportamento de um adapter já documentado?)
+               - README.md, CONTRIBUTING.md
+               - .claude/skills/waconector/*.md (SKILL.md, CONTRIBUTING-WORKFLOW.md, USAGE.md)
+               - as páginas em ./wiki-repo (Home.md, Getting-Started.md, Architecture.md,
+                 Provider-WAHA.md, Provider-Evolution-GO.md, Adding-a-New-Adapter.md, FAQ.md,
+                 Roadmap.md, _Sidebar.md)
+            3. Só edite o que genuinamente precisa mudar — não edite nada "por via das dúvidas".
+               Se nada precisar de atualização, não faça nenhum commit e termine sem erro.
+            4. Se algo do repositório principal mudou: `git add -A && git commit -m "docs: sincronizar após merge do PR #${{ github.event.pull_request.number }}" && git push origin develop`
+               (você já está no branch develop com checkout completo).
+            5. Se a wiki mudou: dentro de `./wiki-repo`, `git add -A && git commit -m "Sincronizar após merge do PR #${{ github.event.pull_request.number }}" && git push origin master`.
+
+            NUNCA dê push em main diretamente — main é protegido, só aceita merge via PR vindo de
+            develop (ver CONTRIBUTING.md e o job guard-main-source em ci.yml). Se você mesmo
+            precisar abrir uma mudança maior que não deveria ir direto para develop, pare e não
+            faça — esta automação é só para sincronização de documentação, não para mudanças de
+            código/funcionalidade.
+          claude_args: |
+            --allowedTools "Read,Write,Edit,Bash(git:*)"
