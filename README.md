@@ -9,8 +9,9 @@
 [![npm](https://img.shields.io/npm/v/waconector)](https://www.npmjs.com/package/waconector)
 
 **Status: em desenvolvimento (v0.x).** Core de contratos, conector, eventos canônicos, `MockAdapter`
-e suite de contrato prontos; adapters **WAHA**, **Evolution GO** (F1), **uazapi**, **Z-API** e
-**Wuzapi** (F2) implementados e verificados. A API pública pode mudar entre minors até a v1.0.
+e suite de contrato prontos; adapters **WAHA**, **Evolution GO** (F1), **uazapi**, **Z-API**,
+**Wuzapi** (F2) e **Whapi** (F3, capabilities núcleo) implementados e verificados. A API pública
+pode mudar entre minors até a v1.0.
 
 ## O problema
 
@@ -74,7 +75,7 @@ em memória. Use `simulateConnected()` para pular direto ao estado `connected`, 
 | Provider | Status | | Provider | Status |
 | --- | --- | --- | --- | --- |
 | WAHA | ✅ F1 | | Z-API | ✅ F2 |
-| Evolution GO | ✅ F1 | | Whapi | F3 (planejado) |
+| Evolution GO | ✅ F1 | | Whapi | ✅ F3 |
 | uazapi | ✅ F2 | | WPPConnect | F3 (planejado) |
 | Wuzapi | ✅ F2 | | QuePasa | F3 (planejado) |
 
