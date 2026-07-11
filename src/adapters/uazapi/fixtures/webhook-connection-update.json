@@ -1,0 +1,18 @@
+{
+  "event": "connection",
+  "instance": "minha-instancia",
+  "data": {
+    "instance": {
+      "id": "r183e2ef9597845",
+      "name": "minha-instancia",
+      "status": "connected",
+      "profileName": "Meu WhatsApp",
+      "currentTime": "2024-01-25T12:00:00.000Z"
+    },
+    "status": {
+      "connected": true,
+      "loggedIn": true,
+      "jid": { "user": "5511999999999", "agent": 0, "device": 0, "server": "s.whatsapp.net" }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "event": "messages_update",
+  "instance": "minha-instancia",
+  "data": {
+    "id": "r1a2b3c4",
+    "messageid": "3EB0538DA65A59F6D8A251",
+    "chatid": "5511999999999@s.whatsapp.net",
+    "fromMe": true,
+    "status": "Read",
+    "wasSentByApi": true
+  }
+}
