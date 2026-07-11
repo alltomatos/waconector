@@ -122,9 +122,20 @@ tratado como incremento futuro separado, não uma pendência desta Epic.
 
 ## Epic 4 — F3 do produto: profundidade e DX
 
-Estado: **todo**
+Estado: **in_progress**
 
-- [ ] Adapters: Whapi, Zapo, QuePasa
+- [x] Adapter Whapi.Cloud (SaaS) — dossiê (pesquisa em 3 frentes: auth/instância, mensagens,
+      webhooks), implementação das capabilities núcleo (`instance.connect/status/logout`,
+      `messages.sendText/sendMedia`, `webhooks.parse`), auditoria adversarial encontrou e corrigiu
+      1 bug real (legenda de mídia recebida via webhook — `image`/`video`/`document` — nunca
+      extraída para `WaMessage.text`, inconsistente com o adapter Z-API que já fazia isso
+      corretamente; o fixture de teste também mascarava o bug, mesmo padrão do bug histórico do QR
+      no Wuzapi). `messages.sendReaction`/`instance.pairingCode`/`groups.*`/`contacts.*`
+      confirmados suportados pelo provider mas deliberadamente adiados (fora do escopo desta fase).
+- [ ] Adapter QuePasa (self-hosted, Docker) — próximo
+- [ ] Adapter Zapo — **avaliado como possivelmente fora de escopo**: parece ser uma biblioteca
+      cliente, não uma API HTTP (observação do usuário) — precisa confirmação antes de decidir
+      definitivamente incluir/excluir
 - [ ] Site de docs com matriz de capabilities gerada do código
 - [ ] Exemplos de bot (Express/Next), `npx waconector doctor`
 

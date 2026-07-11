@@ -1,0 +1,18 @@
+{
+  "messages": [
+    {
+      "id": "YhNqCveDWW90_t8lzrW25w-wO4Twl0rVw",
+      "from_me": true,
+      "type": "text",
+      "chat_id": "919984351847@s.whatsapp.net",
+      "timestamp": 1712995377,
+      "source": "mobile",
+      "status": "sent",
+      "text": { "body": "Hey bro" },
+      "from": "61371989950",
+      "from_name": "Jonathan"
+    }
+  ],
+  "event": { "type": "messages", "event": "post" },
+  "channel_id": "MANTIS-M72HC"
+}
