@@ -103,10 +103,11 @@ um agente (Claude Code Action) olha o diff do PR mesclado e atualiza `docs/CONTE
 páginas da wiki quando genuinamente ficaram desatualizados — commitando direto em `develop` (nunca
 em `main`) ou na wiki. Se nada precisar mudar, não faz nenhum commit.
 
-Requer o secret `ANTHROPIC_API_KEY` (ou `CLAUDE_CODE_OAUTH_TOKEN`) no repositório — configure
-rodando `/install-github-app` no `claude` CLI local (guia a instalação do GitHub App e o secret
-automaticamente) ou manualmente em Settings → Secrets and variables → Actions. Sem o secret
-configurado, o job falha silenciosamente sem afetar o merge em si (não é um required check).
+Requer o secret `CLAUDE_CODE_OAUTH_TOKEN` no repositório (o mesmo usado por
+[`claude-code-review.yml`](.github/workflows/claude-code-review.yml)) — configurado via
+`/install-github-app` no `claude` CLI local, que instala o GitHub App e o secret
+automaticamente. Sem o secret configurado, o job falha sem afetar o merge em si (não é um
+required check).
 
 ## Commits e Pull Requests
 

@@ -5,9 +5,8 @@ name: Docs & Wiki Sync (pós-merge em main)
 # automação (prompt explícito): decide se docs/ADRs/wiki precisam de atualização por causa do
 # que mudou, e só edita o que genuinamente ficou desatualizado.
 #
-# Requer o secret ANTHROPIC_API_KEY (ou CLAUDE_CODE_OAUTH_TOKEN) — configure rodando
-# `/install-github-app` no `claude` CLI local, ou manualmente em Settings > Secrets and
-# variables > Actions. Ver CONTRIBUTING.md.
+# Requer o secret CLAUDE_CODE_OAUTH_TOKEN (configurado via `/install-github-app` no `claude` CLI
+# local — mesmo secret usado por claude-code-review.yml). Ver CONTRIBUTING.md.
 on:
   pull_request:
     types: [closed]
@@ -33,7 +32,7 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           base_branch: develop
           prompt: |
             REPO: ${{ github.repository }}
