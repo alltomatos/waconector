@@ -1,5 +1,163 @@
 # waconector
 
+## 0.3.0
+
+### Minor Changes
+
+- d80ef23: Nova capability `contacts.*` (ADR-0010) — descoberta + perfil: `wa.contacts.list`,
+  `wa.contacts.get`, `wa.contacts.checkExists`, `wa.contacts.getProfilePicture`,
+  `wa.contacts.getAbout`. Implementado em 4 dos 5 adapters existentes (WAHA, Evolution GO, Z-API,
+  Wuzapi) — **uazapi não declara `contacts.getAbout`**, por não expor nenhum endpoint/campo para o
+  recado pessoal de um contato em toda a sua documentação oficial (confirmado por busca exaustiva).
+
+  Diferente de `groupId`, o identificador de contato (`chatId`) não é opaco — é o mesmo chatId
+  canônico já usado por `messages.*`, normalizado da mesma forma. Nenhum adapter compõe múltiplas
+  chamadas HTTP atrás de uma única operação canônica: campos que o provider não devolve numa única
+  chamada (ex.: nome de exibição no Evolution GO/Wuzapi) ficam `undefined`, documentados no dossiê de
+  cada provider — nunca inventados nem obtidos via chamada adicional.
+
+  Moderação (`block`/`unblock`/`listBlocked`) fica para um PR seguinte; `getPresence` fica fora do
+  escopo por ser majoritariamente assíncrono/webhook (ver ADR-0010).
+
+- ad1e754: Capability `contacts.*` (ADR-0010) ganha as operações de moderação: `wa.contacts.block`,
+  `wa.contacts.unblock` e `wa.contacts.listBlocked`. Implementado nos 5 adapters existentes (WAHA,
+  Evolution GO, uazapi, Z-API, Wuzapi) — **WAHA e Z-API não declaram `contacts.listBlocked`**, por
+  não exporem nenhum endpoint de listagem de bloqueados em suas documentações oficiais (Z-API
+  distinguido conscientemente de `privacy/get-disallowed-contacts`, uma blacklist de privacidade
+  diferente da lista de contatos efetivamente bloqueados). `block`/`unblock` são suportados pelos 5.
+
+  Isso fecha as 8 operações request-response originalmente escopadas para `contacts.*` (descoberta,
+  perfil e moderação). `getPresence` segue fora do escopo — majoritariamente assíncrono/webhook em 4
+  dos 5 providers — tratado como incremento futuro separado (ver ADR-0010).
+
+- fa67322: Capability `groups.*` (ADR-0009) ganha as operações de configuração: `wa.groups.updateSubject`,
+  `wa.groups.updateDescription` (string vazia limpa a descrição) e `wa.groups.updatePicture`
+  (recebe um `MediaRef`, com `media.kind` obrigatoriamente `'image'`). Implementado nos 5 adapters
+  existentes (WAHA, Evolution GO, uazapi, Z-API, Wuzapi) — cada um convertendo o `MediaRef` para o
+  formato de imagem exigido pelo provider, que nem sempre coincide com o formato aceito por
+  `messages.sendMedia` no mesmo provider (ex.: Evolution GO/Wuzapi exigem data-URI com prefixo
+  explícito; Wuzapi só aceita JPEG de fato). Convites/saída (`getInviteLink`/`revokeInviteLink`/
+  `joinViaInviteLink`/`leaveGroup`) ficam para um PR seguinte (ver ADR-0009).
+- b203263: Nova capability `groups.*` (ADR-0009) — núcleo + participantes: `wa.groups.create`,
+  `wa.groups.getInfo`, `wa.groups.list`, `wa.groups.addParticipants`, `wa.groups.removeParticipants`,
+  `wa.groups.promoteParticipants`, `wa.groups.demoteParticipants`. Implementado nos 5 adapters
+  existentes (WAHA, Evolution GO, uazapi, Z-API, Wuzapi), cada um traduzindo `groupId` (identificador
+  opaco — a Z-API usa um ID sintético que não é um JID) e a lista de participantes para o formato
+  nativo do provider. Configurações de grupo (nome/descrição/foto) e convites/saída ficam para PRs
+  seguintes (ver ADR-0009).
+- 520f918: Capability `groups.*` (ADR-0009) ganha as operações de convite e saída: `wa.groups.getInviteLink`,
+  `wa.groups.revokeInviteLink`, `wa.groups.joinViaInviteLink` e `wa.groups.leaveGroup`. Implementado
+  nos 5 adapters existentes (WAHA, Evolution GO, uazapi, Z-API, Wuzapi).
+
+  O link de convite é sempre normalizado para o formato completo (`https://chat.whatsapp.com/<código>`),
+  mesmo quando o provider devolve só o código bare (ex.: WAHA) — via novas funções
+  `normalizeInviteLink`/`extractInviteCode` em `src/core/chat-id.ts`, reutilizáveis por qualquer
+  adapter. `joinViaInviteLink` aceita tanto o código bare quanto o link completo do chamador.
+
+  Isso fecha as 14 operações originalmente escopadas para `groups.*` (núcleo, participantes,
+  configurações, convites/saída). Webhooks de atualização de grupo (`GroupUpdateEvent`) seguem como
+  incremento separado (ver ADR-0009).
+
+- ee0760e: Webhooks de atualização de grupo (ADR-0009): `GroupUpdateEvent` (já existente, mas não usado) agora
+  é populado a partir de webhooks reais em 4 dos 5 adapters, respeitando o nível de confiança real da
+  pesquisa por provider:
+
+  - **WAHA**: `group.v2.participants`/`group.v2.update`/`group.v2.join`/`group.v2.leave` implementados
+    completos (payloads confirmados na doc oficial).
+  - **Evolution GO / Wuzapi**: evento de diff `GroupInfo` (reconstruído do código-fonte whatsmeow, sem
+    payload real capturado) — quando reporta múltiplas mudanças simultâneas, `parseWebhook` emite um
+    `GroupUpdateEvent` por mudança identificada; `JoinedGroup` também implementado.
+  - **Z-API**: só as 5 notificações de participante (`GROUP_PARTICIPANT_ADD/REMOVE/LEAVE/PROMOTE/
+DEMOTE`) — as demais (criação, mudança de nome/descrição/ícone, convite) não têm nenhum exemplo de
+    payload confirmado e continuam caindo no dispatch de mensagem comum.
+  - **uazapi**: nenhum parsing estruturado — não existe nenhum exemplo de payload de evento de grupo
+    em lugar nenhum da documentação oficial; eventos de grupo continuam caindo em `unknown` (padrão
+    seguro, não uma regressão).
+
+  `GroupUpdateEvent` ganhou o campo opcional `participants?: string[]`. Isso fecha as 14 operações +
+  webhooks originalmente escopados para `groups.*` no ADR-0009.
+
+- b79ab70: Novo adapter **QuePasa** (`waconector/quepasa`), F3: self-hosted via Docker
+  (`nocodeleaks/quepasa`, sobre `tulir/whatsmeow`). Capabilities: `instance.status`,
+  `instance.logout` (soft-stop — preserva credenciais, não é um logout de verdade),
+  `messages.sendText`, `messages.sendMedia`, `groups.getInviteLink`,
+  `contacts.getProfilePicture`, `webhooks.parse`
+  (`message.received`/`message.sent`/`message.ack`/`connection.update`/`group.update`).
+
+  Deliberadamente **fora do escopo** nesta fase, com justificativa detalhada em
+  `docs/providers/quepasa.md`:
+
+  - `instance.connect`/`instance.pairingCode` **não declaradas**: o endpoint de QR (`GET /scan`)
+    devolve uma imagem PNG binária crua (não JSON com base64, diferente de todo outro adapter deste
+    pacote) — o `HttpClient` atual decodifica respostas não-JSON como texto UTF-8, o que corrompe
+    bytes binários de forma irreversível. Corrigir isso de verdade exigiria um modo de resposta
+    binária/`ArrayBuffer` no core, fora do escopo desta fase.
+  - `messages.sendReaction`, `groups.*` (além de `getInviteLink`) e `contacts.*` (além de
+    `getProfilePicture`): o snapshot mais recente examinado tem uma API v5 completa para os três, mas
+    gated por sessão de usuário via JWT — incompatível com o token por instância que este adapter usa.
+    Não é ausência do recurso no provider, é incompatibilidade de modelo de autenticação — ver
+    `docs/providers/quepasa.md`.
+  - `messages.sendMedia` com `kind: 'sticker'` lança `INVALID_INPUT`: o QuePasa não tem tipo de
+    mensagem de figurinha (viraria um documento genérico, não uma figurinha de verdade).
+
+  O repositório oficial (`github.com/nocodeleaks/quepasa`) está bloqueado no GitHub por um aviso de
+  DMCA não relacionado a mensagens/webhooks (módulo de VoIP) — a pesquisa foi feita em três
+  forks/mirrors não bloqueados, com alta confiança de fidelidade ao código-fonte real. Todas as
+  fixtures de webhook são reconstruídas a partir das definições de struct Go confirmadas (nenhum
+  payload de tráfego real foi encontrado na pesquisa) — ver `docs/providers/quepasa.md` para o
+  detalhamento de confiança por seção.
+
+- f5594f7: `messages.sendReaction` implementado nos 5 adapters existentes (uazapi, Evolution GO, WAHA,
+  Z-API, Wuzapi) — retrofit previsto pelo ADR-0008 (que introduziu a capability opcional no core
+  sem alterar nenhum adapter). Cada adapter passa a declarar `messages.sendReaction` em seu
+  `CapabilitySet` e a implementar `MessagesApi.sendReaction`, traduzindo `SendReactionInput` para o
+  endpoint de reação nativo do provider; emoji vazio (`''`) remove uma reação já enviada, seguindo a
+  convenção do próprio WhatsApp. Dossiês atualizados em `docs/providers/*.md` e cobertura estendida
+  em `test/contract/*.contract.test.ts` (via o teste condicional já preparado em
+  `test/contract/adapter-contract.ts`).
+- 1d56a9a: Novo adapter **Whapi.Cloud** (`waconector/whapi`), F3: `instance.connect`, `instance.status`,
+  `instance.logout`, `messages.sendText`, `messages.sendMedia`, `webhooks.parse`
+  (`message.received`/`message.sent`/`message.ack`/`connection.update`). Ver
+  `docs/providers/whapi.md` para o dossiê completo, incluindo capabilities confirmadas mas ainda não
+  implementadas nesta fase (`messages.sendReaction`, `instance.pairingCode`, `groups.*`,
+  `contacts.*`).
+
+  Mensagens de mídia recebidas via webhook (`image`/`video`/`document`) agora normalizam a legenda
+  (`caption`) para `WaMessage.text`, alinhado ao comportamento já existente no adapter Z-API para o
+  mesmo caso.
+
+- a68e713: Novo adapter **WPPConnect Server** (`waconector/wppconnect`), F3: self-hosted via Docker
+  (`wppconnect-team/wppconnect-server`, wrapper REST sobre `@wppconnect-team/wppconnect`/Puppeteer).
+  Capabilities: `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`
+  (com suporte a `mentions` via `POST /send-mentioned`), `messages.sendMedia`,
+  `messages.sendReaction`, 13 operações de `groups.*` (create/getInfo/participantes/subject/
+  description/picture/invite links/join/leave), `contacts.checkExists`/`block`/`unblock`/
+  `listBlocked`, `webhooks.parse`
+  (`message.received`/`message.sent`/`message.ack`/`connection.update`/`group.update`).
+
+  Deliberadamente **fora do escopo** nesta fase, com justificativa detalhada em
+  `docs/providers/wppconnect.md`:
+
+  - `instance.pairingCode` **não declarada**: mesmo obstáculo estrutural de todo adapter deste
+    pacote — `InstanceApi.connect()` não recebe telefone como parâmetro, e o WPPConnect só produz
+    pairing code no momento de criação da sessão (`start-session` com `phone` no body).
+  - `groups.list`: único endpoint (`GET /all-groups`) marcado como deprecated pelo próprio provider,
+    sem shape de resposta confirmado.
+  - `contacts.list`/`get`/`getProfilePicture`/`getAbout`: endpoints existem, mas nenhum shape de
+    resposta foi confirmado pela pesquisa (só a transformação do lado do request).
+
+  Achados notáveis documentados no dossiê: o endpoint `POST /create-group` devolve `id`/`name`
+  aninhados em `groupInfo[0]`, com `id` sem o sufixo `@g.us` esperado pelo resto de `groups.*`
+  (corrigido no adapter, lendo o array aninhado e reconstruindo o JID); `POST /send-message` e os
+  endpoints de mídia (`/send-file-base64`, `/send-voice-base64`, `/send-sticker`) devolvem `response`
+  como um ARRAY de um elemento, não o objeto bare (corrigido no adapter, desembrulhando o array antes
+  de mapear `id`/`chatId`/`timestamp`); o campo `phone` de envio de mensagem exige a parte LOCAL do
+  JID (não o JID completo, que produziria um sufixo duplicado no servidor); e `instance.connect()`
+  com `waitQrCode: true` (padrão) pode travar até o timeout se chamado numa sessão nova sem cliente
+  registrado — reavaliado como um risco mais estreito que o inicialmente suposto (não afeta
+  reconexão de sessão já vista antes, ainda não confirmado empiricamente, ver
+  `WppconnectOptions.waitQrCode`).
+
 ## 0.2.0
 
 ### Minor Changes
