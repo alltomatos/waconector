@@ -1,0 +1,1098 @@
+import { describe, expect, it } from 'vitest';
+import { createConnector, isWaConnectorError } from '../../src';
+import { type WppconnectOptions, wppconnect } from '../../src/adapters/wppconnect';
+import ackFixture from '../../src/adapters/wppconnect/fixtures/webhook-ack.json';
+import groupParticipantsFixture from '../../src/adapters/wppconnect/fixtures/webhook-group-participants.json';
+import imageMessageFixture from '../../src/adapters/wppconnect/fixtures/webhook-message-image-received.json';
+import messageReceivedFixture from '../../src/adapters/wppconnect/fixtures/webhook-message-received.json';
+import qrcodeFixture from '../../src/adapters/wppconnect/fixtures/webhook-qrcode.json';
+import statusFindFixture from '../../src/adapters/wppconnect/fixtures/webhook-status-find.json';
+import { describeAdapterContract } from './adapter-contract';
+
+const BASE_URL = 'https://contrato.wppconnect.test';
+const SESSION = 'contrato-wppconnect';
+const TOKEN = 'wpp-token-de-teste-nao-real';
+const API_PREFIX = `/api/${SESSION}`;
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+function envelope(response: unknown): unknown {
+  return { status: 'success', response, mapper: 'return' };
+}
+
+/**
+ * Stub de `fetch` que roteia por (método, pathname) e devolve respostas fixas equivalentes às
+ * reais do WPPConnect Server — ver docs/providers/wppconnect.md — sem rede real, sem credenciais
+ * reais.
+ */
+function createFetchStub(): typeof globalThis.fetch {
+  return async (input, init) => {
+    const url = new URL(String(input));
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const pathname = url.pathname;
+    if (!pathname.startsWith(API_PREFIX)) {
+      throw new Error(`fetchStub (wppconnect): fora do prefixo esperado ${method} ${pathname}`);
+    }
+    const suffix = pathname.slice(API_PREFIX.length);
+
+    if (method === 'POST' && suffix === '/start-session') {
+      return jsonResponse(200, {
+        status: 'qrcode',
+        qrcode: 'ZmFrZS1xcmNvZGU=',
+        urlcode: '2@fakeurlcode,fakekey,fakeid==',
+        session: SESSION,
+      });
+    }
+
+    if (method === 'GET' && suffix === '/status-session') {
+      return jsonResponse(200, {
+        status: 'CONNECTED',
+        qrcode: null,
+        urlcode: null,
+        version: '2.10.0',
+      });
+    }
+
+    if (method === 'POST' && suffix === '/logout-session') {
+      return jsonResponse(200, { status: true, message: 'Session successfully closed' });
+    }
+
+    if (method === 'POST' && suffix === '/send-message') {
+      // O handler real (`sendMessage`) sempre reescreve `phone` para array (middleware
+      // `statusConnection`) e faz `results.push(await client.sendText(...))` num loop — `response`
+      // é sempre um ARRAY de um elemento, nunca o objeto bare (ver docs/providers/wppconnect.md).
+      return jsonResponse(
+        200,
+        envelope([
+          {
+            id: 'true_5511999999999@c.us_3EB0FAKECONTRATOTXT',
+            body: 'contrato: ping',
+            type: 'chat',
+            t: 1751000010,
+            timestamp: 1751000010,
+            from: `${SESSION}@c.us`,
+            to: '5511999999999@c.us',
+            chatId: '5511999999999@c.us',
+            fromMe: true,
+            ack: 1,
+          },
+        ]),
+      );
+    }
+
+    if (method === 'POST' && suffix === '/send-mentioned') {
+      return jsonResponse(
+        200,
+        envelope({
+          id: 'true_5511999999999@c.us_3EB0FAKECONTRATOMENTION',
+          chatId: '5511999999999@c.us',
+          timestamp: 1751000011,
+        }),
+      );
+    }
+
+    if (method === 'POST' && suffix === '/send-file-base64') {
+      // Mesmo padrão de array de um elemento que /send-message (ver comentário acima).
+      return jsonResponse(200, envelope([{ ack: 1, id: '3EB0FAKECONTRATOMEDIA' }]));
+    }
+
+    if (method === 'POST' && suffix === '/send-voice-base64') {
+      return jsonResponse(200, envelope([{ ack: 1, id: '3EB0FAKECONTRATOAUDIO' }]));
+    }
+
+    if (method === 'POST' && suffix === '/send-sticker') {
+      return jsonResponse(200, envelope([{ ack: 1, id: '3EB0FAKECONTRATOSTICKER' }]));
+    }
+
+    if (method === 'POST' && suffix === '/react-message') {
+      return jsonResponse(200, envelope({ message: 'Reaction sended' }));
+    }
+
+    if (method === 'POST' && suffix === '/create-group') {
+      // Shape real do controller: {message, group, groupInfo: [{name, id, participants}]} — id/
+      // name ficam ANINHADOS em groupInfo[0], não diretamente em response (ver dossiê).
+      return jsonResponse(
+        200,
+        envelope({
+          message: 'Group(s) created successfully',
+          group: 'Grupo de teste',
+          groupInfo: [
+            {
+              name: 'Grupo de teste',
+              // bare digits (sem @g.us) — comportamento confirmado do provider (ver dossiê).
+              id: '120363000000000099',
+              participants: ['5511999999999@c.us', '5511988887777@c.us'],
+            },
+          ],
+        }),
+      );
+    }
+
+    const groupInfoMatch = suffix.match(/^\/group-info\/(.+)$/);
+    if (method === 'GET' && groupInfoMatch) {
+      return jsonResponse(
+        200,
+        envelope({
+          id: decodeURIComponent(groupInfoMatch[1] ?? ''),
+          name: 'Grupo de teste',
+          subject: 'Grupo de teste (subject)',
+          description: 'Descrição do grupo',
+          participants: [
+            { id: '5511999999999@c.us', isAdmin: true },
+            { id: '5511988887777@c.us', isAdmin: false },
+          ],
+        }),
+      );
+    }
+
+    if (
+      method === 'POST' &&
+      (suffix === '/add-participant-group' ||
+        suffix === '/remove-participant-group' ||
+        suffix === '/promote-participant-group' ||
+        suffix === '/demote-participant-group')
+    ) {
+      return jsonResponse(200, envelope({ message: 'ok' }));
+    }
+
+    if (method === 'POST' && suffix === '/group-subject') {
+      return jsonResponse(200, envelope({ message: 'ok' }));
+    }
+
+    if (method === 'POST' && suffix === '/group-description') {
+      return jsonResponse(200, envelope({ message: 'ok' }));
+    }
+
+    if (method === 'POST' && suffix === '/group-pic') {
+      return jsonResponse(200, envelope({ message: 'ok' }));
+    }
+
+    const inviteLinkMatch = suffix.match(/^\/group-invite-link\/(.+)$/);
+    if (method === 'GET' && inviteLinkMatch) {
+      // resposta = string direta dentro de "response" (um dos dois shapes defensivos aceitos).
+      return jsonResponse(200, envelope('https://chat.whatsapp.com/CONTRATOCODIGO'));
+    }
+
+    const revokeLinkMatch = suffix.match(/^\/group-revoke-link\/(.+)$/);
+    if (method === 'GET' && revokeLinkMatch) {
+      // resposta = objeto com chave "link" (o outro shape defensivo aceito).
+      return jsonResponse(200, envelope({ link: 'https://chat.whatsapp.com/CONTRATONOVOCODIGO' }));
+    }
+
+    if (method === 'POST' && suffix === '/join-code') {
+      return jsonResponse(200, envelope({ message: 'ok' }));
+    }
+
+    if (method === 'POST' && suffix === '/leave-group') {
+      return jsonResponse(200, envelope({ message: 'ok' }));
+    }
+
+    const checkNumberMatch = suffix.match(/^\/check-number-status\/(.+)$/);
+    if (method === 'GET' && checkNumberMatch) {
+      const phone = decodeURIComponent(checkNumberMatch[1] ?? '');
+      return jsonResponse(
+        200,
+        envelope({
+          numberExists: true,
+          id: { server: 'c.us', user: phone, _serialized: `${phone}@c.us` },
+        }),
+      );
+    }
+
+    if (method === 'POST' && suffix === '/block-contact') {
+      return jsonResponse(200, envelope({ message: 'ok' }));
+    }
+
+    if (method === 'POST' && suffix === '/unblock-contact') {
+      return jsonResponse(200, envelope({ message: 'ok' }));
+    }
+
+    if (method === 'GET' && suffix === '/blocklist') {
+      return jsonResponse(200, envelope([{ phone: '5511988887777' }]));
+    }
+
+    throw new Error(`fetchStub (wppconnect): rota não configurada ${method} ${pathname}`);
+  };
+}
+
+function buildAdapterOptions(overrides: Partial<WppconnectOptions> = {}): WppconnectOptions {
+  return {
+    baseUrl: BASE_URL,
+    session: SESSION,
+    token: TOKEN,
+    fetch: createFetchStub(),
+    ...overrides,
+  };
+}
+
+describeAdapterContract({
+  name: 'wppconnect',
+  create() {
+    const adapter = wppconnect(buildAdapterOptions());
+    return {
+      adapter,
+      ready: async () => {
+        await adapter.instance.connect();
+      },
+      webhooks: {
+        messageReceived: { body: messageReceivedFixture },
+      },
+      recipient: '5511999999999',
+    };
+  },
+});
+
+describe('wppconnect adapter: comportamento específico do provider', () => {
+  it('instance.connect chama POST /start-session com waitQrCode:true por padrão e extrai qr quando status é "qrcode"', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/start-session`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const result = await adapter.instance.connect();
+
+    expect(capturedBody?.waitQrCode).toBe(true);
+    expect(result.qr).toBe('ZmFrZS1xcmNvZGU=');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('instance.connect envia "webhook" no body quando configurado', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        webhook: 'https://meuapp.exemplo.test/webhook',
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/start-session`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    await adapter.instance.connect();
+    expect(capturedBody?.webhook).toBe('https://meuapp.exemplo.test/webhook');
+  });
+
+  it('instance.connect com waitQrCode:false ainda funciona e não exige status "qrcode" para não lançar', async () => {
+    const adapter = wppconnect(buildAdapterOptions({ waitQrCode: false }));
+    const result = await adapter.instance.connect();
+    // o stub sempre devolve status "qrcode" independente do body enviado — o importante aqui é
+    // confirmar que connect() não lança e sempre carrega "raw", mesmo com waitQrCode:false.
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('instance.connect deixa "qr" undefined quando a resposta não tem status "qrcode" (ex.: sessão já conectada)', async () => {
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/start-session`) {
+            return jsonResponse(200, { status: 'CONNECTED', qrcode: null });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const result = await adapter.instance.connect();
+    expect(result.qr).toBeUndefined();
+    expect(result).toHaveProperty('raw');
+  });
+
+  it.each([
+    [null, 'disconnected'],
+    ['CLOSED', 'disconnected'],
+    ['INITIALIZING', 'connecting'],
+    ['QRCODE', 'qr'],
+    ['PHONECODE', 'qr'],
+    ['CONNECTED', 'connected'],
+    ['ALGO_NAO_MAPEADO', 'unknown'],
+  ] as const)('instance.status mapeia status=%s para "%s"', async (status, expected) => {
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/status-session`) {
+            return jsonResponse(200, { status, qrcode: null, urlcode: null });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const result = await adapter.instance.status();
+    expect(result.state).toBe(expected);
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('instance.status mapeia campo "status" ausente para "unknown" (nunca lança)', async () => {
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/status-session`) {
+            return jsonResponse(200, {});
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const result = await adapter.instance.status();
+    expect(result.state).toBe('unknown');
+  });
+
+  it('instance.logout chama POST /logout-session sem lançar', async () => {
+    const calls: string[] = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    await expect(adapter.instance.logout()).resolves.toBeUndefined();
+    expect(calls).toContain(`POST ${API_PREFIX}/logout-session`);
+  });
+
+  it('messages.sendText envia phone (sem sufixo JID), isGroup/isNewsletter/isLid e mapeia id/chatId/timestamp', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-message`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendText({ to: '5511999999999', text: 'contrato: ping' });
+
+    expect(capturedBody?.phone).toBe('5511999999999');
+    expect(capturedBody?.isGroup).toBe(false);
+    expect(capturedBody?.isNewsletter).toBe(false);
+    expect(capturedBody?.isLid).toBe(false);
+    expect(capturedBody?.message).toBe('contrato: ping');
+    expect(sent.id).toBe('true_5511999999999@c.us_3EB0FAKECONTRATOTXT');
+    expect(sent.chatId).toBe('5511999999999@c.us');
+    expect(sent.timestamp).toBe(1751000010 * 1000);
+  });
+
+  it('regressão: messages.sendText desembrulha o array de um elemento que /send-message realmente devolve (não cai no fallback "wppconnect-<timestamp>")', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendText({ to: '5511999999999', text: 'contrato: ping' });
+
+    // Se o adapter voltar a tratar `response` como objeto bare (em vez de array de um elemento),
+    // asRecord() descarta o array e id/chatId caem no fallback fabricado — esta asserção falharia.
+    expect(sent.id).not.toMatch(/^wppconnect-\d+$/);
+    expect(sent.id).toBe('true_5511999999999@c.us_3EB0FAKECONTRATOTXT');
+    expect(sent.chatId).toBe('5511999999999@c.us');
+  });
+
+  it('messages.sendText extrai a parte local do JID e marca isGroup:true para chatId de grupo (evita sufixo duplicado no servidor)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-message`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendText({ to: '120363000000000000@g.us', text: 'oi grupo' });
+
+    expect(capturedBody?.phone).toBe('120363000000000000');
+    expect(capturedBody?.isGroup).toBe(true);
+  });
+
+  it('messages.sendText inclui options.quotedMsg quando quotedId é informado', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-message`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendText({
+      to: '5511999999999',
+      text: 'resposta',
+      quotedId: '3EB0ORIGINAL',
+    });
+
+    expect(capturedBody?.options).toEqual({ quotedMsg: '3EB0ORIGINAL' });
+  });
+
+  it('messages.sendText com mentions chama POST /send-mentioned com mentioned normalizado para JID', async () => {
+    let capturedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-mentioned`) {
+            capturedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendText({
+      to: '5511999999999',
+      text: 'oi @fulano',
+      mentions: ['+55 11 98888-7777', '5511977776666@c.us'],
+    });
+
+    expect(capturedPath).toBe(`${API_PREFIX}/send-mentioned`);
+    expect(capturedBody?.mentioned).toEqual(['5511988887777@c.us', '5511977776666@c.us']);
+  });
+
+  it('messages.sendMedia (image) envia via /send-file-base64 no campo "base64", com caption', async () => {
+    let capturedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-file-base64`) {
+            capturedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendMedia({
+      to: '5511999999999',
+      media: { kind: 'image', url: 'https://cdn.exemplo.test/foto.jpg' },
+      caption: 'legenda',
+    });
+
+    expect(capturedPath).toBe(`${API_PREFIX}/send-file-base64`);
+    expect(capturedBody?.base64).toBe('https://cdn.exemplo.test/foto.jpg');
+    expect(capturedBody?.caption).toBe('legenda');
+    // regressão: /send-file-base64 devolve um array de um elemento ([{ack,id}]), não o objeto
+    // bare — se o adapter voltar a tratar `response` como bare, id cai no fallback fabricado.
+    expect(sent.id).not.toMatch(/^wppconnect-\d+$/);
+    expect(sent.id).toBe('3EB0FAKECONTRATOMEDIA');
+    expect(sent.chatId).toBe('5511999999999');
+    // {ack,id} não carrega timestamp — fica undefined, nunca inventado.
+    expect(sent.timestamp).toBeUndefined();
+  });
+
+  it('messages.sendMedia (audio) envia via /send-voice-base64, sem caption', async () => {
+    let capturedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-voice-base64`) {
+            capturedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendMedia({
+      to: '5511999999999',
+      media: { kind: 'audio', base64: 'ZmFrZS1hdWRpbw==', mimeType: 'audio/ogg' },
+      caption: 'não deveria ir (áudio não suporta legenda)',
+    });
+
+    expect(capturedPath).toBe(`${API_PREFIX}/send-voice-base64`);
+    expect(capturedBody?.base64).toBe('data:audio/ogg;base64,ZmFrZS1hdWRpbw==');
+    expect(capturedBody?.caption).toBeUndefined();
+  });
+
+  it('messages.sendMedia (sticker) envia via /send-sticker no campo "path" (não "base64")', async () => {
+    let capturedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-sticker`) {
+            capturedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendMedia({
+      to: '5511999999999',
+      media: { kind: 'sticker', url: 'https://cdn.exemplo.test/figurinha.webp' },
+    });
+
+    expect(capturedPath).toBe(`${API_PREFIX}/send-sticker`);
+    expect(capturedBody?.path).toBe('https://cdn.exemplo.test/figurinha.webp');
+    expect(capturedBody?.base64).toBeUndefined();
+  });
+
+  it('messages.sendMedia (document) inclui "filename" quando presente', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-file-base64`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendMedia({
+      to: '5511999999999',
+      media: {
+        kind: 'document',
+        url: 'https://cdn.exemplo.test/contrato.pdf',
+        filename: 'contrato.pdf',
+      },
+    });
+
+    expect(capturedBody?.filename).toBe('contrato.pdf');
+  });
+
+  it('sendMedia sem media.url nem media.base64 lança INVALID_INPUT', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+
+    const failure = await wa.messages
+      .sendMedia({ to: '5511999999999', media: { kind: 'image' } })
+      .catch((error: unknown) => error);
+
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.code).toBe('INVALID_INPUT');
+    }
+  });
+
+  it('messages.sendReaction envia { msgId, reaction } e ecoa messageId/to no SentMessage (resposta do provider é fixa, sem id próprio)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/react-message`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendReaction({
+      to: '5511999999999',
+      messageId: 'contrato-msg-1',
+      emoji: '👍',
+    });
+
+    expect(capturedBody?.msgId).toBe('contrato-msg-1');
+    expect(capturedBody?.reaction).toBe('👍');
+    expect(sent.id).toBe('contrato-msg-1');
+    expect(sent.chatId).toBe('5511999999999');
+  });
+
+  it('messages.sendReaction traduz emoji vazio para o literal booleano "false" (sentinela de remoção da lib)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/react-message`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendReaction({ to: '5511999999999', messageId: 'contrato-msg-1', emoji: '' });
+
+    expect(capturedBody?.reaction).toBe(false);
+  });
+
+  it('envia o header Authorization Bearer configurado em toda chamada e redige o token de erros', async () => {
+    const calls: Headers[] = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        token: 'super-secret-wpp-token',
+        fetch: async (input, init) => {
+          calls.push(new Headers(init?.headers));
+          if (new URL(String(input)).pathname === `${API_PREFIX}/status-session`) {
+            return jsonResponse(401, {
+              status: 'error',
+              error: 'bad token super-secret-wpp-token',
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+
+    const failure = await adapter.instance.status().catch((error: unknown) => error);
+    expect(calls[0]?.get('authorization')).toBe('Bearer super-secret-wpp-token');
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.message).not.toContain('super-secret-wpp-token');
+      expect(failure.message).toContain('***');
+    }
+  });
+
+  it('groups.create reconstrói o JID completo (@g.us) quando a resposta devolve só os dígitos crus', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({
+      subject: 'Grupo de teste',
+      participants: ['5511999999999', '5511988887777'],
+    });
+
+    expect(group.id).toBe('120363000000000099@g.us');
+    expect(group.subject).toBe('Grupo de teste');
+    expect(group.participants).toEqual([
+      { id: '5511999999999', isAdmin: false, isSuperAdmin: false },
+      { id: '5511988887777', isAdmin: false, isSuperAdmin: false },
+    ]);
+    expect(group).toHaveProperty('raw');
+  });
+
+  it('regressão: groups.create lê "id"/"name" de dentro de groupInfo[0] (aninhado), não diretamente da raiz de "response"', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({
+      subject: 'Grupo de teste',
+      participants: ['5511999999999'],
+    });
+
+    // Se o adapter voltar a ler `response.id`/`response.name` direto (em vez de
+    // `response.groupInfo[0].id`/`.name`), id fica '' (toWppconnectGroupId(undefined) === '') e
+    // subject cai no fallback do input — esta asserção capturaria essa regressão.
+    expect(group.id).not.toBe('');
+    expect(group.id).toBe('120363000000000099@g.us');
+  });
+
+  it('groups.getInfo prioriza "name" sobre "subject" e mapeia participants (isSuperAdmin sempre false, não confirmado)', async () => {
+    let capturedPath: string | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.startsWith(`${API_PREFIX}/group-info/`)) {
+            capturedPath = url.pathname;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const group = await wa.groups.getInfo('120363000000000000@g.us');
+
+    expect(capturedPath).toBe(`${API_PREFIX}/group-info/120363000000000000%40g.us`);
+    expect(group.id).toBe('120363000000000000@g.us');
+    expect(group.subject).toBe('Grupo de teste');
+    expect(group.description).toBe('Descrição do grupo');
+    expect(group.participants).toEqual([
+      { id: '5511999999999@c.us', isAdmin: true, isSuperAdmin: false },
+      { id: '5511988887777@c.us', isAdmin: false, isSuperAdmin: false },
+    ]);
+  });
+
+  it('groups.addParticipants chama o endpoint uma vez POR PARTICIPANTE (batch não confirmado)', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/add-participant-group`) {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.addParticipants({
+      groupId: '120363000000000000@g.us',
+      participants: ['5511988887777', '5511977776666'],
+    });
+
+    expect(capturedBodies).toEqual([
+      { groupId: '120363000000000000@g.us', phone: '5511988887777' },
+      { groupId: '120363000000000000@g.us', phone: '5511977776666' },
+    ]);
+  });
+
+  it('groups.removeParticipants/promoteParticipants/demoteParticipants usam os endpoints corretos', async () => {
+    const hitPaths: string[] = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('-participant-group')) {
+            hitPaths.push(url.pathname);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.removeParticipants({
+      groupId: '120363000000000000@g.us',
+      participants: ['5511988887777'],
+    });
+    await wa.groups.promoteParticipants({
+      groupId: '120363000000000000@g.us',
+      participants: ['5511988887777'],
+    });
+    await wa.groups.demoteParticipants({
+      groupId: '120363000000000000@g.us',
+      participants: ['5511988887777'],
+    });
+
+    expect(hitPaths).toEqual([
+      `${API_PREFIX}/remove-participant-group`,
+      `${API_PREFIX}/promote-participant-group`,
+      `${API_PREFIX}/demote-participant-group`,
+    ]);
+  });
+
+  it('groups.updateSubject envia { groupId, title } (campo "title", não "subject"/"name")', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/group-subject`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.updateSubject({ groupId: '120363000000000000@g.us', subject: 'Novo nome' });
+
+    expect(capturedBody).toEqual({ groupId: '120363000000000000@g.us', title: 'Novo nome' });
+  });
+
+  it('groups.updateDescription envia { groupId, description }', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/group-description`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.updateDescription({
+      groupId: '120363000000000000@g.us',
+      description: 'Nova descrição',
+    });
+
+    expect(capturedBody).toEqual({
+      groupId: '120363000000000000@g.us',
+      description: 'Nova descrição',
+    });
+  });
+
+  it('groups.updatePicture envia { groupId, path } (campo "path", mesmo tratamento do sticker)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/group-pic`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.updatePicture({
+      groupId: '120363000000000000@g.us',
+      media: { kind: 'image', url: 'https://cdn.exemplo.test/foto-grupo.jpg' },
+    });
+
+    expect(capturedBody).toEqual({
+      groupId: '120363000000000000@g.us',
+      path: 'https://cdn.exemplo.test/foto-grupo.jpg',
+    });
+  });
+
+  it('groups.getInviteLink extrai a URL quando "response" é uma string direta', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const result = await wa.groups.getInviteLink('120363000000000000@g.us');
+
+    expect(result.link).toBe('https://chat.whatsapp.com/CONTRATOCODIGO');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('groups.revokeInviteLink extrai a URL quando "response" é um objeto com chave "link"', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const result = await wa.groups.revokeInviteLink('120363000000000000@g.us');
+
+    expect(result.link).toBe('https://chat.whatsapp.com/CONTRATONOVOCODIGO');
+  });
+
+  it('groups.joinViaInviteLink envia o LINK COMPLETO em "inviteCode" (endpoint confirmado aceitar ambos os formatos)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/join-code`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.joinViaInviteLink({ invite: 'CONTRATO_CODIGO_CONVITE' });
+
+    expect(capturedBody).toEqual({
+      inviteCode: 'https://chat.whatsapp.com/CONTRATO_CODIGO_CONVITE',
+    });
+  });
+
+  it('groups.leaveGroup envia { groupId }', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/leave-group`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.groups.leaveGroup('120363000000000000@g.us')).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ groupId: '120363000000000000@g.us' });
+  });
+
+  it('contacts.checkExists mapeia numberExists->exists e id._serialized->chatId', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists('5511999999999');
+
+    expect(result.exists).toBe(true);
+    expect(result.chatId).toBe('5511999999999@c.us');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('contacts.block envia { phone } para /block-contact e ignora a resposta', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/block-contact`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.contacts.block('5511988887777')).resolves.toBeUndefined();
+    expect(capturedBody).toEqual({ phone: '5511988887777' });
+  });
+
+  it('contacts.unblock envia { phone } para /unblock-contact e ignora a resposta', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/unblock-contact`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.contacts.unblock('5511988887777')).resolves.toBeUndefined();
+    expect(capturedBody).toEqual({ phone: '5511988887777' });
+  });
+
+  it('contacts.listBlocked mapeia data[].phone -> array de chatIds (bare digits, sem sufixo JID)', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const blocked = await wa.contacts.listBlocked();
+
+    expect(blocked).toEqual(['5511988887777']);
+  });
+
+  it('parseWebhook normaliza "onmessage" (texto) para message.received', () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: messageReceivedFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('message.received');
+    if (event?.type === 'message.received') {
+      expect(event.provider).toBe('wppconnect');
+      expect(event.instanceId).toBe('minha-sessao');
+      expect(event.message.id).toBe('true_5511999999999@c.us_3EB0FAKE000000000WPP1');
+      expect(event.message.chatId).toBe('5511999999999@c.us');
+      expect(event.message.kind).toBe('text');
+      expect(event.message.text).toBe('Ola, tudo bem?');
+      expect(event.message.fromMe).toBe(false);
+      expect(event.message.timestamp).toBe(1751000000 * 1000);
+    }
+  });
+
+  it('parseWebhook normaliza "onmessage" (imagem) com caption em "text" e mimeType em "media", sem url (não confirmado)', () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: imageMessageFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('message.received');
+    if (event?.type === 'message.received') {
+      expect(event.message.kind).toBe('image');
+      expect(event.message.text).toBe('Legenda da foto');
+      expect(event.message.media).toEqual({ kind: 'image', mimeType: 'image/jpeg' });
+    }
+  });
+
+  it('parseWebhook normaliza "onack" extraindo id._serialized e mapeando ack numérico (3 -> read)', () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: ackFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('message.ack');
+    if (event?.type === 'message.ack') {
+      expect(event.messageId).toBe('true_5511999999999@c.us_3EB0FAKE000000000WPP1');
+      expect(event.chatId).toBe('5511999999999@c.us');
+      expect(event.ack).toBe('read');
+    }
+  });
+
+  it('parseWebhook normaliza "qrcode" para connection.update com qr SEM prefixo data URI', () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: qrcodeFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('connection.update');
+    if (event?.type === 'connection.update') {
+      expect(event.state).toBe('qr');
+      expect(event.qr).toBe('iVBORw0KGgoAAAANSUhEUgAAAfakeQrBase64Payload==');
+      expect(event.instanceId).toBe('minha-sessao');
+    }
+  });
+
+  it('parseWebhook normaliza "status-find" (inChat) para connection.update "connected"', () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: statusFindFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('connection.update');
+    if (event?.type === 'connection.update') {
+      expect(event.state).toBe('connected');
+    }
+  });
+
+  it('parseWebhook normaliza "onparticipantschanged" (operation=add) para group.update com action "participants.add"', () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: groupParticipantsFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('group.update');
+    if (event?.type === 'group.update') {
+      expect(event.groupId).toBe('120363000000000000@g.us');
+      expect(event.action).toBe('participants.add');
+      expect(event.participants).toEqual(['5511988887777@c.us']);
+      expect(event.provider).toBe('wppconnect');
+      expect(event.instanceId).toBe('minha-sessao');
+    }
+  });
+
+  it('parseWebhook reconhece "onpresencechanged" mas cai em "unknown" (sem equivalente canônico)', () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: { event: 'onpresencechanged', session: 'minha-sessao', id: '5511999999999@c.us' },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('unknown');
+    if (events[0]?.type === 'unknown') {
+      expect(events[0].reason).toContain('onpresencechanged');
+    }
+  });
+
+  it('parseWebhook reconhece "onreactionmessage" mas cai em "unknown" (sem shape confirmado)', () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: { event: 'onreactionmessage', session: 'minha-sessao' },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('unknown');
+  });
+
+  it('parseWebhook nunca lança para payload desconhecido ou quebrado (vira "unknown")', () => {
+    const adapter = wppconnect(buildAdapterOptions());
+
+    expect(() => adapter.parseWebhook({ body: null })).not.toThrow();
+    expect(() => adapter.parseWebhook({ body: 'string-solta' })).not.toThrow();
+    expect(() => adapter.parseWebhook({ body: { session: 'minha-sessao' } })).not.toThrow();
+    expect(() =>
+      adapter.parseWebhook({ body: { event: 'algo-nao-mapeado', session: 'x' } }),
+    ).not.toThrow();
+
+    const events = adapter.parseWebhook({ body: { formato: 'desconhecido' } });
+    expect(events.every((event) => event.type === 'unknown')).toBe(true);
+  });
+});

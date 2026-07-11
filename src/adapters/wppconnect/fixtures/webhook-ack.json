@@ -1,0 +1,18 @@
+{
+  "event": "onack",
+  "session": "minha-sessao",
+  "id": {
+    "server": "c.us",
+    "user": "5511999999999",
+    "_serialized": "true_5511999999999@c.us_3EB0FAKE000000000WPP1",
+    "fromMe": true,
+    "remote": "5511999999999@c.us"
+  },
+  "body": "",
+  "type": "",
+  "t": 1751000005,
+  "from": "5511888888888@c.us",
+  "to": "5511999999999@c.us",
+  "self": "out",
+  "ack": 3
+}

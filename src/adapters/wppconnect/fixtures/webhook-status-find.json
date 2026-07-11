@@ -1,0 +1,5 @@
+{
+  "event": "status-find",
+  "session": "minha-sessao",
+  "status": "inChat"
+}

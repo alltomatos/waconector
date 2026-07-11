@@ -1,0 +1,6 @@
+{
+  "event": "qrcode",
+  "session": "minha-sessao",
+  "qrcode": "iVBORw0KGgoAAAANSUhEUgAAAfakeQrBase64Payload==",
+  "urlcode": "2@fakeUrlCode,fakeKeyPortion,fakeIdentityKey=="
+}

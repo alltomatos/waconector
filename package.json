@@ -118,6 +118,16 @@
         "default": "./dist/adapters/quepasa/index.cjs"
       }
     },
+    "./wppconnect": {
+      "import": {
+        "types": "./dist/adapters/wppconnect/index.d.ts",
+        "default": "./dist/adapters/wppconnect/index.js"
+      },
+      "require": {
+        "types": "./dist/adapters/wppconnect/index.d.cts",
+        "default": "./dist/adapters/wppconnect/index.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.cjs",

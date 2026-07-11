@@ -11,6 +11,7 @@ export default defineConfig({
     'adapters/wuzapi/index': 'src/adapters/wuzapi/index.ts',
     'adapters/whapi/index': 'src/adapters/whapi/index.ts',
     'adapters/quepasa/index': 'src/adapters/quepasa/index.ts',
+    'adapters/wppconnect/index': 'src/adapters/wppconnect/index.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,

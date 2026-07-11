@@ -1,0 +1,21 @@
+{
+  "event": "onmessage",
+  "session": "minha-sessao",
+  "id": "true_5511999999999@c.us_3EB0FAKE000000000WPP1",
+  "type": "chat",
+  "subtype": "",
+  "body": "Ola, tudo bem?",
+  "t": 1751000000,
+  "timestamp": 1751000000,
+  "from": "5511999999999@c.us",
+  "to": "5511888888888@c.us",
+  "author": "5511999999999@c.us",
+  "chatId": "5511999999999@c.us",
+  "fromMe": false,
+  "isGroupMsg": false,
+  "ack": 0,
+  "sender": {
+    "id": "5511999999999@c.us",
+    "pushname": "Fulano de Tal"
+  }
+}
