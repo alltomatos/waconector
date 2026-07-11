@@ -80,6 +80,14 @@ usa exclusivamente o fluxo de QR code.
 `reply/quote` e `reactions` entraram no core nesta fase; ver `docs/CONTEXT.md`). Suportado: ver
 seção "Reações" abaixo e a entrada correspondente na tabela de "Operações core".
 
+## Capabilities adicionais: `groups.*` (retrofit F2, ADR-0009)
+
+As 7 capabilities de `GroupsApi` (`groups.create`, `groups.getInfo`, `groups.list`,
+`groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
+`groups.demoteParticipants`) foram adicionadas a este adapter num retrofit posterior à F1
+(ADR-0009 — núcleo + participantes de grupo entraram no core nesta fase; ver `docs/CONTEXT.md`).
+Suportado: ver seção "Grupos (núcleo)" abaixo.
+
 ## Operações core
 
 | Operação canônica | Endpoint | Observações |
@@ -151,6 +159,48 @@ Chatting") e na página dedicada "Adding Emoji Reactions to Messages" da doc (`w
   adição — `messages.sendReaction` cobre só o envio; `parseWahaWebhook` continua sem mapear
   `event: "message.reaction"` (webhook de reação recebida cai em `unknown`, como já documentado na
   seção "Webhooks" abaixo).
+
+## Grupos (núcleo)
+
+Suporte completo às 7 operações de `GroupsApi` (ADR-0009), confirmado no `openapi.json` oficial
+(tag "📁 Groups"). Todas as 7 capabilities (`groups.create`, `groups.getInfo`, `groups.list`,
+`groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
+`groups.demoteParticipants`) são declaradas por este adapter.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `groups.create` | `POST /api/{session}/groups` | Body: `{ name, participants: [{ id }] }` — cada participante é um **objeto** `{ id }`, não uma string crua. Resposta `201` **sem schema declarado** na doc oficial (gap do próprio WAHA) — quando a resposta não ecoa `subject`/`participants`, o adapter cai de volta para os valores de entrada (mesmo padrão de `mapSentMessage`: `chatId ?? requestedNumber`). Sem fallback possível para `id` (não existe antes da criação); se a resposta não trouxer `id`, o adapter gera um placeholder `waha-group-<timestamp>`. |
+| `groups.getInfo` | `GET /api/{session}/groups/{id}` | `{id}` é o `groupId` convertido para `<dígitos>@g.us` (ver abaixo). Resposta (schema `GroupInfo`, **inferido** por cross-reference com o webhook `group.v2.join`, mesma forma): `{ id, subject, description, invite, membersCanAddNewMember, membersCanSendMessages, newMembersApprovalRequired, participants: [{ id, pn?, role }] }`. **Não tem campo `owner`/dono explícito** — `GroupInfo.owner` fica sempre `undefined` para este provider. |
+| `groups.list` | `GET /api/{session}/groups` | Query params opcionais existem (`sortBy`/`sortOrder`/`limit`/`offset`/`exclude`) mas não são obrigatórios — o adapter chama sem nenhum. Resposta documentada genericamente como `object` ("depende da engine") — o adapter trata o corpo como array e mapeia cada item no mesmo shape de `getGroupInfo`; se a resposta não vier como array, devolve lista vazia. |
+| `groups.addParticipants` | `POST /api/{session}/groups/{id}/participants/add` | Body: `{ participants: [{ id }] }` (mesmo formato objeto de `create`). |
+| `groups.removeParticipants` | `POST /api/{session}/groups/{id}/participants/remove` | Mesmo body shape. |
+| `groups.promoteParticipants` | `POST /api/{session}/groups/{id}/admin/promote` | Mesmo body shape. **Rota é `/admin/promote`, não `/participants/promote`** — desvio de nomenclatura confirmado na doc oficial. |
+| `groups.demoteParticipants` | `POST /api/{session}/groups/{id}/admin/demote` | Mesmo body shape. Rota é `/admin/demote`, mesmo padrão de `promote`. |
+
+### Mapeamento de `groupId` (path `{id}`)
+
+`GroupInfo.id` é um identificador **opaco** (ADR-0009): o conector **não** normaliza `groupId` com
+`normalizeChatId` (diferente do `to` de mensagens), porque outros providers (Z-API) usam um ID
+sintético sem `@` que seria corrompido por essa normalização. Para o WAHA especificamente, o
+formato nativo de grupo é um JID **`<dígitos>@g.us`** — o mesmo domínio `@g.us` já reconhecido por
+`toWahaChatId` para `chatId` de mensagem. Ainda assim, o adapter usa uma função dedicada
+(`toWahaGroupId`), não `toWahaChatId`: `toWahaChatId` assume `@c.us` como domínio padrão para
+entradas sem `@`, o que produziria `<dígitos>@c.us` (incorreto) para um grupo. `toWahaGroupId`
+passa a entrada intacta se já tiver `@`, senão acrescenta `@g.us`.
+
+### Mapeamento de participantes
+
+- **Na requisição** (`create`, `addParticipants`, `removeParticipants`, `promoteParticipants`,
+  `demoteParticipants`): participantes individuais, ao contrário do `groupId`, **já chegam
+  normalizados pelo conector** (telefone vira só-dígitos, JID passa intacto) — mesma convenção de
+  um `to` de mensagem comum. O adapter reaproveita `toWahaChatId` (já usado por
+  `sendText`/`sendMedia`/`sendReaction`) para cada participante, e envolve o resultado no formato
+  objeto `{ id }` que os 5 endpoints de grupo esperam (`toWahaParticipants`).
+- **Na resposta** (`getInfo`/`list`): cada participante pode vir como `@lid` (formato de privacidade
+  introduzido pelo WhatsApp) na propriedade `id`, com o formato "real" `@c.us` disponível
+  separadamente em `pn`. O adapter prefere `pn` quando presente, caindo para `id` apenas quando
+  `pn` está ausente. `role` (`'left' | 'participant' | 'admin' | 'superadmin'`) mapeia para
+  `GroupParticipant.isAdmin` (`'admin'` ou `'superadmin'`) e `isSuperAdmin` (`'superadmin'`).
 
 ## Webhooks
 

@@ -49,6 +49,14 @@ await wa.messages.sendMedia({
 if (wa.supports('messages.sendReaction')) {
   await wa.messages.sendReaction({ to: '5585999999999', messageId: 'ABC123', emoji: '👍' });
 }
+
+// Opcional (ADR-0009) — grupos: núcleo + participantes. groupId é opaco (não é
+// necessariamente um JID — a Z-API, por exemplo, usa um ID sintético próprio).
+if (wa.supports('groups.create')) {
+  const group = await wa.groups.create({ subject: 'Equipe', participants: ['5585999999999'] });
+  await wa.groups.addParticipants({ groupId: group.id, participants: ['5585988888888'] });
+  await wa.groups.promoteParticipants({ groupId: group.id, participants: ['5585988888888'] });
+}
 ```
 
 **3. Receber, em qualquer framework HTTP**

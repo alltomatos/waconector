@@ -114,3 +114,39 @@ export interface SendReactionInput {
   /** Emoji da reação (ex.: `'👍'`). String vazia remove uma reação já enviada. */
   emoji: string;
 }
+
+/** Participante de um grupo, normalizado. Ver ADR-0009. */
+export interface GroupParticipant {
+  /** Telefone E.164 sem `+` ou JID explícito — mesma convenção de chatId de mensagem. */
+  id: string;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+}
+
+/**
+ * Grupo normalizado. `id` é um identificador OPACO do grupo (ver ADR-0009): a maioria dos
+ * providers usa JID (`...@g.us`), mas a Z-API usa um ID sintético sem `@` — por isso `id` nunca
+ * passa por `normalizeChatId` no conector, diferente do `to` de mensagens.
+ */
+export interface GroupInfo {
+  id: string;
+  subject: string;
+  /** Nem todo provider retorna descrição/dono no payload de metadados do grupo. */
+  description?: string;
+  owner?: string;
+  participants: GroupParticipant[];
+  raw: unknown;
+}
+
+export interface CreateGroupInput {
+  subject: string;
+  /** Telefones E.164 (com ou sem `+`/pontuação) ou JIDs explícitos dos participantes iniciais. */
+  participants: string[];
+}
+
+export interface GroupParticipantsInput {
+  /** ID opaco do grupo — ver `GroupInfo.id`. */
+  groupId: string;
+  /** Telefones E.164 (com ou sem `+`/pontuação) ou JIDs explícitos dos participantes-alvo. */
+  participants: string[];
+}

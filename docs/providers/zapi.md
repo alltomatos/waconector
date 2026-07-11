@@ -70,7 +70,9 @@ presa permanentemente a um número). Não há conceito de "sessão" separado do 
 ## Capabilities implementadas nesta fase (F2)
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
-`messages.sendMedia`, `messages.sendReaction`, `webhooks.parse`.
+`messages.sendMedia`, `messages.sendReaction`, `groups.create`, `groups.getInfo`, `groups.list`,
+`groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
+`groups.demoteParticipants`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada: embora a Z-API suporte pareamento por código
 (`GET /phone-code/{phone}`), `InstanceApi.connect()` não recebe telefone como parâmetro nesta
@@ -146,6 +148,51 @@ especificar se esse ID de grupo inclui o sufixo `@g.us`. Decisão do adapter (`t
 explícitos passam intactos; qualquer outra entrada é filtrada para dígitos puros como camada
 defensiva (o conector já entrega o formato certo, mas o adapter pode ser instanciado diretamente,
 sem `createConnector`).
+
+## Grupos (núcleo)
+
+Fonte primária: `developer.z-api.io/group/*` (páginas `create-group`, `group-metadata`,
+`get-all-groups`, `add-participant`, `remove-participant`, `add-admin`, `remove-admin`).
+
+### Nota crítica: `groupId` NÃO é um JID
+
+O identificador de grupo da Z-API é um **ID sintético sem `@`** — não é um JID no formato
+`...@g.us` usado por outros providers (WAHA, Evolution GO, uazapi). Dois formatos observados:
+
+- **Atual (desde 2021-11-04)**: `"{idNumerico}-group"` (ex.: `"120363019502650977-group"`).
+- **Legado**: `"{telefoneCriador}-{timestampUnix}"` (grupos criados antes da mudança acima).
+
+Como `GroupInfo.id`/`GroupParticipantsInput.groupId` são opacos por contrato (ver ADR-0009), o
+conector **não** roda `groupId` por `normalizeChatId` antes de entregá-lo ao adapter. Este adapter
+mantém essa opacidade internamente: `groupId` é sempre repassado **verbatim**, no path (`getInfo`)
+ou no corpo (`addParticipants`/`removeParticipants`/`promoteParticipants`/`demoteParticipants`) —
+**nunca** passado por `toZapiPhone`/`digitsOnly`, que corromperiam o sufixo `-group` ou os
+hífens do formato legado. Participantes individuais (dentro de `participants: string[]`), ao
+contrário, já chegam normalizados pelo conector (telefone → dígitos, JID passa intacto) e se
+comportam como um `to` de mensagem comum — por isso reaproveitam `toZapiPhone`.
+
+### Operações
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `groups.create` | `POST /create-group` | Body `{ autoInvite, groupName, phones }`; `autoInvite: false` é o default seguro adotado pelo adapter (comportamento de `true` não documentado em detalhe, e `CreateGroupInput` não expõe esse flag). `phones` reaproveita `toZapiPhone` sobre cada participante de entrada. **Resposta não ecoa nome nem participantes**: `{ phone, phonesNotAdded, invitationLink }` — `phone` é o novo ID do grupo. `GroupInfo.subject`/`participants` são montados com fallback nos valores de entrada (mesmo padrão de `mapSentMessage`). |
+| `groups.getInfo` | `GET /group-metadata/{groupId}` | `groupId` no **path**, verbatim. Resposta: `{ phone, description, owner, subject, creation (epoch ms), invitationLink, participants: [{ phone, isAdmin, isSuperAdmin, short?, name? }] }`. Mapeamento direto: `id←phone` (fallback: `groupId` requisitado), `subject←subject` (fallback `''`), `description←description`, `owner←owner`, cada participante `{ id←phone, isAdmin, isSuperAdmin }` (`short`/`name` não expostos por `GroupParticipant` nesta fase). |
+| `groups.list` | `GET /groups` | Exige paginação (`page`, `pageSize`) como query params — `GroupsApi.list()` não expõe paginação no contrato canônico, então o adapter usa um default fixo (`page=1, pageSize=100`). **Limitação documentada**: a resposta é uma lista de objetos LEVES (`{ isGroup: true, name, phone }`), sem `description`/`owner`/`participants` — por isso todo `GroupInfo` desta lista vem com `participants: []`. Para os participantes de um grupo específico, use `groups.getInfo`. |
+| `groups.addParticipants` | `POST /add-participant` | **Singular** — não `/add-participants` (desvio de nome confirmado na pesquisa). Body `{ autoInvite, groupId, phones }`; `groupId` no **corpo**, verbatim. Retorna `void` (contrato não pede o grupo atualizado de volta). |
+| `groups.removeParticipants` | `POST /remove-participant` | Singular, mesmo desvio de nome. Body `{ groupId, phones }` (sem `autoInvite`, que não se aplica a remoção). |
+| `groups.promoteParticipants` | `POST /add-admin` | Nome do endpoint **não** é `/promote-participant(s)` — desvio de nome confirmado na pesquisa. Body `{ groupId, phones }`. |
+| `groups.demoteParticipants` | `POST /remove-admin` | Nome do endpoint **não** é `/demote-participant(s)` — desvio de nome confirmado na pesquisa. Body `{ groupId, phones }`. |
+
+### Limitações e assunções não confirmadas contra uma instância real
+
+- Nenhuma chamada real foi feita contra `api.z-api.io/.../group/*` durante a pesquisa (sem
+  credenciais) — os shapes de resposta acima vêm da documentação oficial, não de uma instância
+  viva.
+- `groups.list` devolve `participants: []` para todo item por limitação do endpoint `GET /groups`
+  (não do adapter) — ver tabela acima.
+- Webhooks de eventos de grupo (criação, entrada/saída de participante, mudança de admin) **não**
+  são mapeados nesta fase — `parseWebhook` continua sem um `type` dedicado para eles; qualquer
+  payload desse tipo cai em `unknown` (nunca lança).
 
 ## Webhooks
 

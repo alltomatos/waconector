@@ -1,8 +1,10 @@
-import type { InstanceApi, MessagesApi, WaAdapter, WebhookInput } from '../core/adapter';
+import type { GroupsApi, InstanceApi, MessagesApi, WaAdapter, WebhookInput } from '../core/adapter';
 import { CAPABILITIES, type CapabilitySet } from '../core/capabilities';
 import { WaConnectorError } from '../core/errors';
 import type { CanonicalEvent } from '../core/events';
 import {
+  type GroupInfo,
+  type GroupParticipant,
   INSTANCE_STATES,
   type InstanceState,
   MESSAGE_ACKS,
@@ -36,9 +38,12 @@ export class MockAdapter implements WaAdapter {
   readonly outbox: MockOutboxEntry[] = [];
   readonly instance: InstanceApi;
   readonly messages: MessagesApi;
+  readonly groups: GroupsApi;
 
   private state: InstanceState;
   private seq = 0;
+  private groupSeq = 0;
+  private readonly groupsById = new Map<string, GroupInfo>();
 
   constructor(options: MockAdapterOptions = {}) {
     this.provider = options.provider ?? 'mock';
@@ -60,6 +65,55 @@ export class MockAdapter implements WaAdapter {
       sendText: async (input) => this.deliver(input),
       sendMedia: async (input) => this.deliver(input),
       sendReaction: async (input) => this.deliver(input),
+    };
+
+    this.groups = {
+      create: async (input) => {
+        this.assertConnected();
+        const group: GroupInfo = {
+          id: `mock-group-${++this.groupSeq}`,
+          subject: input.subject,
+          participants: input.participants.map((id) => ({
+            id,
+            isAdmin: false,
+            isSuperAdmin: false,
+          })),
+          raw: { mock: true, input },
+        };
+        this.groupsById.set(group.id, group);
+        return group;
+      },
+      getInfo: async (groupId) => this.requireGroup(groupId),
+      list: async () => Array.from(this.groupsById.values()),
+      addParticipants: async ({ groupId, participants }) => {
+        this.assertConnected();
+        const group = this.requireGroup(groupId);
+        const existingIds = new Set(group.participants.map((participant) => participant.id));
+        const added: GroupParticipant[] = participants
+          .filter((id) => !existingIds.has(id))
+          .map((id) => ({ id, isAdmin: false, isSuperAdmin: false }));
+        this.groupsById.set(groupId, {
+          ...group,
+          participants: [...group.participants, ...added],
+        });
+      },
+      removeParticipants: async ({ groupId, participants }) => {
+        this.assertConnected();
+        const group = this.requireGroup(groupId);
+        const removed = new Set(participants);
+        this.groupsById.set(groupId, {
+          ...group,
+          participants: group.participants.filter((participant) => !removed.has(participant.id)),
+        });
+      },
+      promoteParticipants: async ({ groupId, participants }) => {
+        this.assertConnected();
+        this.setAdminFlag(groupId, participants, true);
+      },
+      demoteParticipants: async ({ groupId, participants }) => {
+        this.assertConnected();
+        this.setAdminFlag(groupId, participants, false);
+      },
     };
   }
 
@@ -177,13 +231,7 @@ export class MockAdapter implements WaAdapter {
   }
 
   private deliver(input: SendTextInput | SendMediaInput | SendReactionInput): SentMessage {
-    if (this.state !== 'connected') {
-      throw new WaConnectorError(
-        'INSTANCE_DISCONNECTED',
-        'MockAdapter: instância não conectada (use simulateConnected()).',
-        { provider: this.provider },
-      );
-    }
+    this.assertConnected();
     const message: SentMessage = {
       id: `mock-${++this.seq}`,
       chatId: input.to,
@@ -192,6 +240,39 @@ export class MockAdapter implements WaAdapter {
     };
     this.outbox.push({ input, message });
     return message;
+  }
+
+  private assertConnected(): void {
+    if (this.state !== 'connected') {
+      throw new WaConnectorError(
+        'INSTANCE_DISCONNECTED',
+        'MockAdapter: instância não conectada (use simulateConnected()).',
+        { provider: this.provider },
+      );
+    }
+  }
+
+  private requireGroup(groupId: string): GroupInfo {
+    const group = this.groupsById.get(groupId);
+    if (!group) {
+      throw new WaConnectorError('PROVIDER_ERROR', `MockAdapter: grupo "${groupId}" não existe.`, {
+        provider: this.provider,
+      });
+    }
+    return group;
+  }
+
+  private setAdminFlag(groupId: string, participants: string[], isAdmin: boolean): void {
+    const group = this.requireGroup(groupId);
+    const targets = new Set(participants);
+    this.groupsById.set(groupId, {
+      ...group,
+      participants: group.participants.map((participant) =>
+        targets.has(participant.id)
+          ? { ...participant, isAdmin, isSuperAdmin: isAdmin ? participant.isSuperAdmin : false }
+          : participant,
+      ),
+    });
   }
 
   private unknown(input: WebhookInput, reason: string): CanonicalEvent {

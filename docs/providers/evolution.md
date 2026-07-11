@@ -78,6 +78,10 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 | `messages.sendText` | `POST /send/text` | Campo `number` aceita dígitos crus (`"5511999999999"`, sem `+`/`@`) OU JID completo (`...@s.whatsapp.net`, `...@g.us`) já formado — **compatível 1:1 com o `chatId` canônico do waconector** (`normalizeChatId`), então o adapter repassa sem transformação. `formatJid` (default `true`) normaliza dígitos crus no servidor. |
 | `messages.sendMedia` | `POST /send/media` | Duas variantes no mesmo endpoint, escolhidas pelo `Content-Type`: JSON (`{number, type, url, caption?, filename?, ...}`) ou `multipart/form-data` (campo binário `file`). **Este adapter implementa a variante JSON** — o `HttpClient` compartilhado sempre serializa o corpo como JSON, não há suporte a `multipart/form-data` nele. O campo `url` da variante JSON é overloaded pelo servidor (`pkg/sendMessage/handler/send_handler.go`): quando o valor não começa com `http://`/`https://`, é tratado como base64 e decodificado (`base64.StdEncoding.DecodeString`) antes do envio — então o adapter envia `media.base64` no mesmo campo `url` quando `media.url` está ausente. Lança `WaConnectorError('INVALID_INPUT', ...)` apenas quando nem `url` nem `base64` são informados. |
 | `messages.sendReaction` | `POST /message/react` | Ver seção "Reações" abaixo. |
+| `groups.create` | `POST /group/create` | Ver seção "Grupos (núcleo)" abaixo. |
+| `groups.getInfo` | `POST /group/info` | Ver seção "Grupos (núcleo)" abaixo. |
+| `groups.list` | `GET /group/list` | Ver seção "Grupos (núcleo)" abaixo. |
+| `groups.addParticipants` / `groups.removeParticipants` / `groups.promoteParticipants` / `groups.demoteParticipants` | `POST /group/participant` | Mesmo endpoint para as 4 operações; só o campo `action` muda. Ver seção "Grupos (núcleo)" abaixo. |
 
 ## Reações
 
@@ -111,6 +115,67 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 - Funciona tanto para reagir a mensagens recebidas quanto enviadas pela própria instância (via
   `fromMe`), em chats individuais e em grupos (via `participant`) — nenhuma limitação direcional
   documentada pelo provider em si; as limitações acima são do adapter, não da API.
+
+## Grupos (núcleo)
+
+As 7 operações de `groups.*` (ver ADR-0009) são suportadas por este adapter. **Nenhuma das 4
+operações de participantes (`add`/`remove`/`promote`/`demote`) nem `POST /group/create` aparece
+na documentação oficial do site (`docs.evolutionfoundation.com.br`)** — foram confirmadas apenas
+lendo o código-fonte Go (`pkg/group/handler` + `pkg/group/service`). `getGroupInfo`/`listGroups`
+seguem o mesmo padrão de já-verificado-no-código usado no resto deste dossiê. Tratamos como alta
+confiança mesmo assim (fonte primária: o código do provider), mas sem uma captura "ao vivo" —
+diferente das fixtures de webhook de mensagem/ack/conexão, copiadas literalmente do site.
+
+### `groups.create` — `POST /group/create`
+
+- Corpo: `{groupName: string, participants: string[]}`. **Atenção de nomenclatura**: o campo é
+  `groupName`, **não** `name` — diverge do padrão do resto do provider (que costuma usar
+  `name`/`number` para os campos principais). `participants` aceita dígitos crus ou JID completo
+  (mesmo formato do campo `number` de `/send/text`), e já chega normalizado pelo conector.
+- Resposta: `{"message":"success","data":{"jid":"...","name":"...","owner":"...","added":
+  ["..."],"failed":["..."]}}` — um envelope de `data` **diferente** do whatsmeow `GroupInfo` usado
+  por `getGroupInfo`/`listGroups` (chaves minúsculas aqui: `jid`/`name`/`owner`; capitalizadas lá:
+  `JID`/`Name`/`OwnerJID`). Não há lista detalhada de participantes (com `isAdmin`/`isSuperAdmin`)
+  na resposta de criação — o adapter constrói `GroupInfo.participants` a partir do array `added`
+  (todos entram como `isAdmin:false`, já que acabaram de ser adicionados), com fallback para a
+  lista de entrada (`input.participants`) caso `added` venha vazio (mesmo padrão de fallback já
+  usado em `toSentMessage`, ex.: `chatId ?? requestedNumber`).
+
+### `groups.getInfo` — `POST /group/info`
+
+- **POST mesmo sendo uma operação de leitura** — mesmo padrão do provider para as demais rotas de
+  grupo (nenhuma delas usa `GET` exceto `list`).
+- Corpo: `{groupJid: string}`. `groupJid` aqui é o `groupId` opaco do waconector (ver ADR-0009):
+  neste provider, `GroupInfo.id` já É o JID do whatsmeow (`...@g.us`, às vezes na forma legada
+  `<criador>-<timestamp>@g.us`), então nenhuma conversão é necessária — diferente da Z-API, que
+  usa um ID sintético sem `@`.
+- Resposta: `data` é o struct `GroupInfo` do whatsmeow, serializado verbatim (sem json tags,
+  chaves capitalizadas — mesmo padrão de `GET /instance/status`):
+  `{JID, OwnerJID, Name, Topic (= descrição), IsLocked, GroupCreated, Participants: [{JID,
+  PhoneNumber, LID, IsAdmin, IsSuperAdmin, DisplayName, Error, AddRequest}], ...}`. O adapter mapeia
+  `JID→id`, `Name→subject`, `Topic→description`, `OwnerJID→owner`, e cada item de `Participants`
+  para `GroupParticipant` (`JID→id`, com fallback defensivo em `PhoneNumber`; `IsAdmin`/
+  `IsSuperAdmin` direto).
+
+### `groups.list` — `GET /group/list`
+
+- Sem corpo. Resposta: `{"message":"success","data": GroupInfo[]}` — um array do mesmo shape
+  whatsmeow de `getGroupInfo`, um item por grupo. O adapter reaproveita o mesmo mapeamento
+  (`JID`/`Name`/`Topic`/`OwnerJID`/`Participants`) item a item.
+
+### `groups.addParticipants` / `groups.removeParticipants` / `groups.promoteParticipants` / `groups.demoteParticipants` — `POST /group/participant`
+
+- **Endpoint único compartilhado pelas 4 operações**: corpo `{groupJid: string, participants:
+  string[], action: "add"|"remove"|"promote"|"demote"}` — só o campo `action` muda entre elas. O
+  adapter implementa as 4 como wrappers finos sobre uma função interna (`updateGroupParticipants`)
+  parametrizada por `action`.
+- `participants`: dígitos crus ou JID completo, mesmo formato de `number`/`groupId` — já chegam
+  normalizados pelo conector (comportam-se como um `to` de mensagem comum, diferente de
+  `groupJid`, que é o identificador opaco de grupo).
+- Resposta: `{"message":"success"}` — **sem detalhe por participante** (o provider descarta essa
+  informação internamente; não é uma limitação deste adapter). As 4 operações canônicas retornam
+  `Promise<void>` (não precisam devolver o grupo atualizado), então o adapter só dispara a chamada
+  e não extrai nada da resposta além de deixar o `HttpClient` lançar em caso de erro HTTP.
 
 ## Webhooks
 

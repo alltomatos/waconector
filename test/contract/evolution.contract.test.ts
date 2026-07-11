@@ -87,6 +87,64 @@ function createFetchStub(): typeof globalThis.fetch {
     if (method === 'DELETE' && url.pathname === '/instance/logout') {
       return jsonResponse(200, { message: 'success' });
     }
+    if (method === 'POST' && url.pathname === '/group/create') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          jid: '123456789-987654321@g.us',
+          name: 'Grupo de teste',
+          owner: '5511999999999@s.whatsapp.net',
+          added: ['5511988887777@s.whatsapp.net', '5511977776666@s.whatsapp.net'],
+          failed: [],
+        },
+      });
+    }
+    if (method === 'POST' && url.pathname === '/group/info') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          JID: '123456789-987654321@g.us',
+          OwnerJID: '5511999999999@s.whatsapp.net',
+          Name: 'Grupo de teste',
+          Topic: 'Descrição do grupo de teste',
+          IsLocked: false,
+          GroupCreated: '2026-07-10T12:00:00-03:00',
+          Participants: [
+            {
+              JID: '5511999999999@s.whatsapp.net',
+              PhoneNumber: '5511999999999',
+              IsAdmin: true,
+              IsSuperAdmin: true,
+            },
+            {
+              JID: '5511988887777@s.whatsapp.net',
+              PhoneNumber: '5511988887777',
+              IsAdmin: false,
+              IsSuperAdmin: false,
+            },
+          ],
+        },
+      });
+    }
+    if (method === 'GET' && url.pathname === '/group/list') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: [
+          {
+            JID: '123456789-987654321@g.us',
+            OwnerJID: '5511999999999@s.whatsapp.net',
+            Name: 'Grupo de teste',
+            Topic: 'Descrição do grupo de teste',
+            Participants: [
+              { JID: '5511999999999@s.whatsapp.net', IsAdmin: true, IsSuperAdmin: true },
+            ],
+          },
+        ],
+      });
+    }
+    if (method === 'POST' && url.pathname === '/group/participant') {
+      return jsonResponse(200, { message: 'success' });
+    }
 
     throw new Error(`fetchStub (evolution): rota não configurada ${method} ${url.pathname}`);
   };
@@ -287,6 +345,149 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
     });
 
     expect(capturedBody?.reaction).toBe('remove');
+  });
+
+  it('groups.create envia POST /group/create com {groupName, participants} e mapeia GroupInfo a partir de "added"', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/create') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const group = await wa.groups.create({
+      subject: 'Grupo de teste',
+      participants: ['5511988887777', '5511977776666@s.whatsapp.net'],
+    });
+
+    // campo é "groupName", não "name" — desvio de nomenclatura confirmado na pesquisa.
+    expect(capturedBody).toEqual({
+      groupName: 'Grupo de teste',
+      participants: ['5511988887777', '5511977776666@s.whatsapp.net'],
+    });
+
+    expect(group.id).toBe('123456789-987654321@g.us');
+    expect(group.subject).toBe('Grupo de teste');
+    expect(group.owner).toBe('5511999999999@s.whatsapp.net');
+    expect(group.participants).toEqual([
+      { id: '5511988887777@s.whatsapp.net', isAdmin: false, isSuperAdmin: false },
+      { id: '5511977776666@s.whatsapp.net', isAdmin: false, isSuperAdmin: false },
+    ]);
+    expect(group).toHaveProperty('raw');
+  });
+
+  it('groups.getInfo envia POST /group/info com {groupJid} e mapeia o GroupInfo whatsmeow (JID/Name/Topic/OwnerJID/Participants)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/info') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const group = await wa.groups.getInfo('123456789-987654321@g.us');
+
+    expect(capturedBody).toEqual({ groupJid: '123456789-987654321@g.us' });
+    expect(group.id).toBe('123456789-987654321@g.us');
+    expect(group.subject).toBe('Grupo de teste');
+    expect(group.description).toBe('Descrição do grupo de teste');
+    expect(group.owner).toBe('5511999999999@s.whatsapp.net');
+    expect(group.participants).toEqual([
+      { id: '5511999999999@s.whatsapp.net', isAdmin: true, isSuperAdmin: true },
+      { id: '5511988887777@s.whatsapp.net', isAdmin: false, isSuperAdmin: false },
+    ]);
+    expect(group).toHaveProperty('raw');
+  });
+
+  it('groups.list envia GET /group/list e mapeia cada item do array para GroupInfo', async () => {
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: createFetchStub(),
+    });
+    const wa = createConnector(adapter);
+
+    const groupList = await wa.groups.list();
+
+    expect(groupList).toHaveLength(1);
+    expect(groupList[0]?.id).toBe('123456789-987654321@g.us');
+    expect(groupList[0]?.participants).toEqual([
+      { id: '5511999999999@s.whatsapp.net', isAdmin: true, isSuperAdmin: true },
+    ]);
+  });
+
+  it('groups.addParticipants envia POST /group/participant com {groupJid, participants, action:"add"}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/participant') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.groups.addParticipants({
+      groupId: '123456789-987654321@g.us',
+      participants: ['5511988887777', '5511977776666@s.whatsapp.net'],
+    });
+
+    expect(capturedBody).toEqual({
+      groupJid: '123456789-987654321@g.us',
+      participants: ['5511988887777', '5511977776666@s.whatsapp.net'],
+      action: 'add',
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it('groups.removeParticipants/promoteParticipants/demoteParticipants reaproveitam POST /group/participant só trocando "action"', async () => {
+    const capturedActions: unknown[] = [];
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/group/participant') {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        capturedActions.push(body.action);
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const groupId = '123456789-987654321@g.us';
+    const participants = ['5511988887777'];
+    await wa.groups.removeParticipants({ groupId, participants });
+    await wa.groups.promoteParticipants({ groupId, participants });
+    await wa.groups.demoteParticipants({ groupId, participants });
+
+    expect(capturedActions).toEqual(['remove', 'promote', 'demote']);
   });
 
   it('parseWebhook normaliza evento "Message" de imagem e popula media.url a partir da chave "URL" (maiúscula)', () => {

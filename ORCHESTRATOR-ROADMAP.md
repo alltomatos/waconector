@@ -59,8 +59,18 @@ Estado: **in_progress** (detalhe completo em docs/CONTEXT.md#roadmap)
       adapters existentes (uazapi, Evolution GO, WAHA, Z-API, Wuzapi), cada um traduzindo a
       convenção canônica de "emoji vazio remove" para a particularidade real do provider
       (sentinel `"remove"` no Evolution GO/Wuzapi, endpoint dedicado `/send-remove-reaction` na
-      Z-API). `reply/quote` já estava coberto via `quotedId` (nenhuma mudança necessária).
-- [ ] Capabilities novas: grupos, contatos (escopo grande, ainda não iniciado)
+      Z-API). `reply/quote` já estava coberto via `quotedId` (nenhuma mudança necessária). Retrofit
+      mergeado via [PR #16](https://github.com/alltomatos/waconector/pull/16).
+- [x] Capability `groups.*` — PR1: núcleo + participantes (ADR-0009), pesquisa (14 operações nos 5
+      providers) + implementação + auditoria adversarial via workflow. `create`/`getInfo`/`list`/
+      `add`/`remove`/`promote`/`demoteParticipants` implementados nos 5 adapters, com atenção
+      especial ao `groupId` opaco (a Z-API usa um ID sintético sem `@`, não um JID — os helpers de
+      chatId de mensagem o corromperiam se reaproveitados cegamente). Bug real encontrado e
+      corrigido na revisão própria (não pela verificação adversarial): os métodos `wa.groups.*` do
+      conector lançavam sincronamente em vez de rejeitar a Promise em falhas de validação.
+- [ ] Capability `groups.*` — PR2 (configurações: subject/description/picture) e PR3 (convites +
+      saída: invite link/join/leave), planejados, ainda não iniciados
+- [ ] Capability `contacts.*` (escopo grande, ainda não iniciado)
 
 ## Marcos de release (v0.x)
 

@@ -10,6 +10,10 @@ import { describeAdapterContract } from './adapter-contract';
 const BASE_URL = 'https://waha.example.com';
 const API_KEY = 'test-api-key-should-be-redacted';
 const SESSION = 'default';
+/** JID de grupo usado nos testes de `groups.*` — mesmo formato `<dígitos>@g.us` da doc oficial. */
+const GROUP_ID = '120363043140393908@g.us';
+/** `encodeURIComponent(GROUP_ID)` — usado para casar o pathname exato batido pelo adapter. */
+const GROUP_ID_ENCODED = '120363043140393908%40g.us';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -76,6 +80,49 @@ function createFetchStub(): typeof globalThis.fetch {
     if (method === 'PUT' && pathname === '/api/reaction') {
       // Resposta real documentada como `object` genérico/vazio no openapi.json — sem campos.
       return jsonResponse(200, {});
+    }
+
+    if (method === 'POST' && pathname === `/api/${SESSION}/groups`) {
+      // Resposta 201 SEM schema declarado na doc oficial (gap do próprio WAHA) — devolve só
+      // "id"/"subject", sem "participants", para exercitar o fallback de mapGroupInfo.
+      return jsonResponse(201, {
+        id: GROUP_ID,
+        subject: 'Contrato: Grupo Teste',
+      });
+    }
+
+    if (method === 'GET' && pathname === `/api/${SESSION}/groups/${GROUP_ID_ENCODED}`) {
+      // Schema inferido por cross-reference com o webhook group.v2.join (ver docs/providers/waha.md).
+      return jsonResponse(200, {
+        id: GROUP_ID,
+        subject: 'Contrato: Grupo Teste',
+        description: 'Descrição do grupo de teste',
+        invite: 'https://chat.whatsapp.com/ABCDEFGHIJKLMNOPQRSTUV',
+        membersCanAddNewMember: false,
+        membersCanSendMessages: true,
+        newMembersApprovalRequired: false,
+        participants: [
+          { id: '5585999999999@c.us', role: 'admin' },
+          // Participante devolvido como @lid (privacidade), com o formato real @c.us em "pn".
+          { id: 'ANONYMIZEDLIDPLACEHOLDER@lid', pn: '5585888888888@c.us', role: 'participant' },
+        ],
+      });
+    }
+
+    if (method === 'GET' && pathname === `/api/${SESSION}/groups`) {
+      return jsonResponse(200, [
+        {
+          id: GROUP_ID,
+          subject: 'Contrato: Grupo Teste',
+          participants: [{ id: '5585999999999@c.us', role: 'superadmin' }],
+        },
+      ]);
+    }
+
+    if (method === 'POST' && pathname.startsWith(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/`)) {
+      // addParticipants/removeParticipants/promoteParticipants/demoteParticipants: contrato
+      // devolve Promise<void>, resposta stub genérica basta.
+      return jsonResponse(201, {});
     }
 
     throw new Error(`fetchStub: rota não configurada — ${method} ${pathname}`);
@@ -225,6 +272,138 @@ describe('WAHA adapter: comportamento específico do provider', () => {
 
     expect(calls).toHaveLength(1);
     expect((calls[0]?.body as Record<string, unknown> | undefined)?.reaction).toBe('');
+  });
+
+  it('groups.create converte participantes para {id} e envia { name, participants } para POST /api/{session}/groups', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({
+      subject: 'Contrato: Grupo Teste',
+      participants: ['5585999999999', '5585888888888'],
+    });
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.path).toBe(`/api/${SESSION}/groups`);
+    expect(call?.body).toEqual({
+      name: 'Contrato: Grupo Teste',
+      participants: [{ id: '5585999999999@c.us' }, { id: '5585888888888@c.us' }],
+    });
+
+    // Resposta stub não ecoa "participants" (gap real da doc do WAHA para este endpoint) ->
+    // mapGroupInfo cai de volta para os participantes de entrada.
+    expect(group.id).toBe(GROUP_ID);
+    expect(group.subject).toBe('Contrato: Grupo Teste');
+    expect(group.participants).toEqual([
+      { id: '5585999999999', isAdmin: false, isSuperAdmin: false },
+      { id: '5585888888888', isAdmin: false, isSuperAdmin: false },
+    ]);
+    expect(group).toHaveProperty('raw');
+  });
+
+  it('groups.getInfo converte groupId para "@g.us" no path e mapeia o schema WAHA (id/pn/role) para GroupInfo', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const group = await wa.groups.getInfo(GROUP_ID);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('GET');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}`);
+
+    expect(group.id).toBe(GROUP_ID);
+    expect(group.subject).toBe('Contrato: Grupo Teste');
+    expect(group.description).toBe('Descrição do grupo de teste');
+    // WAHA não expõe um campo de "dono" explícito neste schema (ver docs/providers/waha.md).
+    expect(group.owner).toBeUndefined();
+    expect(group.participants).toEqual([
+      { id: '5585999999999@c.us', isAdmin: true, isSuperAdmin: false },
+      // Veio como @lid na resposta (privacidade) -> "pn" (sempre @c.us) tem preferência sobre "id".
+      { id: '5585888888888@c.us', isAdmin: false, isSuperAdmin: false },
+    ]);
+    expect(group).toHaveProperty('raw');
+  });
+
+  it('groups.list chama GET /api/{session}/groups e mapeia cada item para GroupInfo', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const list = await wa.groups.list();
+
+    expect(list).toHaveLength(1);
+    expect(list[0]?.id).toBe(GROUP_ID);
+    expect(list[0]?.participants).toEqual([
+      { id: '5585999999999@c.us', isAdmin: true, isSuperAdmin: true },
+    ]);
+  });
+
+  it('groups.addParticipants envia { participants: [{id}] } para POST .../groups/{id}/participants/add', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.addParticipants({ groupId: GROUP_ID, participants: ['5585999999999'] }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.method).toBe('POST');
+    expect(call?.path).toBe(`/api/${SESSION}/groups/${GROUP_ID_ENCODED}/participants/add`);
+    expect(call?.body).toEqual({ participants: [{ id: '5585999999999@c.us' }] });
+  });
+
+  it('groups.removeParticipants/promoteParticipants/demoteParticipants usam os endpoints dedicados (participants/remove, admin/promote, admin/demote)', async () => {
+    const calls: string[] = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          calls.push(new URL(String(input)).pathname);
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.groups.removeParticipants({ groupId: GROUP_ID, participants: ['5585999999999'] });
+    await wa.groups.promoteParticipants({ groupId: GROUP_ID, participants: ['5585999999999'] });
+    await wa.groups.demoteParticipants({ groupId: GROUP_ID, participants: ['5585999999999'] });
+
+    expect(calls).toEqual([
+      `/api/${SESSION}/groups/${GROUP_ID_ENCODED}/participants/remove`,
+      `/api/${SESSION}/groups/${GROUP_ID_ENCODED}/admin/promote`,
+      `/api/${SESSION}/groups/${GROUP_ID_ENCODED}/admin/demote`,
+    ]);
   });
 
   it('parseWebhook normaliza "message.ack" do dossiê para MessageAckEvent', () => {

@@ -117,6 +117,62 @@ de mudança, mesmo padrão do adapter Evolution GO).
 `mentions`, ao contrário de `number`, precisa ser uma string de dígitos separados por vírgula (não
 aceita JID) — o adapter extrai os dígitos de qualquer entrada em formato JID antes de juntar.
 
+## Grupos (núcleo)
+
+Capabilities implementadas nesta fase: `groups.create`, `groups.getInfo`, `groups.list`,
+`groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
+`groups.demoteParticipants` (ver ADR-0009). As 4 operações de participante colapsam num único
+endpoint do provider — ver tabela abaixo.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `groups.create` | `POST /group/create` | Body `{ name, participants }`. **Desvio importante**: `participants` aqui aceita SOMENTE dígitos de telefone crus — ao contrário de `updateParticipants` (linha abaixo), NÃO aceita JID. Como o conector já normaliza `CreateGroupInput.participants` como um `to` de mensagem comum (telefone vira dígitos, JID passa intacto), o adapter precisa extrair os dígitos de qualquer entrada em formato JID antes de enviar (`toCreateGroupParticipant`). Resposta 200 documentada como o schema `Group` completo (mesmo shape de `getGroupInfo`), mas **sem exemplo JSON literal na doc** — por isso `mapGroupInfo` recebe fallback com os valores de entrada (`subject`, `participants`) quando a resposta não traz `Name`/`JID`/`Participants`, mesmo padrão de `mapSentMessage` (`chatId ?? requestedNumber`). |
+| `groups.getInfo` | `POST /group/info` | Body `{ groupjid }`. Resposta = schema `Group` verbatim na doc: `{ JID, Name, Topic (descrição), OwnerJID`/`OwnerPN (dono), GroupCreated, Participants: [{ JID, IsAdmin, IsSuperAdmin }] }`. |
+| `groups.list` | `GET /group/list` | Sem body; query params `force`/`noparticipants` são opcionais e omitidos por este adapter (`GroupsApi.list()` não recebe parâmetros). Resposta: `{ groups: Group[] }` — mesmo shape de `getGroupInfo`, um item por grupo. |
+| `groups.addParticipants` / `groups.removeParticipants` / `groups.promoteParticipants` / `groups.demoteParticipants` | `POST /group/updateParticipants` | **As 4 operações são o MESMO endpoint**, discriminado pelo campo `action: "add"\|"remove"\|"promote"\|"demote"`. Body `{ groupjid, action, participants }`. Diferente de `/group/create`, aqui `participants` aceita telefone OU JID — reaproveita `toUazapiNumber` (identidade), a mesma função usada para o `to` de mensagens. Resposta (`{ groupUpdated: [{JID, Error}], group, needs_refresh }`) é ignorada: o contrato exige apenas `Promise<void>`. |
+
+### `groupId` opaco e mapeamento de participantes
+
+`GroupParticipantsInput.groupId` é um identificador OPACO (ver ADR-0009): o conector **não** passa
+`groupId` por `normalizeChatId` (diferente do `to` de mensagem). Para uazapi especificamente, isso
+não é um problema prático: `GroupInfo.id` (populado a partir de `Group.JID` em `getGroupInfo`/
+`createGroup`/`listGroups`) já é o JID de grupo nativo do provider, formato `<dígitos>@g.us` — o
+mesmo formato que o campo `groupjid` espera de volta. A função `toUazapiGroupJid` existe como ponto
+único de mudança (mesmo padrão de `toUazapiNumber`), mas hoje é identidade pura. **Diferente da
+Z-API** (que usa um ID sintético sem `@`, onde reaproveitar um helper de chatId de mensagem
+corromperia o valor), a uazapi não tem essa armadilha — ainda assim o adapter usa uma função
+dedicada (não `toUazapiNumber` diretamente) porque `groupId` semanticamente não é um "chatId de
+mensagem" e não deve compartilhar acidentalmente lógica futura que só faça sentido para `to`.
+
+Participantes individuais (dentro de `participants: string[]`), ao contrário do `groupId`, chegam
+já normalizados pelo conector (telefone vira só-dígitos, JID passa intacto) — mesma convenção de um
+`to` de mensagem comum:
+
+- Em `groups.create` → `POST /group/create`: convertidos para dígitos crus via
+  `toCreateGroupParticipant` (extrai os dígitos de qualquer JID; endpoint não aceita JID).
+- Em `addParticipants`/`removeParticipants`/`promoteParticipants`/`demoteParticipants` →
+  `POST /group/updateParticipants`: repassados via `toUazapiNumber` (identidade; endpoint aceita
+  telefone OU JID).
+
+### Mapeamento do schema `Group` → `GroupInfo`
+
+| Campo uazapi (`Group`) | Campo `GroupInfo`/`GroupParticipant` |
+| --- | --- |
+| `JID` | `id` (fallback: valor de entrada quando ausente — só relevante em `create`) |
+| `Name` | `subject` (fallback: valor de entrada quando ausente — só relevante em `create`) |
+| `Topic` | `description` |
+| `OwnerJID` (fallback `OwnerPN`) | `owner` |
+| `Participants[].JID` | `GroupParticipant.id` |
+| `Participants[].IsAdmin` | `GroupParticipant.isAdmin` |
+| `Participants[].IsSuperAdmin` | `GroupParticipant.isSuperAdmin` |
+
+Quando o provider não devolve `Participants` (cenário defensivo, sem exemplo JSON literal
+confirmado para `POST /group/create`), o adapter cai de volta para os IDs de entrada de
+`CreateGroupInput.participants`, com `isAdmin`/`isSuperAdmin: false` como suposição neutra (não há
+como inferir status de admin de uma lista de participantes recém-convidados sem a resposta do
+provider). **A confirmar contra uma instância real** — mesmo aviso de confiança já registrado para
+`mapSentMessage` no restante deste dossiê.
+
 ## Webhooks
 
 Dois níveis de configuração: por instância (`GET`/`POST /webhook`, header `token`) e global
