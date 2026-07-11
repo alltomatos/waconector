@@ -124,7 +124,7 @@ tratado como incremento futuro separado, não uma pendência desta Epic.
 
 Estado: **todo**
 
-- [ ] Adapters: Whapi, Zapo, QuePasa
+- [ ] Adapters: Whapi, WPPConnect, QuePasa
 - [ ] Site de docs com matriz de capabilities gerada do código
 - [ ] Exemplos de bot (Express/Next), `npx waconector doctor`
 
