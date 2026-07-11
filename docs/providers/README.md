@@ -14,7 +14,7 @@ abaixo. O dossiê é a fonte de verdade do adapter; os payloads capturados viram
 | Z-API | <https://developer.z-api.io/api-reference/introduction> | SaaS | F2 — feito, ver [zapi.md](zapi.md) |
 | Wuzapi | <https://github.com/asternic/wuzapi/blob/main/API.md> | self-hosted | F2 — feito, ver [wuzapi.md](wuzapi.md) |
 | Whapi | <https://whapi.readme.io/> | SaaS | F3 — feito, ver [whapi.md](whapi.md) |
-| WPPConnect | <https://wppconnect.io/swagger/wppconnect-server/> | self-hosted (Docker) | F3 |
+| WPPConnect | <https://wppconnect.io/swagger/wppconnect-server/> | self-hosted (Docker) | F3 — feito, ver [wppconnect.md](wppconnect.md) |
 | QuePasa | <https://github.com/nocodeleaks/quepasa> (repo oficial bloqueado por DMCA; `docs.quepasa.ai` é um produto não relacionado — ver dossiê) | self-hosted | F3 — feito, ver [quepasa.md](quepasa.md) |
 
 ## Template do dossiê (`<nome>.md`)

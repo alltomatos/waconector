@@ -133,8 +133,23 @@ Estado: **in_progress**
       no Wuzapi). `messages.sendReaction`/`instance.pairingCode`/`groups.*`/`contacts.*`
       confirmados suportados pelo provider mas deliberadamente adiados (fora do escopo desta fase).
       Mergeado via [PR #24](https://github.com/alltomatos/waconector/pull/24).
-- [ ] Adapter QuePasa (self-hosted, Docker) — próximo (instrução direta do usuário: "faça whapi e
-      depois o quepasa")
+- [x] Adapter QuePasa (self-hosted, Docker) — dossiê e implementação das capabilities
+      `instance.status/logout` (soft-stop), `messages.sendText/sendMedia`,
+      `groups.getInviteLink`, `contacts.getProfilePicture`, `webhooks.parse`. **Achado crítico de
+      sourcing**: a URL de docs originalmente listada (`docs.quepasa.ai`) é colisão de nome com um
+      SaaS de RAG não relacionado; o repositório oficial (`nocodeleaks/quepasa`) está bloqueado no
+      GitHub por aviso de DMCA (módulo de VoIP, não relacionado a mensagens/webhooks) — pesquisa
+      feita em três forks/mirrors não bloqueados (2023/2025/2026-07-07), documentado com
+      transparência total em `docs/providers/quepasa.md`. Apresentado ao usuário via
+      AskUserQuestion dado o caráter T3 do achado (situação de sourcing materialmente diferente do
+      assumido); usuário aprovou merge normal. `instance.connect`/`instance.pairingCode`
+      deliberadamente não declaradas (QR via `GET /scan` devolve PNG binário cru, incompatível com
+      o `HttpClient` atual). Auditoria adversarial encontrou e corrigiu 1 bug real
+      (`contacts.getProfilePicture` lia o campo errado do envelope) e 3 afirmações incorretas de
+      "recurso não existe" (sticker, `WhatsappAttachment`/media, escopo real de
+      groups/contacts/sendReaction — na verdade existe uma API v5 mais recente do provider, mas
+      gated por sessão JWT incompatível com o token por instância). Mergeado via
+      [PR #25](https://github.com/alltomatos/waconector/pull/25).
 - [ ] Adapter WPPConnect Server (self-hosted, Docker) — substitui Zapo na lista de providers-alvo
       F3: Zapo (`zapo-js`) é uma biblioteca cliente Node importada diretamente, não uma API HTTP —
       incompatível com o modelo de adapter do waconector (`HttpClient`), confirmado pelo usuário.

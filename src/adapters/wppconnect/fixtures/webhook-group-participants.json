@@ -1,0 +1,10 @@
+{
+  "event": "onparticipantschanged",
+  "session": "minha-sessao",
+  "groupId": "120363000000000000@g.us",
+  "action": "add",
+  "operation": "add",
+  "who": ["5511988887777@c.us"],
+  "by": "5511999999999@c.us",
+  "byPushName": "Fulano de Tal"
+}

@@ -1,0 +1,18 @@
+{
+  "event": "onmessage",
+  "session": "minha-sessao",
+  "id": "true_5511999999999@c.us_3EB0FAKE000000000WPP2",
+  "type": "image",
+  "subtype": "",
+  "caption": "Legenda da foto",
+  "mimetype": "image/jpeg",
+  "mediaKey": "fake-media-key-base64==",
+  "t": 1751000001,
+  "timestamp": 1751000001,
+  "from": "5511999999999@c.us",
+  "to": "5511888888888@c.us",
+  "author": "5511999999999@c.us",
+  "chatId": "5511999999999@c.us",
+  "fromMe": false,
+  "isGroupMsg": false
+}
