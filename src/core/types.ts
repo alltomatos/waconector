@@ -175,6 +175,45 @@ export interface MarkMessageReadInput {
   messageId: string;
 }
 
+/**
+ * Ver ADR-0014. Localização estática (não "ao vivo") — nenhum provider pesquisado confirma um
+ * endpoint canônico de encerrar/atualizar uma live location já enviada, então esta fase cobre só o
+ * envio simples.
+ */
+export interface SendLocationInput {
+  to: string;
+  latitude: number;
+  longitude: number;
+  /** Rótulo/título do pin (ex.: nome do local). Alguns providers exigem, outros ignoram. */
+  name?: string;
+  address?: string;
+}
+
+/**
+ * Ver ADR-0014. Cartão de contato único (`vCard`). Campos simples e não o vCard bruto: providers
+ * pesquisados ou já aceitam campos soltos (nome + telefone) ou exigem um vCard já montado — para os
+ * últimos, o próprio adapter monta a string a partir destes dois campos (é trabalho de tradução,
+ * não de validação — mesma responsabilidade que já cabe ao adapter para outras capabilities).
+ */
+export interface SendContactCardInput {
+  to: string;
+  contactName: string;
+  contactPhone: string;
+}
+
+/**
+ * Ver ADR-0014. `allowMultipleAnswers` ausente/`false` = escolha única (default mais restritivo e
+ * mais amplamente suportado — pelo menos um provider pesquisado, Wuzapi, só aceita escolha única e
+ * não tem como habilitar múltipla escolha nenhuma forma).
+ */
+export interface SendPollInput {
+  to: string;
+  question: string;
+  /** Pelo menos 2 opções — todos os providers pesquisados rejeitam enquete com menos de 2. */
+  options: string[];
+  allowMultipleAnswers?: boolean;
+}
+
 /** Participante de um grupo, normalizado. Ver ADR-0009. */
 export interface GroupParticipant {
   /** Telefone E.164 sem `+` ou JID explícito — mesma convenção de chatId de mensagem. */

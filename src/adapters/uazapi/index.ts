@@ -33,7 +33,10 @@ import type {
   MessageAck,
   MessageKind,
   PinMessageInput,
+  SendContactCardInput,
+  SendLocationInput,
   SendMediaInput,
+  SendPollInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
@@ -91,6 +94,9 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'messages.pin',
   'messages.unpin',
   'messages.markRead',
+  'messages.sendLocation',
+  'messages.sendContactCard',
+  'messages.sendPoll',
   'chats.archive',
   'chats.unarchive',
   'chats.mute',
@@ -151,6 +157,9 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     pin: (input) => setMessagePinned(http, input, true),
     unpin: (input) => setMessagePinned(http, input, false),
     markRead: (input) => markMessageRead(http, input),
+    sendLocation: (input) => sendLocation(http, input),
+    sendContactCard: (input) => sendContactCard(http, input),
+    sendPoll: (input) => sendPoll(http, input),
   };
 
   const chats: ChatsApi = {
@@ -493,6 +502,70 @@ async function markMessageRead(http: HttpClient, input: MarkMessageReadInput): P
     path: '/message/markread',
     body: { id: [input.messageId] },
   });
+}
+
+/**
+ * `POST /send/location` (ADR-0014, confiança Alta): body mínimo `{number, latitude, longitude}`
+ * (obrigatórios); `name`/`address` opcionais para um pin nomeado. Campos comuns de envio
+ * (`replyid`/`mentions`/`delay`/`forward`/`track_source`/`track_id`/`async`) já são ignorados
+ * deliberadamente hoje por `sendText`/`sendMedia` — mesmo critério aplicado aqui.
+ */
+async function sendLocation(http: HttpClient, input: SendLocationInput): Promise<SentMessage> {
+  const number = toUazapiNumber(input.to);
+  const body: Record<string, unknown> = {
+    number,
+    latitude: input.latitude,
+    longitude: input.longitude,
+  };
+  if (input.name) body.name = input.name;
+  if (input.address) body.address = input.address;
+  const response = await http.request<unknown>({ method: 'POST', path: '/send/location', body });
+  return mapSentMessage(response, number);
+}
+
+/**
+ * `POST /send/contact` (ADR-0014, confiança Alta): body mínimo `{number, fullName, phoneNumber}`
+ * (obrigatórios) — campos soltos, o provider monta um vCard completo clicável no servidor.
+ * `phoneNumber` aceita múltiplos números separados por vírgula segundo a doc, mas
+ * `SendContactCardInput` só modela um contato/telefone — este adapter sempre envia um único
+ * valor. `organization`/`email`/`url` (opcionais no schema) não têm de onde vir no contrato
+ * canônico e são omitidos.
+ */
+async function sendContactCard(
+  http: HttpClient,
+  input: SendContactCardInput,
+): Promise<SentMessage> {
+  const number = toUazapiNumber(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: '/send/contact',
+    body: { number, fullName: input.contactName, phoneNumber: input.contactPhone },
+  });
+  return mapSentMessage(response, number);
+}
+
+/**
+ * `POST /send/menu` (ADR-0014, confiança Alta): interface UNIFICADA para botões/lista/enquete/
+ * carrossel, discriminada por `type`. Para enquete: `{number, type: "poll", text, choices:
+ * string[], selectableCount?}` — `question`/`options` mapeiam direto para `text`/`choices`;
+ * `selectableCount` só se aplica a enquetes (permite múltipla escolha) — `1` (escolha única, valor
+ * explícito para não depender de um default não documentado) quando `allowMultipleAnswers` é
+ * falso/ausente, `options.length` (qualquer número de opções) quando verdadeiro.
+ */
+async function sendPoll(http: HttpClient, input: SendPollInput): Promise<SentMessage> {
+  const number = toUazapiNumber(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: '/send/menu',
+    body: {
+      number,
+      type: 'poll',
+      text: input.question,
+      choices: input.options,
+      selectableCount: input.allowMultipleAnswers ? input.options.length : 1,
+    },
+  });
+  return mapSentMessage(response, number);
 }
 
 // ---------------------------------------------------------------------------

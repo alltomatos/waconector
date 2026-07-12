@@ -165,6 +165,7 @@ com `phone`), não em um "connect" de uma sessão já existente.
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
 `messages.sendMedia`, `messages.sendReaction`, `messages.edit`, `messages.delete`,
 `messages.forward`, `messages.star`, `messages.unstar` (ADR-0013),
+`messages.sendLocation`, `messages.sendContactCard`, `messages.sendPoll` (ADR-0014),
 `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
@@ -472,6 +473,24 @@ acima.
 | --- | --- | --- |
 | `messages.forward` | `POST /forward-messages` | `DeviceController.forwardMessages`. Body confirmado pelo Swagger real: `{phone, isGroup, messageId}` — o handler faz `phone[0]` (reescrito para array pelo middleware `statusConnection`, mesmo mecanismo de `sendText`/`sendMedia`) e chama `forwardMessagesV2(phone[0], messageId)` da lib. `ForwardMessageInput.fromChatId` nunca é enviado — a implementação usa só o `messageId` da mensagem original. **Bug real confirmado**: o `if (!isGroup) {...} else {...}` do controller (`deviceController.ts:968-1021`) tem os DOIS ramos chamando exatamente a mesma linha — `isGroup` não tem efeito real no comportamento, apesar de aceito no schema. Resposta segue o envelope padrão (`{status:'success', response}`) — diferente de `list-chats`, este endpoint passa pelo `returnSucess` normal. |
 | `messages.star` / `messages.unstar` | `POST /star-message` | `DeviceController.starMessage`. Body: `{messageId, star: boolean}` — SEM `phone`/`isGroup`: o `messageId` sozinho identifica a mensagem (`client.starMessage(messageId, star)` da lib). Um único endpoint com flag booleana cobre as duas direções. Resposta segue o envelope padrão. |
+
+## Conteúdo estruturado (`messages.sendLocation`/`sendContactCard`/`sendPoll`, ADR-0014)
+
+Não coberto pelo relatório de pesquisa original desta rodada (que era focado no escopo do
+ADR-0012/0013, e só tinha uma nota rasa sobre `contacts.sendVcard`) — as 3 capabilities foram
+confirmadas via `gh api` direto contra o mesmo commit já usado como referência para este adapter
+(`wppconnect-team/wppconnect-server`, `f09e2fed`, tag `v2.10.0`), lendo `routes.ts`,
+`messageController.ts` e `deviceController.ts`. Confiança **Alta** para as 3.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.sendLocation` | `POST /send-location` | `MessageController.sendLocation`. Body confirmado pelo Swagger real: `{phone, isGroup, lat, lng, title, address}` — **`lat`/`lng` são STRINGS no schema, não números** (exemplo literal: `{"lat":"-89898322","lng":"-545454",...}`). `phone` reescrito para array pelo middleware `statusConnection` (mesmo mecanismo de `sendText`/`forwardMessage`); o handler faz `for (const contato of phone) { results.push(await client.sendLocation(contato, {lat, lng, address, name: title})) }` — resposta é um ARRAY de 1 elemento para este adapter (sempre 1 destinatário). `SendLocationInput.name` mapeia para `title`. |
+| `messages.sendContactCard` | `POST /contact-vcard` | `DeviceController.sendContactVcard` (não `MessageController` — vive num controller diferente). Body confirmado pelo Swagger real: `{phone, isGroup, name, contactsId}` — `contactsId` é um ARRAY de contatos (permite múltiplos contatos numa única mensagem: exemplo literal `contactsId: ['5521999999999']`), diferente da maioria dos outros adapters (que só aceitam um contato solto); `SendContactCardInput` só modela um telefone — este adapter sempre envia um array de 1 elemento. **Divergência de envelope confirmada no controller**: diferente de `sendLocation`/`sendPollMessage` (`results.push(...)`, array), este handler faz `response = await client.sendContactVcard(...)` dentro do loop SEM `push` — resposta BARE, não array (`unwrapArrayResponse` cobre os dois casos sem alteração). |
+| `messages.sendPoll` | `POST /send-poll-message` | `MessageController.sendPollMessage`. Body confirmado pelo Swagger real: `{phone, isGroup, name, choices, options: {selectableCount}}` — exemplo literal do schema usa `selectableCount: 1` (escolha única). `SendPollInput.allowMultipleAnswers` mapeia para `selectableCount: options.length` quando `true`, `1` quando `false`/ausente. Mesmo padrão de array de `sendLocation`. |
+
+Resposta das 3: reaproveita `mapSentMessageFromMessage` (mesma função de `sendText`/`forwardMessage`
+— fallback de id sintético se a resposta não ecoar `id`/`chatId`, robusto o suficiente para cobrir
+tanto o caso array quanto o bare confirmados acima).
 
 ## Grupos
 

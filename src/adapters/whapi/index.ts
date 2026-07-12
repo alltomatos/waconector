@@ -35,7 +35,10 @@ import type {
   MessageAck,
   MessageKind,
   PinMessageInput,
+  SendContactCardInput,
+  SendLocationInput,
   SendMediaInput,
+  SendPollInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
@@ -102,6 +105,9 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'messages.pin',
   'messages.unpin',
   'messages.markRead',
+  'messages.sendLocation',
+  'messages.sendContactCard',
+  'messages.sendPoll',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -165,6 +171,9 @@ export function whapi(options: WhapiOptions): WaAdapter {
     pin: (input) => setMessagePinned(http, input, true),
     unpin: (input) => setMessagePinned(http, input, false),
     markRead: (input) => markMessageRead(http, input),
+    sendLocation: (input) => sendLocation(http, input),
+    sendContactCard: (input) => sendContactCard(http, input),
+    sendPoll: (input) => sendPoll(http, input),
   };
 
   const groups: GroupsApi = {
@@ -583,6 +592,80 @@ async function markMessageRead(http: HttpClient, input: MarkMessageReadInput): P
     method: 'PUT',
     path: `/messages/${encodeURIComponent(input.messageId)}`,
   });
+}
+
+/**
+ * `POST /messages/location` (ADR-0014; `operationId: sendMessageLocation`, `openapi.yaml:1299`,
+ * schema `SenderLocation`/`MessageContentLocation` (`openapi.yaml:11362-11406`) — confiança Alta).
+ * `latitude`/`longitude` obrigatórios; `address`/`name` (e outros opcionais do schema —
+ * `url`/`preview`/`accuracy`/`speed`/`degrees`/`comment` — sem campo equivalente no contrato
+ * canônico, não enviados). Sem "hasWhatsApp" nem verificação de coordenada — o WhatsApp não valida
+ * geolocalização, é conteúdo livre. Resposta: reaproveita `mapSentMessage`.
+ */
+async function sendLocation(http: HttpClient, input: SendLocationInput): Promise<SentMessage> {
+  const to = toWhapiChatId(input.to);
+  const body: Record<string, unknown> = {
+    to,
+    latitude: input.latitude,
+    longitude: input.longitude,
+  };
+  if (input.name) body.name = input.name;
+  if (input.address) body.address = input.address;
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: '/messages/location',
+    body,
+  });
+  return mapSentMessage(response, to);
+}
+
+/**
+ * `POST /messages/contact` (ADR-0014; `operationId: sendMessageContact`, `openapi.yaml:1417`,
+ * schema `SenderContact`/`VCard` — confiança Alta). `name`/`vcard` obrigatórios — cartão de
+ * contato único em formato vCard CRU, sem normalização de telefone pelo Whapi. Este provider
+ * **não** monta o vCard a partir de campos soltos (diferente de Evolution/uazapi/Z-API);
+ * `SendContactCardInput` só expõe `contactName`/`contactPhone` soltos — este adapter monta a
+ * string vCard mínima localmente (`buildVcard`, função independente definida também no adapter
+ * Wuzapi com o mesmo formato: `FN:{name}` + `TEL;type=CELL;type=VOICE;waid={phone}:+{phone}`).
+ */
+async function sendContactCard(
+  http: HttpClient,
+  input: SendContactCardInput,
+): Promise<SentMessage> {
+  const to = toWhapiChatId(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: '/messages/contact',
+    body: { to, name: input.contactName, vcard: buildVcard(input.contactName, input.contactPhone) },
+  });
+  return mapSentMessage(response, to);
+}
+
+/** vCard 3.0 mínimo — mesmo formato que a Evolution confirma gerar server-side. */
+function buildVcard(name: string, phone: string): string {
+  return `BEGIN:VCARD\nVERSION:3.0\nFN:${name}\nTEL;type=CELL;type=VOICE;waid=${phone}:+${phone}\nEND:VCARD`;
+}
+
+/**
+ * `POST /messages/poll` (ADR-0014; `operationId: sendMessagePoll`, `openapi.yaml:1560`, schema
+ * `MessagePropsPoll` (`openapi.yaml:12652-12674`) — confiança Alta). `title`/`options` (2-12
+ * itens) obrigatórios; `count` **inverte a convenção intuitiva**: `0` permite qualquer número de
+ * opções (múltipla escolha), `1` restringe a uma só. `SendPollInput.allowMultipleAnswers` mapeia
+ * para `count: 0` quando `true`, `count: 1` quando `false`/ausente.
+ */
+async function sendPoll(http: HttpClient, input: SendPollInput): Promise<SentMessage> {
+  const to = toWhapiChatId(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: '/messages/poll',
+    body: {
+      to,
+      title: input.question,
+      options: input.options,
+      count: input.allowMultipleAnswers ? 0 : 1,
+    },
+  });
+  return mapSentMessage(response, to);
 }
 
 // ---------------------------------------------------------------------------

@@ -183,6 +183,59 @@ describe('MockAdapter: outbox', () => {
     const failure = await reject(wa.messages.forward({ to: '5585999999999', messageId: 'msg-1' }));
     expect(isWaConnectorError(failure) && failure.code === 'INSTANCE_DISCONNECTED').toBe(true);
   });
+
+  it('sendLocation devolve um novo SentMessage quando conectado', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendLocation({
+      to: '5585999999999',
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+    });
+    expect(sent.chatId).toBe('5585999999999');
+    expect(sent.id).toBeTruthy();
+  });
+
+  it('sendContactCard devolve um novo SentMessage quando conectado', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendContactCard({
+      to: '5585999999999',
+      contactName: 'Fulano',
+      contactPhone: '5585988888888',
+    });
+    expect(sent.chatId).toBe('5585999999999');
+    expect(sent.id).toBeTruthy();
+  });
+
+  it('sendPoll devolve um novo SentMessage quando conectado', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendPoll({
+      to: '5585999999999',
+      question: 'Pergunta?',
+      options: ['Sim', 'Não'],
+    });
+    expect(sent.chatId).toBe('5585999999999');
+    expect(sent.id).toBeTruthy();
+  });
+
+  it('sendLocation/sendContactCard/sendPoll exigem instância conectada (INSTANCE_DISCONNECTED)', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(
+      wa.messages.sendLocation({ to: '5585999999999', latitude: -3.7, longitude: -38.5 }),
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'INSTANCE_DISCONNECTED').toBe(true);
+  });
 });
 
 describe('MockAdapter: chats', () => {

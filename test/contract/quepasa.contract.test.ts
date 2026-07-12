@@ -146,6 +146,22 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { success: true });
     }
 
+    // messages.sendLocation/sendContactCard/sendPoll (ADR-0014) e o gap-fix de sticker em
+    // sendMedia: todos via POST /v3/bot/{token}/send (handler SendAny, mesma família de
+    // sendtext/sendurl/sendencoded acima).
+    if (method === 'POST' && pathname === `/v3/bot/${TOKEN}/send`) {
+      return jsonResponse(200, {
+        success: true,
+        status: 'sended with success',
+        message: {
+          id: 'quepasa-fake-send',
+          wid: '5511888888888',
+          chatId: RECIPIENT_JID,
+          trackId: '',
+        },
+      });
+    }
+
     throw new Error(`fetchStub (quepasa): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -399,20 +415,57 @@ describe('quepasa adapter: comportamento específico do provider', () => {
     expect(capturedBody?.fileName).toBe('contrato.pdf');
   });
 
-  it('messages.sendMedia com kind "sticker" lança INVALID_INPUT (QuePasa não tem tipo sticker)', async () => {
-    const adapter = quepasa(buildAdapterOptions());
+  it('messages.sendMedia com kind "sticker" e media.url envia {chatId, sticker: {url}} para POST /v3/bot/{token}/send (gap-fix ADR-0014)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/v3/bot/${TOKEN}/send`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
     const wa = createConnector(adapter);
-    const failure = await wa.messages
-      .sendMedia({
-        to: RECIPIENT,
-        media: { kind: 'sticker', url: 'https://cdn.exemplo.test/f.webp' },
-      })
-      .catch((error: unknown) => error);
 
-    expect(isWaConnectorError(failure)).toBe(true);
-    if (isWaConnectorError(failure)) {
-      expect(failure.code).toBe('INVALID_INPUT');
-    }
+    const sent = await wa.messages.sendMedia({
+      to: RECIPIENT,
+      media: { kind: 'sticker', url: 'https://cdn.exemplo.test/f.webp' },
+    });
+
+    expect(sent.chatId).toBe(RECIPIENT_JID);
+    expect(capturedBody).toEqual({
+      chatId: RECIPIENT,
+      sticker: { url: 'https://cdn.exemplo.test/f.webp' },
+    });
+  });
+
+  it('messages.sendMedia com kind "sticker" e media.base64 envia {chatId, sticker: {content}} sem remover prefixo de data URI', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/v3/bot/${TOKEN}/send`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.messages.sendMedia({
+      to: RECIPIENT,
+      media: { kind: 'sticker', base64: 'data:image/png;base64,ZmFrZS1zdGlja2Vy' },
+    });
+
+    expect(capturedBody).toEqual({
+      chatId: RECIPIENT,
+      sticker: { content: 'data:image/png;base64,ZmFrZS1zdGlja2Vy' },
+    });
   });
 
   it('sendMedia sem media.url nem media.base64 lança INVALID_INPUT', async () => {
@@ -547,6 +600,98 @@ describe('quepasa adapter: comportamento específico do provider', () => {
     expect(adapter.capabilities).not.toContain('messages.forward');
     expect(adapter.capabilities).not.toContain('messages.pin');
     expect(adapter.messages.forward).toBeUndefined();
+  });
+
+  it('messages.sendLocation envia {chatId, location: {latitude, longitude, name, address}} para POST /v3/bot/{token}/send', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/v3/bot/${TOKEN}/send`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendLocation({
+      to: RECIPIENT,
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+      address: 'Av. Principal, 100',
+    });
+
+    expect(sent.chatId).toBe(RECIPIENT_JID);
+    expect(capturedBody).toEqual({
+      chatId: RECIPIENT,
+      location: {
+        latitude: -3.7,
+        longitude: -38.5,
+        name: 'Escritório',
+        address: 'Av. Principal, 100',
+      },
+    });
+  });
+
+  it('messages.sendContactCard envia {chatId, contact: {phone, name}} (sem vcard, auto-gerado pelo servidor) para POST /v3/bot/{token}/send', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/v3/bot/${TOKEN}/send`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendContactCard({
+      to: RECIPIENT,
+      contactName: 'Fulano',
+      contactPhone: '5511988888888',
+    });
+
+    expect(sent.chatId).toBe(RECIPIENT_JID);
+    expect(capturedBody).toEqual({
+      chatId: RECIPIENT,
+      contact: { phone: '5511988888888', name: 'Fulano' },
+    });
+  });
+
+  it('messages.sendPoll envia {chatId, poll: {question, options, selections}} para POST /v3/bot/{token}/send', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/v3/bot/${TOKEN}/send`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendPoll({
+      to: RECIPIENT,
+      question: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+      allowMultipleAnswers: true,
+    });
+
+    expect(sent.chatId).toBe(RECIPIENT_JID);
+    expect(capturedBody).toEqual({
+      chatId: RECIPIENT,
+      poll: { question: 'Qual sua cor favorita?', options: ['Azul', 'Verde'], selections: 2 },
+    });
   });
 
   it('chats.archive envia {chatid, archive: true} (tag minúscula, distinta de "chatId" de sendtext) para POST /chat/archive (rota legacy)', async () => {

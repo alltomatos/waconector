@@ -247,11 +247,13 @@ func (conn *WhatsmeowConnection) Delete() (err error) {
 sessão ativa de fato — um efeito real, só que num grau mais fraco do que "logout" normalmente
 implica. `logoutInstance()` chama `GET /command?action=stop`.
 
-## Capabilities implementadas nesta fase (ADR-0012: edição/exclusão de mensagem + `chats.*`; ADR-0013: ações sobre mensagem)
+## Capabilities implementadas nesta fase (ADR-0012: edição/exclusão de mensagem + `chats.*`; ADR-0013: ações sobre mensagem; ADR-0014: conteúdo estruturado)
 
 `messages.edit`, `messages.delete`, `chats.archive`, `chats.unarchive`, `chats.markRead`,
 `chats.markUnread` (ADR-0012); `messages.markRead` (ADR-0013 — sem `messages.forward`/`star`/
-`pin`/`unpin`, nenhuma rota legacy equivalente encontrada, ver "Operações core" abaixo).
+`pin`/`unpin`, nenhuma rota legacy equivalente encontrada, ver "Operações core" abaixo);
+`messages.sendLocation`/`sendContactCard`/`sendPoll` (ADR-0014 — cobertura 3/3, mesmo endpoint
+`/send` já usado por `sendtext`, ver "Conteúdo estruturado" abaixo).
 
 **Achado estrutural que muda o cálculo de risco em relação ao restante deste dossiê**: TODAS as
 seis operações acima vivem na família de rotas **legacy** (`legacy.RegisterAPIControllers`, aliases
@@ -459,6 +461,28 @@ documentado como real e aberto (não resolvido no snapshot pesquisado).
 | `chats.archive`/`chats.unarchive` | `POST /chat/archive` | Rota legacy. Body `{chatid, archive}` (tag minúscula). Ver "Conversas (`chats.*`)" acima. |
 | `chats.markRead`/`chats.markUnread` | `POST /chat/markread` / `POST /chat/markunread` | Rota legacy. Body `{chatid}`. Ver "Conversas (`chats.*`)" acima. |
 | `contacts.getProfilePicture` | `GET /v3/bot/{token}/picinfo/{chatid}` | Único endpoint de contato confirmado. |
+| `messages.sendLocation` / `sendContactCard` / `sendPoll` (ADR-0014) | `POST /v3/bot/{token}/send` | Mesmo handler `SendAny` de `sendtext`/`sendurl`/`sendencoded`, campos alternativos `location`/`contact`/`poll`. Ver "Conteúdo estruturado" abaixo. |
+
+## Conteúdo estruturado (`messages.sendLocation`/`sendContactCard`/`sendPoll`, ADR-0014)
+
+Não coberto pelo relatório de pesquisa original desta rodada (que era focado no escopo do
+ADR-0012/0013) — as 3 capabilities foram confirmadas via `gh api` direto contra o commit já usado
+como referência para este adapter (`deivisonrpg/quepasa`, `17c3b10bac751346ca4d6c3514839ea60e8d73ce`).
+Achado central: **`POST /v3/bot/{token}/send` é um endpoint mais genérico que `sendtext`/`sendurl`/
+`sendencoded`** — todos compartilham o mesmo handler Go (`SendAny`,
+`api_handlers+SendController.go`), e `/send` aceita campos alternativos ao lado de `text`/`url`/
+`content`: `poll`, `location`, `contact` (e também `sticker`, ver gap-fix acima). Registrado nas
+MESMAS duas famílias de rota já confiáveis para este adapter (legacy e v3/bot) — **não** a família
+v5-JWT que motivou a recusa de `groups.*`/`contacts.*` no Epic 6.
+
+| Operação canônica | Campo do body | Struct Go (confirmado por arquivo) | Observações |
+| --- | --- | --- | --- |
+| `messages.sendLocation` | `location: {latitude, longitude, name?, address?}` | `WhatsappLocation` (`whatsapp_location.go`) | `latitude`/`longitude` obrigatórios (`float64`); `name`/`address` opcionais. `SendLocationInput.name`/`.address` mapeiam direto. |
+| `messages.sendContactCard` | `contact: {phone, name, vcard?}` | `WhatsappContact` (`whatsapp_contact.go`) | `phone`/`name` obrigatórios; `vcard` é OPCIONAL e **auto-gerado pelo servidor quando ausente** (confirmado na doc do handler: "vcard (string, optional): Full vCard string (auto-generated if not provided)") — diferente de Whapi/Wuzapi, este adapter NÃO precisa montar a string vCard client-side. |
+| `messages.sendPoll` | `poll: {question, options, selections?}` | `WhatsappPoll` (`whatsapp_poll.go`) | `question`/`options` (`[]string`) obrigatórios; `selections` é o NÚMERO MÁXIMO de opções selecionáveis, default `1` (escolha única) quando omitido. `SendPollInput.allowMultipleAnswers` mapeia para `selections: options.length` quando `true`; omitido (default do servidor) quando `false`/ausente. |
+
+Resposta das 3: mesmo envelope `{success, status, message: {id, wid, chatId, trackId}}` de
+`sendtext`/`sendurl`/`sendencoded` — reaproveita `mapSendResponse` sem alteração.
 
 ### Formato do destinatário (`chatId`)
 
@@ -576,17 +600,24 @@ proto — funciona como legenda, mas o nome de arquivo original é perdido como 
 enviada ANTES do anexo. Este adapter não replica essa lógica — só repassa `text: input.caption` e
 `fileName: input.media.filename`, deixando o servidor decidir.
 
-**Sticker: sem caminho de ENVIO, confiança alta — mas o tipo EXISTE no modelo, ao contrário do que
-uma versão anterior deste dossiê afirmava.** O enum `WhatsappMessageType` DO INCLUIR um
-`StickerMessageType` (confirmado lendo `whatsapp_message_type.go` no snapshot mais recente,
-`deivisonrpg/quepasa` — serializa como a string literal `"sticker"`, o mesmo valor que este adapter
-já reconhece na recepção de webhooks, ver seção "Webhooks" abaixo). O que de fato falta é
-auto-detecção por mimetype no ENVIO: `image/webp` não está no case de `GetMessageType`
-(`whatsapp_extensions.go`) usado para classificar o tipo a partir do conteúdo — um "sticker" enviado
-por qualquer endpoint viraria um `DocumentMessage` comum, não uma figurinha de verdade. Este adapter
-lança `INVALID_INPUT` para `media.kind === 'sticker'` em vez de mandar silenciosamente algo
-diferente do que o chamador pediu — mas por ausência de rota de envio, não por ausência do tipo no
-modelo.
+**Sticker — gap fechado durante a pesquisa da ADR-0014 (correção de uma limitação registrada em
+versão anterior deste dossiê).** O enum `WhatsappMessageType` DO INCLUIR um `StickerMessageType`
+(confirmado lendo `whatsapp_message_type.go` — serializa como a string literal `"sticker"`, o mesmo
+valor que este adapter já reconhece na recepção de webhooks, ver seção "Webhooks" abaixo); a
+auto-detecção por mimetype em `GetMessageType` (`whatsapp_extensions.go`), usada por
+`/sendurl`/`/sendencoded`, de fato não reconhece `image/webp` — enviar por esses dois endpoints
+classificaria como `DocumentMessage` comum, não figurinha. **O que uma versão anterior não tinha
+encontrado**: existe um caminho de envio DEDICADO que não depende dessa auto-detecção —
+`POST /v3/bot/{token}/send` (mesmo commit, `api_handlers+SendController.go`, handler `SendAny`,
+MESMA família v3/bot já usada por `sendtext`/`sendurl`/`sendencoded`) aceita um campo
+`sticker: {url?, content?}` (`WhatsappSticker`) resolvido por `ResolveStickerAttachment`
+(`api_sticker.go`): baixa/decodifica o conteúdo e CONVERTE para WebP 512×512 via FFmpeg
+server-side (pula a conversão se o mimetype de entrada já for `image/webp`/`video/webp`). `content`
+aceita base64 CRU ou DATA URI indistintamente (`decodeStickerContent` detecta o prefixo `data:`
+sozinho) — diferente do `content` de `/sendencoded`, não precisa de `stripDataUriPrefix`. Este
+adapter agora roteia `media.kind === 'sticker'` para esse caminho (`sendSticker`, função dedicada)
+em vez de lançar `INVALID_INPUT`. Sem `caption`: `WhatsappSticker` não tem campo de texto (mesma
+limitação do WhatsApp real para figurinhas).
 
 **Áudio como PTT (nota de voz) é automático por mimetype**, não por parâmetro:
 

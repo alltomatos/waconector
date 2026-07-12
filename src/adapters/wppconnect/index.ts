@@ -39,7 +39,10 @@ import type {
   MediaRef,
   MessageAck,
   MessageKind,
+  SendContactCardInput,
+  SendLocationInput,
   SendMediaInput,
+  SendPollInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
@@ -165,6 +168,9 @@ const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'messages.forward',
   'messages.star',
   'messages.unstar',
+  'messages.sendLocation',
+  'messages.sendContactCard',
+  'messages.sendPoll',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -226,6 +232,9 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     forward: (input) => forwardMessage(http, session, input),
     star: (input) => setMessageStarred(http, session, input, true),
     unstar: (input) => setMessageStarred(http, session, input, false),
+    sendLocation: (input) => sendLocation(http, session, input),
+    sendContactCard: (input) => sendContactCard(http, session, input),
+    sendPoll: (input) => sendPoll(http, session, input),
   };
 
   const groups: GroupsApi = {
@@ -769,6 +778,102 @@ async function setMessageStarred(
     path: sessionPath(session, '/star-message'),
     body: { messageId: input.messageId, star },
   });
+}
+
+/**
+ * `POST /send-location` (ADR-0014; `MessageController.sendLocation`, confirmado em código —
+ * commit `f09e2fed`). Body confirmado pelo Swagger real: `{phone, isGroup, lat, lng, title,
+ * address}` — **`lat`/`lng` são STRINGS no schema, não números** (`{"lat":"-89898322","lng":
+ * "-545454", ...}` no exemplo literal). `phone` é reescrito para array pelo middleware
+ * `statusConnection` (mesmo mecanismo de `sendText`/`forwardMessage`); o handler faz `for (const
+ * contato of phone) { results.push(await req.client.sendLocation(contato, {lat, lng, address,
+ * name: title})) }` — resposta é um array de 1 elemento para este adapter (sempre 1 destinatário),
+ * mesmo padrão de `unwrapArrayResponse` já usado por `sendText`/`sendMedia`.
+ * `SendLocationInput.name` mapeia para `title` (rótulo do pin); `address` direto.
+ */
+async function sendLocation(
+  http: HttpClient,
+  session: string,
+  input: SendLocationInput,
+): Promise<SentMessage> {
+  const recipient = toWppconnectRecipient(input.to);
+  const body: Record<string, unknown> = {
+    phone: recipient.phone,
+    isGroup: recipient.isGroup,
+    lat: String(input.latitude),
+    lng: String(input.longitude),
+  };
+  if (input.name) body.title = input.name;
+  if (input.address) body.address = input.address;
+
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: sessionPath(session, '/send-location'),
+    body,
+  });
+  return mapSentMessageFromMessage(response, recipient.phone);
+}
+
+/**
+ * `POST /contact-vcard` (ADR-0014; `DeviceController.sendContactVcard`, confirmado em código).
+ * Body confirmado pelo Swagger real: `{phone, isGroup, name, contactsId}` — `contactsId` é um
+ * ARRAY de contatos (permite enviar múltiplos contatos numa única mensagem; exemplo literal:
+ * `contactsId: ['5521999999999']`), diferente da maioria dos outros adapters (que aceitam só um
+ * contato solto) — `SendContactCardInput` só modela um contato/telefone, então este adapter sempre
+ * envia um array de 1 elemento. `name` é o rótulo exibido na mensagem de contato (não precisa
+ * bater com o nome salvo do contato em si). **Divergência de envelope confirmada no controller**:
+ * diferente de `sendLocation`/`sendPollMessage` (que fazem `results.push(...)` e retornam um
+ * ARRAY), este handler faz `response = await client.sendContactVcard(...)` dentro do loop SEM
+ * `push` — o último valor sobrescreve os anteriores, resultando num objeto BARE, não um array (para
+ * este adapter, que sempre envia 1 destinatário, o resultado prático é o mesmo objeto de qualquer
+ * forma). `unwrapArrayResponse` cobre os dois casos sem alteração.
+ */
+async function sendContactCard(
+  http: HttpClient,
+  session: string,
+  input: SendContactCardInput,
+): Promise<SentMessage> {
+  const recipient = toWppconnectRecipient(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: sessionPath(session, '/contact-vcard'),
+    body: {
+      phone: recipient.phone,
+      isGroup: recipient.isGroup,
+      name: input.contactName,
+      contactsId: [input.contactPhone],
+    },
+  });
+  return mapSentMessageFromMessage(response, recipient.phone);
+}
+
+/**
+ * `POST /send-poll-message` (ADR-0014; `MessageController.sendPollMessage`, confirmado em código).
+ * Body confirmado pelo Swagger real: `{phone, isGroup, name, choices, options: {selectableCount}}`
+ * — `SendPollInput.question`/`.options` mapeiam para `name`/`choices`; `selectableCount` é o
+ * NÚMERO MÁXIMO de opções selecionáveis (exemplo literal do schema usa `1`, escolha única).
+ * `allowMultipleAnswers` mapeia para `selectableCount: options.length` (qualquer número de opções)
+ * quando `true`, `1` quando `false`/ausente — mesmo critério "default mais restritivo" já usado
+ * nos demais adapters desta ADR. Mesmo padrão de array de `sendLocation` (`results.push(...)`).
+ */
+async function sendPoll(
+  http: HttpClient,
+  session: string,
+  input: SendPollInput,
+): Promise<SentMessage> {
+  const recipient = toWppconnectRecipient(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: sessionPath(session, '/send-poll-message'),
+    body: {
+      phone: recipient.phone,
+      isGroup: recipient.isGroup,
+      name: input.question,
+      choices: input.options,
+      options: { selectableCount: input.allowMultipleAnswers ? input.options.length : 1 },
+    },
+  });
+  return mapSentMessageFromMessage(response, recipient.phone);
 }
 
 /**

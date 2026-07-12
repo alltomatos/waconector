@@ -439,6 +439,16 @@ negativa confirmada, não gap de pesquisa.
 | `messages.pin` / `messages.unpin` | `POST /message/pin` | Alta | Body `{id, pin?: boolean (default true), duration?: integer (default 30)}`. **Nuance documentada explicitamente**: `duration` só aceita `1`, `7` ou `30` (dias) — qualquer outro valor cai silenciosamente para 30 (exemplo dedicado no spec, `duration: 99` → 30). `PinMessageInput` não expõe duração (ADR-0013); este adapter omite o campo, usando o default do próprio provider (30 dias). Em grupos, a permissão depende da config do WhatsApp do grupo — "o backend não valida localmente se a instância é admin; a decisão final é do WhatsApp". Newsletters/canais não são suportados por este endpoint. Resposta rica (`messageType: "PinInChatMessage"`, `pinned: boolean`) — ignorada, `Promise<void>`. |
 | `messages.markRead` | `POST /message/markread` | Alta | Body `{id: string[]}` — lista de IDs, marca várias mensagens de uma vez; este adapter sempre envia um array com 1 elemento. Resposta `{results: [{message_id, status, error?}]}` (por item, não all-or-nothing) — ignorada, `Promise<void>`. Distinto de `chats.markRead` (`/chat/read`, nível de conversa, ver seção "Chats" abaixo). |
 
+## Conteúdo estruturado (`messages.sendLocation`/`sendContactCard`/`sendPoll`, ADR-0014)
+
+Cobertura 3/3, confiança Alta para as 3.
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.sendLocation` | `POST /send/location` | Request mínimo `{number, latitude, longitude}` (obrigatórios); `name`/`address` opcionais para pin nomeado. Herda os campos comuns de envio (`replyid`/`mentions`/`delay`/`forward`/`track_source`/`track_id`/`async`) que `sendText`/`sendMedia` já ignoram deliberadamente hoje — mesmo critério aplicado aqui. |
+| `messages.sendContactCard` | `POST /send/contact` | Request mínimo `{number, fullName, phoneNumber}` (obrigatórios) — campos soltos, o provider monta um vCard completo clicável no servidor (diferente de outros providers pesquisados que exigem um vCard já montado pelo chamador). `phoneNumber` aceita múltiplos números separados por vírgula na doc, mas `SendContactCardInput` só modela um telefone; `organization`/`email`/`url` (opcionais) não têm de onde vir no contrato canônico e são omitidos. |
+| `messages.sendPoll` | `POST /send/menu` (`type: "poll"`) | Interface UNIFICADA para botões/lista/enquete/carrossel, discriminada pelo campo `type`. Para enquete: `{number, type: "poll", text, choices: string[], selectableCount?}` — `question`/`options` mapeiam para `text`/`choices`; `selectableCount` só se aplica a enquetes (permite múltipla escolha) — este adapter envia `1` (escolha única) quando `allowMultipleAnswers` é falso/ausente, `options.length` quando verdadeiro. `choices` usa convenção textual compacta só para os tipos `list`/`carousel` (`"[Título]"` demarca seção, `"Título|id|descrição"` demarca opção) — para `type: "poll"` os itens de `choices` são strings simples (os próprios textos das opções), sem essa sintaxe. |
+
 ## Chats (gestão de estado da conversa)
 
 Namespace `chats.*` introduzido pelo ADR-0012 — distinto de `contacts.*` (sobre a pessoa/JID) e de

@@ -151,6 +151,49 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, envelope(2));
     }
 
+    // messages.sendLocation (ADR-0014): POST /send-location — mesmo padrão de array de um
+    // elemento que /send-message (results.push(...) num loop sobre phone).
+    if (method === 'POST' && suffix === '/send-location') {
+      return jsonResponse(
+        200,
+        envelope([
+          {
+            id: 'true_5511999999999@c.us_3EB0FAKELOCATION',
+            chatId: '5511999999999@c.us',
+            t: 1751000040,
+          },
+        ]),
+      );
+    }
+
+    // messages.sendContactCard (ADR-0014): POST /contact-vcard — resposta BARE (não array, o
+    // controller não faz `push`, só sobrescreve `response` a cada iteração do loop).
+    if (method === 'POST' && suffix === '/contact-vcard') {
+      return jsonResponse(
+        200,
+        envelope({
+          id: 'true_5511999999999@c.us_3EB0FAKECONTACT',
+          chatId: '5511999999999@c.us',
+          t: 1751000041,
+        }),
+      );
+    }
+
+    // messages.sendPoll (ADR-0014): POST /send-poll-message — mesmo padrão de array de
+    // /send-location.
+    if (method === 'POST' && suffix === '/send-poll-message') {
+      return jsonResponse(
+        200,
+        envelope([
+          {
+            id: 'true_5511999999999@c.us_3EB0FAKEPOLL',
+            chatId: '5511999999999@c.us',
+            t: 1751000042,
+          },
+        ]),
+      );
+    }
+
     if (method === 'POST' && suffix === '/archive-chat') {
       return jsonResponse(200, envelope({ wid: '5511999999999@c.us', archive: true }));
     }
@@ -1395,6 +1438,102 @@ describe('wppconnect adapter: comportamento específico do provider', () => {
       { messageId: 'true_5511999999999@c.us_MOCKSTAR', star: true },
       { messageId: 'true_5511999999999@c.us_MOCKSTAR', star: false },
     ]);
+  });
+
+  it('messages.sendLocation envia {phone, isGroup, lat, lng, title, address} (lat/lng como strings) para POST /send-location', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-location`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendLocation({
+      to: '5511999999999',
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+      address: 'Av. Principal, 100',
+    });
+
+    expect(sent.chatId).toBe('5511999999999@c.us');
+    expect(capturedBody).toEqual({
+      phone: '5511999999999',
+      isGroup: false,
+      lat: '-3.7',
+      lng: '-38.5',
+      title: 'Escritório',
+      address: 'Av. Principal, 100',
+    });
+  });
+
+  it('messages.sendContactCard envia {phone, isGroup, name, contactsId: [contactPhone]} para POST /contact-vcard', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/contact-vcard`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendContactCard({
+      to: '5511999999999',
+      contactName: 'Fulano',
+      contactPhone: '5511988888888',
+    });
+
+    expect(sent.chatId).toBe('5511999999999@c.us');
+    expect(capturedBody).toEqual({
+      phone: '5511999999999',
+      isGroup: false,
+      name: 'Fulano',
+      contactsId: ['5511988888888'],
+    });
+  });
+
+  it('messages.sendPoll envia {phone, isGroup, name, choices, options: {selectableCount}} para POST /send-poll-message', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-poll-message`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendPoll({
+      to: '5511999999999',
+      question: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+      allowMultipleAnswers: true,
+    });
+
+    expect(sent.chatId).toBe('5511999999999@c.us');
+    expect(capturedBody).toEqual({
+      phone: '5511999999999',
+      isGroup: false,
+      name: 'Qual sua cor favorita?',
+      choices: ['Azul', 'Verde'],
+      options: { selectableCount: 2 },
+    });
   });
 
   it('não declara messages.pin/unpin/markRead (nível de mensagem — só /pin-chat e mark-unseen/send-seen de nível de conversa existem)', () => {

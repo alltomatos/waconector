@@ -126,6 +126,33 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    // messages.sendLocation (ADR-0014): POST /send/location.
+    if (method === 'POST' && pathname === '/send/location') {
+      return jsonResponse(200, {
+        id: '3EB0FAKE0000000000LOCATION',
+        messageid: '3EB0FAKE0000000000LOCATION',
+        messageTimestamp: 1735689600,
+      });
+    }
+
+    // messages.sendContactCard (ADR-0014): POST /send/contact.
+    if (method === 'POST' && pathname === '/send/contact') {
+      return jsonResponse(200, {
+        id: '3EB0FAKE0000000000CONTACT',
+        messageid: '3EB0FAKE0000000000CONTACT',
+        messageTimestamp: 1735689601,
+      });
+    }
+
+    // messages.sendPoll (ADR-0014): POST /send/menu com type "poll".
+    if (method === 'POST' && pathname === '/send/menu') {
+      return jsonResponse(200, {
+        id: '3EB0FAKE0000000000POLL',
+        messageid: '3EB0FAKE0000000000POLL',
+        messageTimestamp: 1735689602,
+      });
+    }
+
     if (method === 'POST' && pathname === '/chat/archive') {
       return jsonResponse(200, { response: 'Chat updated successfully' });
     }
@@ -1592,6 +1619,100 @@ describe('uazapi adapter: comportamento específico do provider', () => {
     ).resolves.toBeUndefined();
 
     expect(capturedBody).toEqual({ id: ['3EB0FAKE0000000000READ'] });
+  });
+
+  it('messages.sendLocation envia {number, latitude, longitude, name, address} para POST /send/location', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/send/location') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendLocation({
+      to: '5511999999999',
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+      address: 'Av. Principal, 100',
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody).toEqual({
+      number: '5511999999999',
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+      address: 'Av. Principal, 100',
+    });
+  });
+
+  it('messages.sendContactCard envia {number, fullName, phoneNumber} para POST /send/contact', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/send/contact') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendContactCard({
+      to: '5511999999999',
+      contactName: 'Fulano',
+      contactPhone: '5511988888888',
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody).toEqual({
+      number: '5511999999999',
+      fullName: 'Fulano',
+      phoneNumber: '5511988888888',
+    });
+  });
+
+  it('messages.sendPoll envia {number, type: "poll", text, choices, selectableCount} para POST /send/menu', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/send/menu') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendPoll({
+      to: '5511999999999',
+      question: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+      allowMultipleAnswers: true,
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody).toEqual({
+      number: '5511999999999',
+      type: 'poll',
+      text: 'Qual sua cor favorita?',
+      choices: ['Azul', 'Verde'],
+      selectableCount: 2,
+    });
   });
 
   it('não declara messages.forward/star/unstar (busca exaustiva não encontrou endpoint)', () => {

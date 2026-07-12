@@ -38,7 +38,10 @@ import type {
   MediaRef,
   MessageAck,
   MessageKind,
+  SendContactCardInput,
+  SendLocationInput,
   SendMediaInput,
+  SendPollInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
@@ -92,6 +95,9 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'messages.edit',
   'messages.delete',
   'messages.markRead',
+  'messages.sendLocation',
+  'messages.sendContactCard',
+  'messages.sendPoll',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -146,6 +152,9 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     edit: (input) => editMessage(http, input),
     delete: (input) => deleteMessage(http, input),
     markRead: (input) => markMessageRead(http, input),
+    sendLocation: (input) => sendLocation(http, input),
+    sendContactCard: (input) => sendContactCard(http, input),
+    sendPoll: (input) => sendPoll(http, input),
   };
 
   const groups: GroupsApi = {
@@ -473,6 +482,73 @@ async function markMessageRead(http: HttpClient, input: MarkMessageReadInput): P
     path: '/message/markread',
     body: { id: [input.messageId], number: toProviderNumber(input.to) },
   });
+}
+
+/**
+ * `POST /send/location` (ADR-0014; confirmado via `send-message.yaml`, schema `SendLocation` —
+ * confiança Alta). `SendLocationInput.name`/`.address` mapeiam direto para os campos homônimos do
+ * schema (`name`, `address`, ambos opcionais). Resposta real do provider confirma `Type:
+ * LocationMessage`, `Message.locationMessage: {degreesLatitude, degreesLongitude, name, address}`.
+ */
+async function sendLocation(http: HttpClient, input: SendLocationInput): Promise<SentMessage> {
+  const body: Record<string, unknown> = {
+    number: toProviderNumber(input.to),
+    latitude: input.latitude,
+    longitude: input.longitude,
+  };
+  if (input.name) body.name = input.name;
+  if (input.address) body.address = input.address;
+
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'POST',
+    path: '/send/location',
+    body,
+  });
+  return toSentMessage(input.to, response);
+}
+
+/**
+ * `POST /send/contact` (ADR-0014; confirmado via schema `SendContact`/`VCard` — confiança Alta). O
+ * provider **não** recebe um vCard bruto — só 3 campos soltos (`fullName`/`organization`/`phone`)
+ * e monta o `BEGIN:VCARD...END:VCARD` completo no servidor (confirmado no exemplo de resposta:
+ * `FN=fullName`, `ORG=organization;`, `TEL;type=CELL;type=VOICE;waid=phone:phone`).
+ * `SendContactCardInput` não tem campo de organização — omitido (schema não o declara
+ * obrigatório). Suporta um único telefone por contato, sem múltiplos números/campos extra.
+ */
+async function sendContactCard(
+  http: HttpClient,
+  input: SendContactCardInput,
+): Promise<SentMessage> {
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'POST',
+    path: '/send/contact',
+    body: {
+      number: toProviderNumber(input.to),
+      vcard: { fullName: input.contactName, phone: input.contactPhone },
+    },
+  });
+  return toSentMessage(input.to, response);
+}
+
+/**
+ * `POST /send/poll` (ADR-0014; confirmado via schema `SendPoll` — confiança Alta). `maxAnswer`
+ * controla quantas opções o respondente pode marcar (`0` = escolha única, no whatsmeow
+ * `selectableOptionsCount`); `SendPollInput.allowMultipleAnswers` mapeia para
+ * `maxAnswer: options.length` (qualquer número de opções) quando `true`, `0` quando `false`/
+ * ausente. Resposta confirma `Type: PollCreationMessage`.
+ */
+async function sendPoll(http: HttpClient, input: SendPollInput): Promise<SentMessage> {
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'POST',
+    path: '/send/poll',
+    body: {
+      number: toProviderNumber(input.to),
+      question: input.question,
+      options: input.options,
+      maxAnswer: input.allowMultipleAnswers ? input.options.length : 0,
+    },
+  });
+  return toSentMessage(input.to, response);
 }
 
 function toSentMessage(to: string, response: EvolutionEnvelope): SentMessage {

@@ -275,6 +275,33 @@ function createFetchStub(): typeof globalThis.fetch {
       return new Response(null, { status: 204 });
     }
 
+    // messages.sendLocation (ADR-0014): POST /send-location.
+    if (method === 'POST' && pathname === `${PREFIX}/send-location`) {
+      return jsonResponse(200, {
+        zaapId: 'MOCKLOCATIONZAAP001',
+        messageId: 'MOCKLOCATION001',
+        id: 'MOCKLOCATION001',
+      });
+    }
+
+    // messages.sendContactCard (ADR-0014): POST /send-contact.
+    if (method === 'POST' && pathname === `${PREFIX}/send-contact`) {
+      return jsonResponse(200, {
+        zaapId: 'MOCKCONTACTZAAP001',
+        messageId: 'MOCKCONTACT001',
+        id: 'MOCKCONTACT001',
+      });
+    }
+
+    // messages.sendPoll (ADR-0014): POST /send-poll.
+    if (method === 'POST' && pathname === `${PREFIX}/send-poll`) {
+      return jsonResponse(200, {
+        zaapId: 'MOCKPOLLZAAP001',
+        messageId: 'MOCKPOLL001',
+        id: 'MOCKPOLL001',
+      });
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1711,6 +1738,99 @@ describe('zapi adapter: comportamento específico do provider', () => {
     ).resolves.toBeUndefined();
 
     expect(capturedBody).toEqual({ phone: '5511999999999', messageId: '3EB0ORIGINAL' });
+  });
+
+  it('messages.sendLocation envia {phone, title, address, latitude, longitude} para POST /send-location', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/send-location`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendLocation({
+      to: '5511999999999',
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+      address: 'Av. Principal, 100',
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody).toEqual({
+      phone: '5511999999999',
+      latitude: -3.7,
+      longitude: -38.5,
+      title: 'Escritório',
+      address: 'Av. Principal, 100',
+    });
+  });
+
+  it('messages.sendContactCard envia {phone, contactName, contactPhone} (sem vCard) para POST /send-contact', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/send-contact`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendContactCard({
+      to: '5511999999999',
+      contactName: 'Fulano',
+      contactPhone: '5511988888888',
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody).toEqual({
+      phone: '5511999999999',
+      contactName: 'Fulano',
+      contactPhone: '5511988888888',
+    });
+  });
+
+  it('messages.sendPoll envia {phone, message, poll: [{name}], pollMaxOptions} para POST /send-poll', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/send-poll`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendPoll({
+      to: '5511999999999',
+      question: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+      allowMultipleAnswers: true,
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody).toEqual({
+      phone: '5511999999999',
+      message: 'Qual sua cor favorita?',
+      poll: [{ name: 'Azul' }, { name: 'Verde' }],
+      pollMaxOptions: 2,
+    });
   });
 
   it.each([

@@ -139,6 +139,27 @@ describe('capabilities no conector', () => {
       wa.messages.markRead({ to: '5585999999999', messageId: 'm1' }),
     );
     expect(markReadMsgFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const sendLocationFailure = await reject(
+      wa.messages.sendLocation({ to: '5585999999999', latitude: -3.7, longitude: -38.5 }),
+    );
+    expect(sendLocationFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const sendContactCardFailure = await reject(
+      wa.messages.sendContactCard({
+        to: '5585999999999',
+        contactName: 'Fulano',
+        contactPhone: '5585988888888',
+      }),
+    );
+    expect(sendContactCardFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const sendPollFailure = await reject(
+      wa.messages.sendPoll({
+        to: '5585999999999',
+        question: 'Pergunta?',
+        options: ['Sim', 'Não'],
+      }),
+    );
+    expect(sendPollFailure).toBeInstanceOf(UnsupportedCapabilityError);
   });
 
   it('adapter que declara messages.forward sem implementar o método falha com PROVIDER_ERROR', async () => {
@@ -148,6 +169,18 @@ describe('capabilities no conector', () => {
     const wa = createConnector(adapter);
 
     const failure = await reject(wa.messages.forward({ to: '5585999999999', messageId: 'm1' }));
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('adapter que declara messages.sendPoll sem implementar o método falha com PROVIDER_ERROR', async () => {
+    const adapter = new MockAdapter({ capabilities: ['messages.sendPoll', 'webhooks.parse'] });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (capability declarada sem método) para testar o guard-rail do conector.
+    (adapter.messages as any).sendPoll = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(
+      wa.messages.sendPoll({ to: '5585999999999', question: 'Pergunta?', options: ['Sim', 'Não'] }),
+    );
     expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
 
@@ -505,6 +538,92 @@ describe('validação e normalização de messages.forward/star/pin/markRead', (
 
     await wa.messages.markRead({ to: '+55 (85) 99999-9999', messageId: 'm1' });
     expect(adapter.isMessageRead('m1')).toBe(true);
+  });
+});
+
+describe('validação e normalização de messages.sendLocation/sendContactCard/sendPoll', () => {
+  it('rejeita latitude/longitude não numéricas em sendLocation com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    // biome-ignore lint/suspicious/noExplicitAny: testa validação de entrada inválida em tempo de execução.
+    const badLatitude = { to: '5585999999999', latitude: 'x', longitude: -38.5 } as any;
+    // biome-ignore lint/suspicious/noExplicitAny: testa validação de entrada inválida em tempo de execução.
+    const badLongitude = { to: '5585999999999', latitude: -3.7, longitude: 'y' } as any;
+
+    for (const call of [
+      () => wa.messages.sendLocation(badLatitude),
+      () => wa.messages.sendLocation(badLongitude),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+    }
+  });
+
+  it('rejeita contactName/contactPhone vazios em sendContactCard com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () =>
+        wa.messages.sendContactCard({
+          to: '5585999999999',
+          contactName: '',
+          contactPhone: '5585988888888',
+        }),
+      () =>
+        wa.messages.sendContactCard({
+          to: '5585999999999',
+          contactName: 'Fulano',
+          contactPhone: '',
+        }),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+    }
+  });
+
+  it('rejeita question vazia ou menos de 2 options em sendPoll com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () => wa.messages.sendPoll({ to: '5585999999999', question: '', options: ['Sim', 'Não'] }),
+      () => wa.messages.sendPoll({ to: '5585999999999', question: 'Pergunta?', options: ['Sim'] }),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+    }
+  });
+
+  it('normaliza "to" antes de entregar ao adapter, em sendLocation/sendContactCard/sendPoll', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const location = await wa.messages.sendLocation({
+      to: '+55 (85) 99999-9999',
+      latitude: -3.7,
+      longitude: -38.5,
+    });
+    expect(location.chatId).toBe('5585999999999');
+
+    const contactCard = await wa.messages.sendContactCard({
+      to: '+55 (85) 99999-9999',
+      contactName: 'Fulano',
+      contactPhone: '5585988888888',
+    });
+    expect(contactCard.chatId).toBe('5585999999999');
+
+    const poll = await wa.messages.sendPoll({
+      to: '+55 (85) 99999-9999',
+      question: 'Pergunta?',
+      options: ['Sim', 'Não'],
+    });
+    expect(poll.chatId).toBe('5585999999999');
   });
 });
 
