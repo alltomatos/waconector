@@ -55,6 +55,9 @@ export const CAPABILITIES = [
   'chats.unpin',
   'chats.markRead',
   'chats.markUnread',
+  'presence.setTyping',
+  'presence.set',
+  'presence.subscribe',
   'webhooks.parse',
 ] as const;
 

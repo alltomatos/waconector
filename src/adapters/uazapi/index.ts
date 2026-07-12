@@ -4,6 +4,7 @@ import type {
   GroupsApi,
   InstanceApi,
   MessagesApi,
+  PresenceApi,
   WaAdapter,
   WebhookInput,
 } from '../../core/adapter';
@@ -33,6 +34,7 @@ import type {
   MessageAck,
   MessageKind,
   PinMessageInput,
+  PresenceState,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -40,6 +42,7 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  SetTypingInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -105,6 +108,8 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'chats.unpin',
   'chats.markRead',
   'chats.markUnread',
+  'presence.setTyping',
+  'presence.set',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -173,6 +178,11 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     markUnread: (chatId) => markChatUnread(http, chatId),
   };
 
+  const presence: PresenceApi = {
+    setTyping: (input) => setTyping(http, input),
+    set: (state) => setPresence(http, state),
+  };
+
   const groups: GroupsApi = {
     create: (input) => createGroup(http, input),
     getInfo: (groupId) => getGroupInfo(http, groupId),
@@ -211,6 +221,7 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     groups,
     contacts,
     chats,
+    presence,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1039,6 +1050,43 @@ async function markChatRead(http: HttpClient, chatId: string): Promise<void> {
 
 async function markChatUnread(http: HttpClient, chatId: string): Promise<void> {
   await setChatRead(http, chatId, false);
+}
+
+// ---------------------------------------------------------------------------
+// presence.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `presence.setTyping` (ADR-0015): `POST /message/presence` — confiança Alta. Body: `{number,
+ * presence: "composing"|"recording"|"paused", delay?}` — `TypingState` mapeia 1:1 com o enum do
+ * provider, sem tradução. `delay` (ms, máx. 300000) não é exposto por `SetTypingInput` — omitido,
+ * o provider reenvia o indicador a cada 10s até seu próprio limite de 5 minutos. **Assíncrono**:
+ * é cancelado automaticamente ao enviar uma mensagem real para o mesmo chat (comportamento do
+ * provider, não deste adapter).
+ */
+async function setTyping(http: HttpClient, input: SetTypingInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/message/presence',
+    body: { number: toUazapiNumber(input.to), presence: input.state },
+  });
+}
+
+/**
+ * `presence.set` (ADR-0015): `POST /instance/presence` — confiança Alta. Body: `{presence:
+ * "available"|"unavailable"}` — presença GLOBAL da conta, distinta da presença por-chat acima.
+ * `PresenceState` mapeia `online` -> `available`, `offline` -> `unavailable`. **Efeito colateral
+ * documentado**: quando a API é o único dispositivo ativo e a presença é `unavailable`,
+ * confirmações de entrega/leitura não são enviadas nem recebidas — o provider também pode reverter
+ * para `available` "em algumas situações internas", não controlável por este adapter.
+ * **Sem `presence.subscribe`**: nenhum endpoint equivalente confirmado na pesquisa.
+ */
+async function setPresence(http: HttpClient, state: PresenceState): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/instance/presence',
+    body: { presence: state === 'online' ? 'available' : 'unavailable' },
+  });
 }
 
 // ---------------------------------------------------------------------------

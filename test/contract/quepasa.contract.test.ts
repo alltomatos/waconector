@@ -162,6 +162,11 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    // presence.setTyping (ADR-0015, rota legacy): POST /chat/presence.
+    if (method === 'POST' && pathname === '/chat/presence') {
+      return jsonResponse(200, { success: true });
+    }
+
     throw new Error(`fetchStub (quepasa): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -789,6 +794,39 @@ describe('quepasa adapter: comportamento específico do provider', () => {
     expect(adapter.capabilities).not.toContain('chats.unpin');
     expect(adapter.chats?.mute).toBeUndefined();
     expect(adapter.chats?.pin).toBeUndefined();
+  });
+
+  it('presence.setTyping envia {chatid, type} para POST /chat/presence (rota legacy) — composing->"text", recording->"audio"', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/presence') {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.presence.setTyping({ to: RECIPIENT, state: 'composing' });
+    await wa.presence.setTyping({ to: RECIPIENT, state: 'recording' });
+    await wa.presence.setTyping({ to: RECIPIENT, state: 'paused' });
+
+    expect(capturedBodies).toEqual([
+      { chatid: RECIPIENT, type: 'text' },
+      { chatid: RECIPIENT, type: 'audio' },
+      { chatid: RECIPIENT, type: 'paused' },
+    ]);
+  });
+
+  it('não declara presence.set/presence.subscribe (sem endpoint equivalente confirmado na pesquisa)', () => {
+    const adapter = quepasa(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('presence.set');
+    expect(adapter.capabilities).not.toContain('presence.subscribe');
+    expect(adapter.presence?.set).toBeUndefined();
   });
 
   it('parseWebhook normaliza mensagem de texto recebida (fromme:false) para message.received', () => {

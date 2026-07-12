@@ -214,6 +214,30 @@ export interface SendPollInput {
   allowMultipleAnswers?: boolean;
 }
 
+/**
+ * Ver ADR-0015. Vocabulário canônico do indicador de digitação/gravação por conversa
+ * (`presence.setTyping`) — mapeia para o enum nativo do whatsmeow (`composing`/`recording`/
+ * `paused`) que a maioria dos providers pesquisados já usa diretamente ou com pequenas variações
+ * (ex.: Whapi usa `pause` no singular; Wuzapi expressa `recording` como `composing` + um campo
+ * `Media: "audio"` separado). Sem estado "stop"/"idle" distinto — `paused` já é a convenção do
+ * protocolo para "parar de mostrar o indicador".
+ */
+export type TypingState = 'composing' | 'recording' | 'paused';
+
+/** Ver ADR-0015. */
+export interface SetTypingInput {
+  to: string;
+  state: TypingState;
+}
+
+/**
+ * Ver ADR-0015. Presença GLOBAL da conta (`presence.set`) — distinta do indicador por conversa
+ * (`presence.setTyping`). Nenhum provider pesquisado usa vocabulário diferente de online/offline
+ * para este conceito (alguns usam `available`/`unavailable` no wire, mas o significado é sempre
+ * este par binário) — cada adapter traduz internamente.
+ */
+export type PresenceState = 'online' | 'offline';
+
 /** Participante de um grupo, normalizado. Ver ADR-0009. */
 export interface GroupParticipant {
   /** Telefone E.164 sem `+` ou JID explícito — mesma convenção de chatId de mensagem. */

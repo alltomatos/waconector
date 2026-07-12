@@ -1879,4 +1879,22 @@ describe('zapi adapter: comportamento específico do provider', () => {
       expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
     }
   });
+
+  it('não declara nenhuma capability de presence.* (ADR-0015 — busca negativa confirmada, sem endpoint de envio de presença/digitação no provider)', async () => {
+    const adapter = zapi(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('presence.setTyping');
+    expect(adapter.capabilities).not.toContain('presence.set');
+    expect(adapter.capabilities).not.toContain('presence.subscribe');
+    expect(adapter.presence).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const failure = await wa.presence
+      .setTyping({ to: '5511999999999', state: 'composing' })
+      .catch((error: unknown) => error);
+
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+    }
+  });
 });

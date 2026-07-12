@@ -326,6 +326,10 @@ function createFetchStub(): typeof globalThis.fetch {
     if (method === 'POST' && url.pathname === '/chat/unpin') {
       return jsonResponse(200, { message: 'success' });
     }
+    // presence.setTyping (ADR-0015): POST /message/presence.
+    if (method === 'POST' && url.pathname === '/message/presence') {
+      return jsonResponse(200, { message: 'success' });
+    }
 
     throw new Error(`fetchStub (evolution): rota não configurada ${method} ${url.pathname}`);
   };
@@ -1477,6 +1481,41 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
 
     expect(capturedBody).toEqual({ number: '5511999999999' });
     expect(result).toBeUndefined();
+  });
+
+  it('presence.setTyping envia POST /message/presence com {number, state, isAudio} (isAudio só quando state="recording")', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/message/presence') {
+        calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await wa.presence.setTyping({ to: '5511999999999', state: 'composing' });
+    await wa.presence.setTyping({ to: '5511999999999', state: 'recording' });
+    await wa.presence.setTyping({ to: '5511999999999', state: 'paused' });
+
+    expect(calls).toEqual([
+      { number: '5511999999999', state: 'composing', isAudio: false },
+      { number: '5511999999999', state: 'recording', isAudio: true },
+      { number: '5511999999999', state: 'paused', isAudio: false },
+    ]);
+  });
+
+  it('não declara presence.set/presence.subscribe (sem endpoint equivalente confirmado no OpenAPI oficial)', () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+    expect(adapter.capabilities).not.toContain('presence.set');
+    expect(adapter.capabilities).not.toContain('presence.subscribe');
+    expect(adapter.presence?.set).toBeUndefined();
   });
 
   it('chats.* declara só archive/mute/pin/unpin — sem unarchive/unmute/markRead/markUnread (sem endpoint confirmado no OpenAPI oficial, ver docs/providers/evolution.md)', () => {

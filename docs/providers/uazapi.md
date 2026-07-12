@@ -449,6 +449,16 @@ Cobertura 3/3, confiança Alta para as 3.
 | `messages.sendContactCard` | `POST /send/contact` | Request mínimo `{number, fullName, phoneNumber}` (obrigatórios) — campos soltos, o provider monta um vCard completo clicável no servidor (diferente de outros providers pesquisados que exigem um vCard já montado pelo chamador). `phoneNumber` aceita múltiplos números separados por vírgula na doc, mas `SendContactCardInput` só modela um telefone; `organization`/`email`/`url` (opcionais) não têm de onde vir no contrato canônico e são omitidos. |
 | `messages.sendPoll` | `POST /send/menu` (`type: "poll"`) | Interface UNIFICADA para botões/lista/enquete/carrossel, discriminada pelo campo `type`. Para enquete: `{number, type: "poll", text, choices: string[], selectableCount?}` — `question`/`options` mapeiam para `text`/`choices`; `selectableCount` só se aplica a enquetes (permite múltipla escolha) — este adapter envia `1` (escolha única) quando `allowMultipleAnswers` é falso/ausente, `options.length` quando verdadeiro. `choices` usa convenção textual compacta só para os tipos `list`/`carousel` (`"[Título]"` demarca seção, `"Título|id|descrição"` demarca opção) — para `type: "poll"` os itens de `choices` são strings simples (os próprios textos das opções), sem essa sintaxe. |
 
+## Presença (`presence.setTyping`/`set`, ADR-0015)
+
+Cobertura 2/3 — confiança Alta para as 2. **Sem `presence.subscribe`**: nenhum endpoint equivalente
+confirmado na pesquisa.
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `presence.setTyping` | `POST /message/presence` | Request: `{number, presence: "composing"\|"recording"\|"paused", delay?}` — `TypingState` mapeia 1:1 com o enum do provider, sem tradução. `delay` (ms, máx. 300000) não é exposto pelo contrato canônico — omitido; o servidor reenvia o indicador a cada 10s até seu próprio limite de 5 minutos, e cancela automaticamente ao enviar uma mensagem real para o mesmo chat. Operação assíncrona, gerenciada em background pelo servidor. |
+| `presence.set` | `POST /instance/presence` | Request: `{presence: "available"\|"unavailable"}` — presença GLOBAL da conta, distinta da presença por-chat acima. `PresenceState` mapeia `online` → `available`, `offline` → `unavailable`. **Efeito colateral documentado**: quando a API é o único dispositivo ativo e a presença é `unavailable`, confirmações de entrega/leitura (ticks cinzas/azuis) não são enviadas nem recebidas; o servidor também pode reverter para `available` "em algumas situações internas da API", não controlável por este adapter — a doc recomenda ajustar a privacidade de "visto por último" no WhatsApp se isso for indesejado. |
+
 ## Chats (gestão de estado da conversa)
 
 Namespace `chats.*` introduzido pelo ADR-0012 — distinto de `contacts.*` (sobre a pessoa/JID) e de

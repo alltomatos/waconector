@@ -371,6 +371,20 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    // presence.setTyping/set (ADR-0015): POST /api/{session}/presence.
+    if (method === 'POST' && pathname === `/api/${SESSION}/presence`) {
+      return new Response(null, { status: 201 });
+    }
+
+    // presence.subscribe (ADR-0015): POST /api/{session}/presence/{chatId}/subscribe.
+    if (
+      method === 'POST' &&
+      pathname.startsWith(`/api/${SESSION}/presence/`) &&
+      pathname.endsWith('/subscribe')
+    ) {
+      return new Response(null, { status: 201 });
+    }
+
     throw new Error(`fetchStub: rota não configurada — ${method} ${pathname}`);
   };
 }
@@ -1534,6 +1548,75 @@ describe('WAHA adapter: comportamento específico do provider', () => {
         expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
       }
     }
+  });
+
+  it('presence.setTyping chama POST /api/{session}/presence com {chatId, presence} (composing -> "typing")', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.presence.setTyping({ to: '5585999999999', state: 'composing' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/presence`);
+    expect(calls[0]?.body).toEqual({ chatId: '5585999999999@c.us', presence: 'typing' });
+  });
+
+  it('presence.set chama POST /api/{session}/presence com {presence} (sem chatId, presença global)', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/${SESSION}/presence`) {
+            calls.push({ path: url.pathname, body: JSON.parse(String(init?.body)) });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.presence.set('online')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ path: `/api/${SESSION}/presence`, body: { presence: 'online' } }]);
+  });
+
+  it('presence.subscribe chama POST /api/{session}/presence/{chatId}/subscribe sem corpo', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.presence.subscribe('5585999999999')).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/presence/${CHAT_ID_ENCODED}/subscribe`);
+    expect(calls[0]?.body).toBeUndefined();
   });
 
   it('parseWebhook normaliza "message.ack" do dossiê para MessageAckEvent', () => {

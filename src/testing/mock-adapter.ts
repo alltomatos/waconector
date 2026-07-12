@@ -4,6 +4,7 @@ import type {
   GroupsApi,
   InstanceApi,
   MessagesApi,
+  PresenceApi,
   WaAdapter,
   WebhookInput,
 } from '../core/adapter';
@@ -19,10 +20,12 @@ import {
   type InstanceState,
   MESSAGE_ACKS,
   type MessageAck,
+  type PresenceState,
   type SendMediaInput,
   type SendReactionInput,
   type SendTextInput,
   type SentMessage,
+  type TypingState,
 } from '../core/types';
 
 export interface MockAdapterOptions {
@@ -51,6 +54,7 @@ export class MockAdapter implements WaAdapter {
   readonly groups: GroupsApi;
   readonly contacts: ContactsApi;
   readonly chats: ChatsApi;
+  readonly presence: PresenceApi;
 
   private state: InstanceState;
   private seq = 0;
@@ -67,6 +71,9 @@ export class MockAdapter implements WaAdapter {
   private readonly starredMessageIds = new Set<string>();
   private readonly pinnedMessageIds = new Set<string>();
   private readonly readMessageIds = new Set<string>();
+  private globalPresence: PresenceState | undefined;
+  private readonly typingStateByChatId = new Map<string, TypingState>();
+  private readonly subscribedPresenceChatIds = new Set<string>();
 
   constructor(options: MockAdapterOptions = {}) {
     this.provider = options.provider ?? 'mock';
@@ -331,6 +338,21 @@ export class MockAdapter implements WaAdapter {
         this.unreadChatIds.add(chatId);
       },
     };
+
+    this.presence = {
+      setTyping: async (input) => {
+        this.assertConnected();
+        this.typingStateByChatId.set(input.to, input.state);
+      },
+      set: async (state) => {
+        this.assertConnected();
+        this.globalPresence = state;
+      },
+      subscribe: async (chatId) => {
+        this.assertConnected();
+        this.subscribedPresenceChatIds.add(chatId);
+      },
+    };
   }
 
   /** Consulta de estado só para testes (não faz parte do contrato `ChatsApi`). */
@@ -366,6 +388,21 @@ export class MockAdapter implements WaAdapter {
   /** Consulta de estado só para testes (não faz parte do contrato `MessagesApi`). Ver ADR-0013. */
   isMessageRead(messageId: string): boolean {
     return this.readMessageIds.has(messageId);
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `PresenceApi`). Ver ADR-0015. */
+  getGlobalPresence(): PresenceState | undefined {
+    return this.globalPresence;
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `PresenceApi`). Ver ADR-0015. */
+  getTypingState(chatId: string): TypingState | undefined {
+    return this.typingStateByChatId.get(chatId);
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `PresenceApi`). Ver ADR-0015. */
+  isSubscribedToPresence(chatId: string): boolean {
+    return this.subscribedPresenceChatIds.has(chatId);
   }
 
   simulateConnected(): void {

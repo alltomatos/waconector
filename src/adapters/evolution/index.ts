@@ -4,6 +4,7 @@ import type {
   GroupsApi,
   InstanceApi,
   MessagesApi,
+  PresenceApi,
   WaAdapter,
   WebhookInput,
 } from '../../core/adapter';
@@ -45,6 +46,7 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  SetTypingInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -124,6 +126,7 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'chats.mute',
   'chats.pin',
   'chats.unpin',
+  'presence.setTyping',
   'webhooks.parse',
 ];
 
@@ -203,6 +206,10 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     unpin: (chatId) => unpinChat(http, chatId),
   };
 
+  const presence: PresenceApi = {
+    setTyping: (input) => setChatPresence(http, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: EVOLUTION_CAPABILITIES,
@@ -211,6 +218,7 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     groups,
     contacts,
     chats,
+    presence,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1104,6 +1112,33 @@ async function pinChat(http: HttpClient, chatId: string): Promise<void> {
  */
 async function unpinChat(http: HttpClient, chatId: string): Promise<void> {
   await http.request({ method: 'POST', path: '/chat/unpin', body: chatBody(chatId) });
+}
+
+// ---------------------------------------------------------------------------
+// presence.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `presence.setTyping` (ADR-0015) — `POST /message/presence`, schema `ChatPresence` (confiança
+ * Alta). Body: `{number, state, isAudio}` — vive fisicamente em `evo-go-message.yaml`, não em
+ * `evo-go-chat.yaml` (mesma inconsistência de organização já documentada para `chats.setPresence`
+ * no dossiê). `state` provavelmente aceita os valores whatsmeow padrão (`composing`/`recording`/
+ * `paused`) — não enumerados explicitamente no spec, mapeado 1:1 com `TypingState` por analogia.
+ * `isAudio` (assunção não confirmada por exemplo literal) é enviado como `true` só quando
+ * `state === 'recording'` — best-effort para distinguir "gravando áudio" de "digitando".
+ * **Sem `presence.set`/`presence.subscribe`**: nenhum endpoint equivalente encontrado em
+ * `evo-go-message.yaml`/`evo-go-chat.yaml`.
+ */
+async function setChatPresence(http: HttpClient, input: SetTypingInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/message/presence',
+    body: {
+      number: toProviderNumber(input.to),
+      state: input.state,
+      isAudio: input.state === 'recording',
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------

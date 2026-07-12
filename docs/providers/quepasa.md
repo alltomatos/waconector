@@ -484,6 +484,32 @@ v5-JWT que motivou a recusa de `groups.*`/`contacts.*` no Epic 6.
 Resposta das 3: mesmo envelope `{success, status, message: {id, wid, chatId, trackId}}` de
 `sendtext`/`sendurl`/`sendencoded` — reaproveita `mapSendResponse` sem alteração.
 
+## Presença (`presence.setTyping`, ADR-0015)
+
+Cobertura 1/3 — só `setTyping`. **Sem `presence.set`/`presence.subscribe`**: nenhum endpoint
+equivalente confirmado na pesquisa.
+
+`POST /chat/presence` (legacy — mesmo handler `ChatPresenceController` reutilizado pela rota v5
+`/chats/presence`, mas a legacy não passa por JWT, mesmo critério já usado para `chats.*`/
+`messages.markRead`). Corpo confirmado por struct (`api_handlers+ChatPresenceController.go`):
+
+```go
+type ChatPresenceRequest struct {
+	ChatId   string                            `json:"chatid"`
+	Type     whatsapp.WhatsappChatPresenceType `json:"type"`
+	Duration uint                              `json:"duration,omitempty"` // ms
+}
+```
+
+Enum `WhatsappChatPresenceType` (`whatsapp_chat_presence_type.go`, serializa como string):
+`"paused"`/`"text"`/`"audio"` — `TypingState.composing` mapeia para `"text"`, `recording` para
+`"audio"`, `paused` direto. `duration` (ms, opcional) não é exposto por `SetTypingInput` — omitido:
+sem manutenção pelo servidor, o indicador "digitando..." não é permanente por padrão (precisaria
+ser reenviado); com `duration`, um job assíncrono (`ChatPresenceRequestsController`) reenvia o
+indicador periodicamente e, ao expirar, envia automaticamente `paused` — uma nova chamada para o
+MESMO `chatid` cancela o timer anterior. Confiança Alta (enum, struct e lógica de duração citados
+literalmente no código-fonte).
+
 ### Formato do destinatário (`chatId`)
 
 `FormatEndpoint()` (`src/whatsapp/whatsapp_extensions.go`), citado literalmente:

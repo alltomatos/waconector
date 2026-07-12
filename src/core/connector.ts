@@ -4,6 +4,7 @@ import type {
   GroupsApi,
   InstanceApi,
   MessagesApi,
+  PresenceApi,
   WaAdapter,
   WebhookInput,
 } from './adapter';
@@ -27,6 +28,7 @@ import type {
   MarkMessageReadInput,
   MediaRef,
   PinMessageInput,
+  PresenceState,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -34,7 +36,9 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  SetTypingInput,
   StarMessageInput,
+  TypingState,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -45,6 +49,9 @@ export type WaEventListener<T extends CanonicalEventType | '*'> = (
 ) => void | Promise<void>;
 
 type AnyListener = (event: CanonicalEvent) => void | Promise<void>;
+
+/** Validação em runtime de `SetTypingInput.state` — mesma rede de segurança para chamadores JS sem checagem de tipo em tempo de compilação, já usada em outros pontos do conector. */
+const TYPING_STATES: readonly TypingState[] = ['composing', 'recording', 'paused'];
 
 export interface WebhooksApi {
   /** Traduz um webhook do provider para eventos canônicos. Nunca lança: payloads irreconhecíveis viram `unknown`. */
@@ -132,6 +139,16 @@ export interface ConnectorChatsApi {
 }
 
 /**
+ * `PresenceApi` exposta pelo conector: todo método sempre presente (diferente da interface do
+ * adapter, onde o NAMESPACE INTEIRO é opcional — ver ADR-0015, mesmo critério de `ChatsApi`).
+ */
+export interface ConnectorPresenceApi {
+  setTyping(input: SetTypingInput): Promise<void>;
+  set(state: PresenceState): Promise<void>;
+  subscribe(chatId: string): Promise<void>;
+}
+
+/**
  * Camada de ergonomia e política sobre um adapter: checagem de capabilities,
  * validação e normalização de entrada, eventos e parsing seguro de webhooks.
  */
@@ -144,6 +161,7 @@ export class WaConnector {
   readonly groups: ConnectorGroupsApi;
   readonly contacts: ConnectorContactsApi;
   readonly chats: ConnectorChatsApi;
+  readonly presence: ConnectorPresenceApi;
   readonly webhooks: WebhooksApi;
 
   private readonly listeners = new Map<string, Set<AnyListener>>();
@@ -326,6 +344,18 @@ export class WaConnector {
         this.callChatsMethod('markRead', 'chats.markRead', (fn) => fn(this.requireChatId(chatId))),
       markUnread: (chatId) =>
         this.callChatsMethod('markUnread', 'chats.markUnread', (fn) =>
+          fn(this.requireChatId(chatId)),
+        ),
+    };
+
+    this.presence = {
+      setTyping: (input) =>
+        this.callPresenceMethod('setTyping', 'presence.setTyping', (fn) =>
+          fn(this.prepareSetTyping(input)),
+        ),
+      set: (state) => this.callPresenceMethod('set', 'presence.set', (fn) => fn(state)),
+      subscribe: (chatId) =>
+        this.callPresenceMethod('subscribe', 'presence.subscribe', (fn) =>
           fn(this.requireChatId(chatId)),
         ),
     };
@@ -532,6 +562,17 @@ export class WaConnector {
     return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
   }
 
+  private prepareSetTyping(input: SetTypingInput): SetTypingInput {
+    if (!TYPING_STATES.includes(input.state)) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        `presence.setTyping exige "state" em ${TYPING_STATES.join('|')}.`,
+        { provider: this.provider },
+      );
+    }
+    return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
+  }
+
   /**
    * Guard-rail comum aos métodos opcionais de `MessagesApi` (`sendReaction`/`edit`/`delete`/
    * `forward`/`star`/`unstar`/`pin`/`unpin`/`markRead`/`sendLocation`/`sendContactCard`/
@@ -625,6 +666,28 @@ export class WaConnector {
       );
     }
     return invoke(fn as NonNullable<ChatsApi[K]>);
+  }
+
+  /**
+   * Guard-rail de `presence.*` — mesmo padrão de `callChatsMethod` (namespace inteiro opcional no
+   * adapter, ver ADR-0015).
+   */
+  private async callPresenceMethod<K extends keyof PresenceApi, R>(
+    method: K,
+    capability: Capability,
+    invoke: (fn: NonNullable<PresenceApi[K]>) => Promise<R>,
+  ): Promise<R> {
+    this.assertCapability(capability);
+    const fn = this.adapter.presence?.[method];
+    if (!fn) {
+      throw new WaConnectorError(
+        'PROVIDER_ERROR',
+        `Adapter "${this.provider}" declara a capability "${capability}" mas não implementa ` +
+          `presence.${String(method)} — isso é um bug no adapter, não uma entrada inválida.`,
+        { provider: this.provider },
+      );
+    }
+    return invoke(fn as NonNullable<PresenceApi[K]>);
   }
 
   /**

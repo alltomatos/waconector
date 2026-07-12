@@ -383,6 +383,29 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    // presence.setTyping (ADR-0015): POST /chat/presence.
+    if (method === 'POST' && pathname === '/chat/presence') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Chat presence set successfuly' },
+      });
+    }
+
+    // presence.set (ADR-0015): POST /user/presence.
+    if (method === 'POST' && pathname === '/user/presence') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Presence set successfuly' },
+      });
+    }
+
+    // presence.subscribe (ADR-0015): POST /user/presence/subscribe.
+    if (method === 'POST' && pathname === '/user/presence/subscribe') {
+      return jsonResponse(200, { code: 200, success: true, data: { Details: 'Subscribed' } });
+    }
+
     throw new Error(`fetchStub (wuzapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1026,6 +1049,72 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
     await expect(wa.chats?.unarchive?.('5511999999999@s.whatsapp.net')).resolves.toBeUndefined();
 
     expect(capturedBody).toEqual({ jid: '5511999999999@s.whatsapp.net', archive: false });
+  });
+
+  it('presence.setTyping envia {Phone, State, Media} para POST /chat/presence (recording -> State:"composing"+Media:"audio")', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/presence') {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.presence.setTyping({ to: '5511999999999', state: 'composing' });
+    await wa.presence.setTyping({ to: '5511999999999', state: 'recording' });
+    await wa.presence.setTyping({ to: '5511999999999', state: 'paused' });
+
+    expect(capturedBodies).toEqual([
+      { Phone: '5511999999999', State: 'composing', Media: '' },
+      { Phone: '5511999999999', State: 'composing', Media: 'audio' },
+      { Phone: '5511999999999', State: 'paused', Media: '' },
+    ]);
+  });
+
+  it('presence.set envia {type} para POST /user/presence (online -> "available", offline -> "unavailable")', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/user/presence') {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.presence.set('online');
+    await wa.presence.set('offline');
+
+    expect(capturedBodies).toEqual([{ type: 'available' }, { type: 'unavailable' }]);
+  });
+
+  it('presence.subscribe envia {Phone} para POST /user/presence/subscribe', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/user/presence/subscribe') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.presence.subscribe('5511999999999')).resolves.toBeUndefined();
+    expect(capturedBody).toEqual({ Phone: '5511999999999' });
   });
 
   it('não declara chats.mute/unmute/pin/unpin/markRead/markUnread (sem endpoint equivalente confirmado no código-fonte para o contrato canônico)', () => {

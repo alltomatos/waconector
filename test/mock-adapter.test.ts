@@ -294,6 +294,50 @@ describe('MockAdapter: chats', () => {
   });
 });
 
+describe('MockAdapter: presence', () => {
+  it('setTyping registra o estado consultável via getTypingState', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    expect(adapter.getTypingState('5585999999999')).toBeUndefined();
+    await wa.presence.setTyping({ to: '5585999999999', state: 'composing' });
+    expect(adapter.getTypingState('5585999999999')).toBe('composing');
+    await wa.presence.setTyping({ to: '5585999999999', state: 'paused' });
+    expect(adapter.getTypingState('5585999999999')).toBe('paused');
+  });
+
+  it('set registra a presença global consultável via getGlobalPresence', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    expect(adapter.getGlobalPresence()).toBeUndefined();
+    await wa.presence.set('online');
+    expect(adapter.getGlobalPresence()).toBe('online');
+  });
+
+  it('subscribe registra o chatId consultável via isSubscribedToPresence', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    expect(adapter.isSubscribedToPresence('5585999999999')).toBe(false);
+    await wa.presence.subscribe('5585999999999');
+    expect(adapter.isSubscribedToPresence('5585999999999')).toBe(true);
+  });
+
+  it('todo método de presence.* exige instância conectada (INSTANCE_DISCONNECTED)', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(
+      wa.presence.setTyping({ to: '5585999999999', state: 'composing' }),
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'INSTANCE_DISCONNECTED').toBe(true);
+  });
+});
+
 describe('MockAdapter: groups', () => {
   it('cria um grupo e permite consultá-lo via getInfo/list', async () => {
     const adapter = new MockAdapter();

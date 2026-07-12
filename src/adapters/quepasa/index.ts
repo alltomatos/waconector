@@ -4,6 +4,7 @@ import type {
   GroupsApi,
   InstanceApi,
   MessagesApi,
+  PresenceApi,
   WaAdapter,
   WebhookInput,
 } from '../../core/adapter';
@@ -31,6 +32,7 @@ import type {
   SendPollInput,
   SendTextInput,
   SentMessage,
+  SetTypingInput,
   WaMessage,
 } from '../../core/types';
 
@@ -146,6 +148,7 @@ const QUEPASA_CAPABILITIES: CapabilitySet = [
   'chats.unarchive',
   'chats.markRead',
   'chats.markUnread',
+  'presence.setTyping',
   'webhooks.parse',
 ];
 
@@ -201,6 +204,12 @@ export function quepasa(options: QuepasaOptions): WaAdapter {
     markUnread: (chatId) => setChatRead(http, chatId, false),
   };
 
+  // Só `setTyping` confirmado pela pesquisa (ver QUEPASA_CAPABILITIES acima) — sem
+  // `presence.set`/`presence.subscribe`.
+  const presence: PresenceApi = {
+    setTyping: (input) => setTyping(http, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: QUEPASA_CAPABILITIES,
@@ -209,6 +218,7 @@ export function quepasa(options: QuepasaOptions): WaAdapter {
     groups,
     contacts,
     chats,
+    presence,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -761,6 +771,34 @@ async function setChatRead(http: HttpClient, chatId: string, read: boolean): Pro
     method: 'POST',
     path: read ? '/chat/markread' : '/chat/markunread',
     body: { chatid: toQuepasaChatId(chatId) },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// presence.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `presence.setTyping` (ADR-0015) — `POST /chat/presence` (legacy — mesmo handler
+ * `ChatPresenceController` reutilizado pela rota v5 `/chats/presence`, mas a legacy não passa por
+ * JWT, mesmo critério já usado para `chats.*`/`messages.markRead`). Corpo confirmado por struct
+ * (`api_handlers+ChatPresenceController.go`, `ChatPresenceRequest{ChatId, Type, Duration}`):
+ * `{chatid, type}` — `type` usa o enum `WhatsappChatPresenceType` (`whatsapp_chat_presence_type.go`
+ * — serializa como string): `"text"` (digitando), `"audio"` (gravando), `"paused"`.
+ * `TypingState.composing` mapeia para `"text"`, `recording` para `"audio"`, `paused` direto.
+ * `duration` (ms, opcional) não é exposto por `SetTypingInput` — omitido: sem manutenção pelo
+ * servidor, o indicador não é permanente por padrão (precisaria ser reenviado); com `duration`, o
+ * servidor mantém o efeito vivo até expirar e desliga sozinho — nuance do provider, não uma
+ * limitação deste adapter. **Sem `presence.set`/`presence.subscribe`**: nenhum endpoint
+ * equivalente confirmado na pesquisa.
+ */
+async function setTyping(http: HttpClient, input: SetTypingInput): Promise<void> {
+  const type =
+    input.state === 'composing' ? 'text' : input.state === 'recording' ? 'audio' : 'paused';
+  await http.request({
+    method: 'POST',
+    path: '/chat/presence',
+    body: { chatid: toQuepasaChatId(input.to), type },
   });
 }
 

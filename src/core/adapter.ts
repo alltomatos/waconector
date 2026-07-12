@@ -17,6 +17,7 @@ import type {
   JoinGroupInviteInput,
   MarkMessageReadInput,
   PinMessageInput,
+  PresenceState,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -24,6 +25,7 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  SetTypingInput,
   StarMessageInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
@@ -152,6 +154,20 @@ export interface ChatsApi {
 }
 
 /**
+ * Namespace novo (ADR-0015), inteiramente OPCIONAL — mesmo padrão de `chats?` (ADR-0012), não
+ * obrigatório como `messages`. Cobre presença/indicador de atividade, distinto de `chats.*`
+ * (estado de conversa) e `messages.*` (conteúdo de mensagem).
+ */
+export interface PresenceApi {
+  /** Indicador de digitação/gravação por conversa (`composing`/`recording`/`paused`). */
+  setTyping?(input: SetTypingInput): Promise<void>;
+  /** Presença GLOBAL da conta (online/offline) — distinta do indicador por conversa acima. */
+  set?(state: PresenceState): Promise<void>;
+  /** Inscreve-se para receber atualizações de presença de um contato via webhook. */
+  subscribe?(chatId: string): Promise<void>;
+}
+
+/**
  * Contrato que todo adapter de provider implementa.
  *
  * O adapter é "burro" de propósito: apenas traduz o modelo canônico de/para o
@@ -172,5 +188,7 @@ export interface WaAdapter {
    * real demais irregular para justificar um campo mandatório.
    */
   readonly chats?: ChatsApi;
+  /** Namespace OPCIONAL (ADR-0015) — mesmo critério de `chats?` acima. */
+  readonly presence?: PresenceApi;
   parseWebhook(input: WebhookInput): CanonicalEvent[];
 }
