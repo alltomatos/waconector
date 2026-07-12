@@ -13,6 +13,11 @@ import { describeAdapterContract } from './adapter-contract';
 
 const TOKEN = 'contrato-token-whapi-nao-real';
 const RECIPIENT = '5511999999999';
+const GROUP_ID = '120363000000000000@g.us';
+/** `@` vira `%40` em `url.pathname` (via `encodeURIComponent`, feito pelo adapter) — usado para
+ * comparar o path recebido pelo stub; `GROUP_ID` (com `@` cru) é usado para chamar o adapter e para
+ * conferir valores de campo (`group.id`), nunca para comparar `pathname`. */
+const GROUP_ID_PATH = encodeURIComponent(GROUP_ID);
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -120,6 +125,151 @@ function createFetchStub(): typeof globalThis.fetch {
           timestamp: 1712995340,
         },
       });
+    }
+
+    const reactionMatch = pathname.match(/^\/messages\/(.+)\/reaction$/);
+    if ((method === 'PUT' || method === 'DELETE') && reactionMatch) {
+      return jsonResponse(200, { success: true });
+    }
+
+    if (method === 'POST' && pathname === '/groups') {
+      return jsonResponse(200, {
+        id: `${GROUP_ID}`,
+        name: 'Grupo de teste',
+        type: 'group',
+        participants: [
+          { id: `${RECIPIENT}@s.whatsapp.net`, rank: 'creator' },
+          { id: '5511988887777@s.whatsapp.net', rank: 'member' },
+        ],
+        created_by: `${RECIPIENT}@s.whatsapp.net`,
+      });
+    }
+
+    if (method === 'PUT' && pathname === '/groups') {
+      return jsonResponse(200, { group_id: GROUP_ID });
+    }
+
+    if (method === 'GET' && pathname === '/groups') {
+      return jsonResponse(200, {
+        groups: [
+          {
+            id: GROUP_ID,
+            name: 'Grupo de teste',
+            description: 'Descrição do grupo',
+            participants: [{ id: `${RECIPIENT}@s.whatsapp.net`, rank: 'admin' }],
+            created_by: `${RECIPIENT}@s.whatsapp.net`,
+          },
+        ],
+        count: 1,
+        total: 1,
+        offset: 0,
+      });
+    }
+
+    if (method === 'GET' && pathname === `/groups/${GROUP_ID_PATH}`) {
+      return jsonResponse(200, {
+        id: GROUP_ID,
+        name: 'Grupo de teste',
+        description: 'Descrição do grupo',
+        participants: [
+          { id: `${RECIPIENT}@s.whatsapp.net`, rank: 'creator' },
+          { id: '5511988887777@s.whatsapp.net', rank: 'admin' },
+          { id: '5511977776666@s.whatsapp.net', rank: 'member' },
+        ],
+        created_by: `${RECIPIENT}@s.whatsapp.net`,
+      });
+    }
+
+    if (method === 'PUT' && pathname === `/groups/${GROUP_ID_PATH}`) {
+      return jsonResponse(200, { success: true });
+    }
+
+    if (method === 'DELETE' && pathname === `/groups/${GROUP_ID_PATH}`) {
+      return jsonResponse(200, { success: true });
+    }
+
+    if (
+      (method === 'POST' || method === 'DELETE') &&
+      pathname === `/groups/${GROUP_ID_PATH}/participants`
+    ) {
+      return jsonResponse(200, { success: true, failed: [], processed: [] });
+    }
+
+    if (
+      (method === 'PATCH' || method === 'DELETE') &&
+      pathname === `/groups/${GROUP_ID_PATH}/admins`
+    ) {
+      return jsonResponse(200, { success: true });
+    }
+
+    if (method === 'PUT' && pathname === `/groups/${GROUP_ID_PATH}/icon`) {
+      return jsonResponse(200, { success: true });
+    }
+
+    if (method === 'GET' && pathname === `/groups/${GROUP_ID_PATH}/invite`) {
+      return jsonResponse(200, { invite_code: 'CONTRATOCODIGO' });
+    }
+
+    if (method === 'DELETE' && pathname === `/groups/${GROUP_ID_PATH}/invite`) {
+      return jsonResponse(200, { success: true });
+    }
+
+    if (method === 'GET' && pathname === '/contacts') {
+      return jsonResponse(200, {
+        contacts: [
+          {
+            id: `${RECIPIENT}@s.whatsapp.net`,
+            phone: RECIPIENT,
+            name: 'Contato de teste',
+            pushname: 'Pushname de teste',
+            profile_pic: 'https://cdn.exemplo.test/thumb.jpg',
+            profile_pic_full: 'https://cdn.exemplo.test/full.jpg',
+          },
+        ],
+        count: 1,
+        total: 1,
+        offset: 0,
+      });
+    }
+
+    if (method === 'GET' && pathname === `/contacts/${RECIPIENT}`) {
+      return jsonResponse(200, {
+        id: `${RECIPIENT}@s.whatsapp.net`,
+        phone: RECIPIENT,
+        name: 'Contato de teste',
+        pushname: 'Pushname de teste',
+        profile_pic_full: 'https://cdn.exemplo.test/full.jpg',
+      });
+    }
+
+    if (method === 'HEAD' && pathname === `/contacts/${RECIPIENT}`) {
+      return jsonResponse(200, undefined);
+    }
+
+    if (method === 'HEAD' && pathname === '/contacts/5511900000000') {
+      return jsonResponse(404, { error: 'Specified contact not registered' });
+    }
+
+    if (method === 'GET' && pathname === `/contacts/${RECIPIENT}/profile`) {
+      return jsonResponse(200, {
+        name: 'Contato de teste',
+        push_name: 'Pushname de teste',
+        about: 'Hey there! I am using WhatsApp.',
+        icon: 'https://cdn.exemplo.test/icon.jpg',
+        icon_full: 'https://cdn.exemplo.test/icon-full.jpg',
+      });
+    }
+
+    if (method === 'GET' && pathname === `/contacts/${RECIPIENT}/about`) {
+      return jsonResponse(200, { about: 'Hey there! I am using WhatsApp.' });
+    }
+
+    if ((method === 'PUT' || method === 'DELETE') && pathname === `/blacklist/${RECIPIENT}`) {
+      return jsonResponse(200, { success: true });
+    }
+
+    if (method === 'GET' && pathname === '/blacklist') {
+      return jsonResponse(200, ['5511988887777', '5511977776666@lid']);
     }
 
     throw new Error(`fetchStub (whapi): rota não configurada ${method} ${pathname}`);
@@ -455,6 +605,401 @@ describe('whapi adapter: comportamento específico do provider', () => {
     }
   });
 
+  it('messages.sendReaction envia PUT {emoji} e ecoa messageId/to no SentMessage (resposta é fixa, sem id próprio)', async () => {
+    let capturedMethod: string | undefined;
+    let capturedPath: string | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/reaction')) {
+            capturedMethod = (init?.method ?? 'GET').toUpperCase();
+            capturedPath = url.pathname;
+            capturedBody = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendReaction({
+      to: RECIPIENT,
+      messageId: 'CONTRATO_MSG_1',
+      emoji: '👍',
+    });
+
+    expect(capturedMethod).toBe('PUT');
+    expect(capturedPath).toBe('/messages/CONTRATO_MSG_1/reaction');
+    expect(capturedBody).toEqual({ emoji: '👍' });
+    expect(sent.id).toBe('CONTRATO_MSG_1');
+    expect(sent.chatId).toBe(RECIPIENT);
+    expect(sent.timestamp).toBeUndefined();
+  });
+
+  it('messages.sendReaction com emoji vazio chama DELETE /messages/{id}/reaction (endpoint dedicado de remoção)', async () => {
+    let capturedMethod: string | undefined;
+    let capturedBody: string | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/reaction')) {
+            capturedMethod = (init?.method ?? 'GET').toUpperCase();
+            capturedBody = init?.body === undefined ? undefined : String(init.body);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendReaction({ to: RECIPIENT, messageId: 'CONTRATO_MSG_1', emoji: '' });
+
+    expect(capturedMethod).toBe('DELETE');
+    expect(capturedBody).toBeUndefined();
+  });
+
+  it('groups.create envia {subject, participants} para POST /groups e mapeia participants por "rank"', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/groups' && (init?.method ?? 'GET').toUpperCase() === 'POST') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create({
+      subject: 'Grupo de teste',
+      participants: [RECIPIENT, '5511988887777'],
+    });
+
+    expect(capturedBody?.subject).toBe('Grupo de teste');
+    expect(capturedBody?.participants).toEqual([RECIPIENT, '5511988887777']);
+    expect(group.id).toBe(GROUP_ID);
+    expect(group.subject).toBe('Grupo de teste');
+    expect(group.participants).toEqual([
+      { id: `${RECIPIENT}@s.whatsapp.net`, isAdmin: true, isSuperAdmin: true },
+      { id: '5511988887777@s.whatsapp.net', isAdmin: false, isSuperAdmin: false },
+    ]);
+    expect(group).toHaveProperty('raw');
+  });
+
+  it('groups.getInfo chama GET /groups/{GroupID} e mapeia rank "admin"/"creator"/"member" para isAdmin/isSuperAdmin', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const group = await wa.groups.getInfo(GROUP_ID);
+
+    expect(group.id).toBe(GROUP_ID);
+    expect(group.subject).toBe('Grupo de teste');
+    expect(group.description).toBe('Descrição do grupo');
+    expect(group.owner).toBe(`${RECIPIENT}@s.whatsapp.net`);
+    expect(group.participants).toEqual([
+      { id: `${RECIPIENT}@s.whatsapp.net`, isAdmin: true, isSuperAdmin: true },
+      { id: '5511988887777@s.whatsapp.net', isAdmin: true, isSuperAdmin: false },
+      { id: '5511977776666@s.whatsapp.net', isAdmin: false, isSuperAdmin: false },
+    ]);
+  });
+
+  it('groups.list chama GET /groups e mapeia "groups" da resposta paginada', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const groups = await wa.groups.list();
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.id).toBe(GROUP_ID);
+    expect(groups[0]?.subject).toBe('Grupo de teste');
+  });
+
+  it('groups.addParticipants/removeParticipants enviam POST/DELETE em /groups/{GroupID}/participants com {participants} em lote', async () => {
+    const hits: Array<{ method: string; body: unknown }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/groups/${GROUP_ID_PATH}/participants`) {
+            hits.push({
+              method: (init?.method ?? 'GET').toUpperCase(),
+              body: JSON.parse(String(init?.body)),
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.addParticipants({ groupId: GROUP_ID, participants: [RECIPIENT] });
+    await wa.groups.removeParticipants({ groupId: GROUP_ID, participants: [RECIPIENT] });
+
+    expect(hits).toEqual([
+      { method: 'POST', body: { participants: [RECIPIENT] } },
+      { method: 'DELETE', body: { participants: [RECIPIENT] } },
+    ]);
+  });
+
+  it('groups.promoteParticipants/demoteParticipants enviam PATCH/DELETE em /groups/{GroupID}/admins', async () => {
+    const hits: string[] = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/groups/${GROUP_ID_PATH}/admins`) {
+            hits.push((init?.method ?? 'GET').toUpperCase());
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.promoteParticipants({ groupId: GROUP_ID, participants: [RECIPIENT] });
+    await wa.groups.demoteParticipants({ groupId: GROUP_ID, participants: [RECIPIENT] });
+
+    expect(hits).toEqual(['PATCH', 'DELETE']);
+  });
+
+  it('groups.updateSubject envia só {subject} para PUT /groups/{GroupID} (sem sobrescrever description)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (
+            url.pathname === `/groups/${GROUP_ID_PATH}` &&
+            (init?.method ?? '').toUpperCase() === 'PUT'
+          ) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.updateSubject({ groupId: GROUP_ID, subject: 'Novo nome' });
+
+    expect(capturedBody).toEqual({ subject: 'Novo nome' });
+  });
+
+  it('groups.updateDescription envia só {description} para o MESMO PUT /groups/{GroupID}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (
+            url.pathname === `/groups/${GROUP_ID_PATH}` &&
+            (init?.method ?? '').toUpperCase() === 'PUT'
+          ) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.updateDescription({ groupId: GROUP_ID, description: 'Nova descrição' });
+
+    expect(capturedBody).toEqual({ description: 'Nova descrição' });
+  });
+
+  it('groups.updatePicture envia {media} para PUT /groups/{GroupID}/icon', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/groups/${GROUP_ID_PATH}/icon`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.updatePicture({
+      groupId: GROUP_ID,
+      media: { kind: 'image', url: 'https://cdn.exemplo.test/foto-grupo.jpg' },
+    });
+
+    expect(capturedBody).toEqual({ media: 'https://cdn.exemplo.test/foto-grupo.jpg' });
+  });
+
+  it('groups.getInviteLink normaliza "invite_code" (só o código) para o link completo', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const result = await wa.groups.getInviteLink(GROUP_ID);
+
+    expect(result.link).toBe('https://chat.whatsapp.com/CONTRATOCODIGO');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('groups.revokeInviteLink encadeia DELETE (revoga) + GET (busca o código atualizado) e devolve o link completo', async () => {
+    const hits: string[] = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/groups/${GROUP_ID_PATH}/invite`) {
+            hits.push((init?.method ?? 'GET').toUpperCase());
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.groups.revokeInviteLink(GROUP_ID);
+
+    expect(hits).toEqual(['DELETE', 'GET']);
+    expect(result.link).toBe('https://chat.whatsapp.com/CONTRATOCODIGO');
+  });
+
+  it('groups.joinViaInviteLink extrai o código do link completo e envia {invite_code} para PUT /groups', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/groups' && (init?.method ?? '').toUpperCase() === 'PUT') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.joinViaInviteLink({ invite: 'CONTRATO_CODIGO_CONVITE' });
+
+    expect(capturedBody).toEqual({ invite_code: 'CONTRATO_CODIGO_CONVITE' });
+  });
+
+  it('groups.leaveGroup chama DELETE /groups/{GroupID}', async () => {
+    const hits: string[] = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/groups/${GROUP_ID_PATH}`) {
+            hits.push((init?.method ?? 'GET').toUpperCase());
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.groups.leaveGroup(GROUP_ID)).resolves.toBeUndefined();
+
+    expect(hits).toEqual(['DELETE']);
+  });
+
+  it('contacts.list chama GET /contacts e mapeia "contacts" da resposta paginada', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const contacts = await wa.contacts.list();
+
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0]?.id).toBe(`${RECIPIENT}@s.whatsapp.net`);
+    expect(contacts[0]?.name).toBe('Contato de teste');
+    expect(contacts[0]?.profilePictureUrl).toBe('https://cdn.exemplo.test/full.jpg');
+  });
+
+  it('contacts.get mapeia name/pushname/profile_pic_full a partir de GET /contacts/{ContactID}', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const contact = await wa.contacts.get(RECIPIENT);
+
+    expect(contact.id).toBe(`${RECIPIENT}@s.whatsapp.net`);
+    expect(contact.name).toBe('Contato de teste');
+    expect(contact.profilePictureUrl).toBe('https://cdn.exemplo.test/full.jpg');
+    expect(contact).toHaveProperty('raw');
+  });
+
+  it('contacts.checkExists usa HEAD /contacts/{ContactID}: 200 -> exists:true', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists(RECIPIENT);
+
+    expect(result.exists).toBe(true);
+    expect(result.chatId).toBe(RECIPIENT);
+  });
+
+  it('contacts.checkExists: HEAD 404 ("not registered") vira exists:false, não lança', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists('5511900000000');
+
+    expect(result.exists).toBe(false);
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('contacts.checkExists: qualquer status não-404 continua propagando como erro real', async () => {
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/contacts/5511911111111') {
+            return new Response('erro interno', { status: 500 });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const failure = await wa.contacts.checkExists('5511911111111').catch((error: unknown) => error);
+
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.code).toBe('PROVIDER_ERROR');
+    }
+  });
+
+  it('contacts.getProfilePicture prioriza "icon_full" sobre "icon"', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.getProfilePicture(RECIPIENT);
+
+    expect(result.url).toBe('https://cdn.exemplo.test/icon-full.jpg');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('contacts.getAbout mapeia "about" de GET /contacts/{ContactID}/about', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.getAbout(RECIPIENT);
+
+    expect(result.about).toBe('Hey there! I am using WhatsApp.');
+  });
+
+  it('contacts.block/unblock chamam PUT/DELETE em /blacklist/{ContactIdOrLid}, removendo o sufixo @s.whatsapp.net', async () => {
+    const hits: string[] = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/blacklist/${RECIPIENT}`) {
+            hits.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.contacts.block(`${RECIPIENT}@s.whatsapp.net`)).resolves.toBeUndefined();
+    await expect(wa.contacts.unblock(`${RECIPIENT}@s.whatsapp.net`)).resolves.toBeUndefined();
+
+    expect(hits).toEqual([`PUT /blacklist/${RECIPIENT}`, `DELETE /blacklist/${RECIPIENT}`]);
+  });
+
+  it('contacts.listBlocked chama GET /blacklist e devolve os IDs canônicos direto (dígitos ou @lid)', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const blocked = await wa.contacts.listBlocked();
+
+    expect(blocked).toEqual(['5511988887777', '5511977776666@lid']);
+  });
+
   it('parseWebhook normaliza mensagem de texto recebida (from_me:false) para message.received', () => {
     const adapter = whapi(buildAdapterOptions());
     const events = adapter.parseWebhook({ body: messageReceivedFixture });
@@ -591,12 +1136,14 @@ describe('whapi adapter: comportamento específico do provider', () => {
     }
   });
 
-  it('não declara groups.*/contacts.*/messages.sendReaction nesta fase', () => {
+  it('declara messages.sendReaction/groups.*/contacts.* (23 capabilities novas)', () => {
     const adapter = whapi(buildAdapterOptions());
-    expect(adapter.capabilities).not.toContain('messages.sendReaction');
-    expect(adapter.capabilities).not.toContain('groups.create');
-    expect(adapter.capabilities).not.toContain('contacts.list');
-    expect(adapter.messages.sendReaction).toBeUndefined();
+    expect(adapter.capabilities).toContain('messages.sendReaction');
+    expect(adapter.capabilities).toContain('groups.create');
+    expect(adapter.capabilities).toContain('groups.leaveGroup');
+    expect(adapter.capabilities).toContain('contacts.list');
+    expect(adapter.capabilities).toContain('contacts.listBlocked');
+    expect(adapter.capabilities).not.toContain('instance.pairingCode');
   });
 
   it('parseWebhook nunca lança para payload desconhecido ou quebrado (vira "unknown")', () => {

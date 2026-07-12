@@ -89,10 +89,10 @@ resto.
 
 ## Mudanças no core (`src/core/`)
 
-Barra mais alta: afetam todo adapter existente. Se for uma mudança que quebra `WaAdapter` /
-`CanonicalEvent` / `CAPABILITIES`, ainda é aceitável pré-1.0, mas precisa ser consciente e
-documentada — escreva um novo ADR em `docs/adr/` (numerado sequencialmente) explicando o porquê, não
-só o quê.
+Barra mais alta: afetam todo adapter existente. Desde o v1.0, a API pública é estável — uma mudança
+que quebra `WaAdapter` / `CanonicalEvent` / `CAPABILITIES` exige uma issue de discussão prévia e um
+changeset `major`, não é mais "aceitável em minors" como na fase 0.x. Documente a decisão com um
+novo ADR em `docs/adr/` (numerado sequencialmente) explicando o porquê, não só o quê.
 
 ## Referências
 

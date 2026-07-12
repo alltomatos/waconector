@@ -3,16 +3,18 @@
 - Docs oficiais: <https://whapi.readme.io/> (renderizada a partir do OpenAPI oficial,
   `https://github.com/Whapi-Cloud/whatsapp-api-docs/blob/main/openapi.yaml`, `info.version: 1.8.7`)
 - Versão testada: OpenAPI spec (13.141 linhas) e Help Desk (`support.whapi.cloud`) consultados em
-  2026-07-11
+  2026-07-11. `groups.*`/`contacts.*`/`messages.sendReaction` (auditoria de gaps, 23+1
+  capabilities) revalidados no MESMO arquivo `openapi.yaml` (`info.version: 1.8.7`, ainda 13.141
+  linhas) em 2026-07-11 — sem deriva de spec detectada entre as duas consultas.
 - Hospedagem: SaaS — host único `https://gate.whapi.cloud` para todos os clientes. Existe uma API
   **separada** (`manager.whapi.cloud`, "Partner API") para criar/gerenciar canais programaticamente
   — fora do escopo deste adapter, ver "Limites e particularidades".
 
-> **Escopo desta fase**: só as capabilities núcleo — `instance.connect`, `instance.status`,
-> `instance.logout`, `messages.sendText`, `messages.sendMedia`, `webhooks.parse`
-> (`message.received`/`message.sent`/`message.ack`/`connection.update`). `groups.*`, `contacts.*` e
-> `messages.sendReaction` **não** são implementadas nesta rodada, mesmo onde a pesquisa confirma
-> suporte no provider — ver seção dedicada ao final.
+> **Escopo**: 29/30 capabilities do core — todas exceto `instance.pairingCode` (obstáculo
+> estrutural do contrato, não do provider — ver "Capabilities confirmadas mas não implementadas").
+> `messages.sendReaction`, as 14 operações de `groups.*` e as 8 de `contacts.*` foram implementadas
+> numa rodada posterior às capabilities núcleo (`instance.*`/`messages.sendText`/`sendMedia`/
+> `webhooks.parse`) — ver "Grupos" e "Contatos" abaixo.
 
 ## Autenticação
 
@@ -119,13 +121,18 @@ Reaproveitado tanto por `instance.status()` (`GET /health`) quanto pelo webhook 
 | `SYNC_ERROR` | Synchronization error | `unknown` |
 | qualquer outro/ausente | — | `unknown` (nunca lança) |
 
-## Capabilities implementadas nesta fase
+## Capabilities implementadas
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
-`messages.sendMedia`, `webhooks.parse`.
+`messages.sendMedia`, `messages.sendReaction`, as 14 operações de `groups.*` (`create`, `getInfo`,
+`list`, `addParticipants`, `removeParticipants`, `promoteParticipants`, `demoteParticipants`,
+`updateSubject`, `updateDescription`, `updatePicture`, `getInviteLink`, `revokeInviteLink`,
+`joinViaInviteLink`, `leaveGroup`), as 8 de `contacts.*` (`list`, `get`, `checkExists`,
+`getProfilePicture`, `getAbout`, `block`, `unblock`, `listBlocked`) e `webhooks.parse`.
 
-`instance.pairingCode`, `messages.sendReaction`, `groups.*`, `contacts.*` **não** foram declaradas
-— ver "Capabilities confirmadas mas não implementadas nesta fase" ao final.
+Só `instance.pairingCode` **não** foi declarada — ver "Capabilities confirmadas mas não
+implementadas" ao final (obstáculo estrutural do contrato `InstanceApi.connect()`, não do
+provider).
 
 ## Operações core
 
@@ -180,6 +187,108 @@ Mapeado para `SentMessage`: `id` = `message.id` (fallback `whapi-<Date.now()>`),
 `message.chat_id` (fallback no `to` requisitado), `timestamp` = `message.timestamp * 1000`
 (assumido em segundos, mesma unidade confirmada por payload literal em `messages` de webhook —
 **não confirmado individualmente para a resposta de envio**).
+
+### `messages.sendReaction`
+
+| Operação | Endpoint | Observações |
+| --- | --- | --- |
+| reagir (`emoji` não vazio) | `PUT /messages/{MessageID}/reaction` | Corpo `ReactToMessage {emoji}` (operationId `reactToMessage`). |
+| remover (`emoji === ''`) | `DELETE /messages/{MessageID}/reaction` | Sem corpo (operationId `removeReactFromMessage`). |
+
+Os dois endpoints e o schema do corpo estão confirmados no OpenAPI oficial. `ReactToMessage.emoji`
+também aceita string vazia como sentinela alternativo de remoção ("Leave blank to remove the
+reaction"), mas este adapter usa o endpoint DEDICADO de remoção quando `input.emoji === ''` (mesma
+convenção canônica de `SendReactionInput.emoji`) em vez do `PUT` em branco — mais explícito, e
+igualmente confirmado no spec.
+
+Resposta de **ambos** os endpoints: `responses/Success` (`ResponseSuccess {success: boolean}`) —
+sem o objeto `message` que `messages.sendText`/`sendMedia` devolvem. `SentMessage.id`/`chatId`
+ecoam `input.messageId`/`to` (mesmo padrão do adapter WPPConnect para esse caso de "resposta fixa,
+sem id próprio"); `timestamp` fica `undefined`.
+
+Round-trip de recebimento (webhook `type: "action"`, `action.type: "reaction"`) continua **não**
+implementado — cai em `kind: 'unknown'`, ver seção de webhooks.
+
+## Grupos (`groups.*`)
+
+`GroupID` é opaco (ADR-0009) e, no Whapi, sempre o JID `<dígitos>@g.us` (pattern confirmado no
+OpenAPI: `^[\d-]{10,31}@g\.us$`) — repassado intacto no path de todo endpoint, nunca por
+`normalizeChatId`.
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `create` | `POST /groups` | Corpo `CreateGroupRequest {subject, participants}` (ambos obrigatórios). Resposta `GroupCreate` (`{id, name, participants: Participant[], created_by, unprocessed_participants?}`) — `unprocessed_participants` (contatos rejeitados pela política anti-spam ao criar o grupo) não tem campo correspondente em `GroupInfo`, perdido deliberadamente. |
+| `getInfo` | `GET /groups/{GroupID}` | Resposta `Group` (schema completo: `id`/`name`/`description`/`participants`/`created_by`). |
+| `list` | `GET /groups` | Paginado (`count`/`offset`, default `count=100`, máx. 500) — este adapter só devolve a primeira página (a assinatura canônica `list(): Promise<GroupInfo[]>` não expõe cursor). Resposta `GroupsList` `{groups: Group[], count, total, offset}`. |
+| `addParticipants` | `POST /groups/{GroupID}/participants` | Corpo `ListParticipantsRequest {participants: [wa-id,...]}` — array em UMA ÚNICA chamada (o batch é o formato oficial do request, confirmado no schema — diferente do WPPConnect, que não confirma lote). |
+| `removeParticipants` | `DELETE /groups/{GroupID}/participants` | Mesmo corpo do `addParticipants`. |
+| `promoteParticipants` | `PATCH /groups/{GroupID}/admins` | Mesmo corpo (`ListParticipantsRequest`). |
+| `demoteParticipants` | `DELETE /groups/{GroupID}/admins` | Mesmo corpo. |
+| `updateSubject` | `PUT /groups/{GroupID}` | Corpo `UpdateGroupInfoRequest {subject?, description?}` — **MESMO endpoint** que `updateDescription` (operationId `updateGroupInfo`). Cada operação canônica envia SÓ o campo que lhe corresponde, nunca os dois juntos — para não sobrescrever silenciosamente o campo que não foi pedido. Não confundir com `PATCH /groups/{GroupID}` (operationId `updateGroupSetting`), que é uma operação DIFERENTE (privacidade/permissões do grupo). |
+| `updateDescription` | `PUT /groups/{GroupID}` | Idem acima, envia só `description`. |
+| `updatePicture` | `PUT /groups/{GroupID}/icon` | Corpo JSON `{media}` (variante `application/json` do requestBody `UploadImage` — as variantes binárias `image/jpeg`/`image/png` não são usadas). `media` aceita URL, base64 ou media ID pré-upload, mesmos três formatos de `messages.sendMedia` (reaproveita `resolveMediaValue`). |
+| `getInviteLink` | `GET /groups/{GroupID}/invite` | Resposta `GroupInvite {invite_code}` — só o CÓDIGO, normalizado para link completo via `normalizeInviteLink`. |
+| `revokeInviteLink` | `DELETE /groups/{GroupID}/invite` + `GET /groups/{GroupID}/invite` | Ver nota dedicada abaixo — duas chamadas HTTP. |
+| `joinViaInviteLink` | `PUT /groups` | operationId `acceptGroupInvite`, corpo `GroupInvite {invite_code}` — só o CÓDIGO. `input.invite` já chega como link completo (normalizado pelo conector); o adapter extrai o código com `extractInviteCode`. Resposta `NewGroup {group_id}` ignorada (contrato retorna `void`). |
+| `leaveGroup` | `DELETE /groups/{GroupID}` | Resposta `Success`, ignorada. |
+
+### `revokeInviteLink` — exceção deliberada a "uma única chamada por operação"
+
+`DELETE /groups/{GroupID}/invite` (operationId `revokeGroupInvite`) responde só `Success`
+(`{success: boolean}`) — **sem** o novo `invite_code` (diferente de outros adapters deste pacote,
+cujo endpoint de revogação já devolve o link direto). Como o contrato canônico
+(`revokeInviteLink -> Promise<GroupInviteLink>`) exige devolver o NOVO link, este adapter encadeia
+`DELETE` (revoga o código atual) + `GET` (busca o código recém-girado) — duas chamadas HTTP,
+exceção deliberada ao padrão de "uma única chamada por operação" (que em ADR-0010 é uma regra
+específica de `contacts.get`, não uma regra geral de `GroupsApi`).
+
+**Assunção não confirmada empiricamente**: depende da convenção do protocolo WhatsApp de que
+revogar sempre gera um código novo — o OpenAPI só documenta que o `DELETE` "revokes" (invalida) o
+link atual, sem afirmar explicitamente que uma chamada `GET` subsequente devolve um código
+diferente.
+
+### Participantes — `rank`, não `isAdmin` booleano
+
+`Participant {id, rank}` — `rank` é o enum confirmado no OpenAPI: `'admin' | 'member' | 'creator'`
+(diferente do booleano `isAdmin` cru usado por outros providers deste pacote). Mapeamento para
+`GroupParticipant`: `creator` → `isAdmin: true` E `isSuperAdmin: true`; `admin` → só `isAdmin`;
+`member` → nenhum dos dois.
+
+## Contatos (`contacts.*`)
+
+`chatId`/`phone` já chegam normalizados pelo conector (`normalizeChatId`, ADR-0010) — não são
+opacos como `groupId`.
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `list` | `GET /contacts` | Paginado (`count`/`offset`, default 100) — só a primeira página, mesma decisão de `groups.list`. Resposta `ContactsList {contacts: Contact[], count, total, offset}`. |
+| `get` | `GET /contacts/{ContactID}` | Resposta `Contact` direta: `{id, phone, name, pushname, is_business, profile_pic, profile_pic_full, status, phonebook}`. Sem `about` (endpoint dedicado) nem booleano de "tem WhatsApp"/"bloqueado" — ADR-0010: cada adapter mapeia a partir de UMA ÚNICA chamada, campos sem correspondência ficam `undefined`. `name` prioriza o nome do catálogo (`name`), cai para `pushname` quando ausente; `profilePictureUrl` prioriza `profile_pic_full` sobre `profile_pic`. |
+| `checkExists` | `HEAD /contacts/{ContactID}` | Ver nota dedicada abaixo — único método deste adapter cujo resultado vem só do STATUS HTTP. |
+| `getProfilePicture` | `GET /contacts/{ContactID}/profile` | Resposta `UserProfile {name, push_name, verified_name, about, icon, icon_full}` — `icon_full` ("Profile avatar url") preferido sobre `icon` ("Profile preview icon url", resolução menor). |
+| `getAbout` | `GET /contacts/{ContactID}/about` | Resposta `ContactAbout {about}`. |
+| `block` | `PUT /blacklist/{ContactIdOrLid}` | Ver nota de `ContactIdOrLid` abaixo. |
+| `unblock` | `DELETE /blacklist/{ContactIdOrLid}` | Idem. |
+| `listBlocked` | `GET /blacklist` | Resposta `ContactIDList` — array de strings (`ContactID`: dígitos crus ou com sufixo `@lid`/`@s.whatsapp.net`), já no formato canônico, sem transformação. |
+
+### `checkExists` — resultado vem só do status HTTP
+
+`HEAD /contacts/{ContactID}` (operationId `checkExist`, "individually checks for a number in
+WhatsApp") não devolve corpo em nenhuma resposta — o único sinal é o **status**: `200`
+(`Success`) = existe, `404` ("Specified contact not registered") = não existe. Diferente de todo
+outro método deste adapter, aqui um status não-2xx **esperado** precisa ser capturado e traduzido
+para um resultado de domínio válido, não relançado: `HttpClient` sempre lança `WaConnectorError`
+para não-2xx; o adapter intercepta especificamente `error.status === 404` (qualquer outro
+status/erro continua propagando normalmente). `raw` no caminho "não existe" carrega o próprio erro
+capturado — uma requisição `HEAD` nunca tem corpo real para expor.
+
+### `ContactIdOrLid` — pattern diferente de `ContactID` nos endpoints de blacklist
+
+O path param dos endpoints `/blacklist/*` (`ContactIdOrLid`) usa um schema DIFERENTE do resto de
+`contacts.*` (`ContactID`): pattern `^\d{7,15}(@lid)?$`, confirmado no OpenAPI — só dígitos crus ou
+`<dígitos>@lid`, **sem** o sufixo `@s.whatsapp.net` que `ContactID` aceita nos demais endpoints
+(`get`/`getProfilePicture`/`getAbout`/`checkExists`, pattern
+`^([\d]{7,15})?(@lid|@s.whatsapp.net)?$`). `block`/`unblock` removem esse sufixo quando presente
+antes de montar o path; `@lid` (já aceito pelo pattern) e dígitos crus passam intactos.
 
 ## Webhooks
 
@@ -370,26 +479,15 @@ do WAHA, que usa HMAC real sobre o corpo bruto).
   por uma API totalmente separada (`manager.whapi.cloud`, "Partner API", token de conta/parceiro
   diferente do token de canal) — fora do escopo deste adapter e do contrato `WaAdapter` (não há
   capability para "gerenciar canais" no core atual).
-- Grupos usam `GroupID` (`...@g.us`); convites de grupo devolvem link — não inspecionado nesta
-  fase (fora de escopo).
+- Grupos usam `GroupID` (`...@g.us`); ver seção "Grupos (`groups.*`)" para os 14 endpoints
+  implementados.
 
-## Capabilities confirmadas mas não implementadas nesta fase
+## Capabilities confirmadas mas não implementadas
 
-Requer validação contra uma instância real antes de promover a uma fase futura:
-
-- **`messages.sendReaction`** — endpoint dedicado e simétrico confirmado no OpenAPI:
-  `PUT /messages/{MessageID}/reaction` (corpo `{emoji}`, "leave blank to remove") e
-  `DELETE /messages/{MessageID}/reaction` (remove sem corpo). Não recebe `to` — o `MessageID` no
-  path já basta. Também não implementado no lado de recebimento: mensagens de webhook com
-  `type: "action"` (`action.type: "reaction"|"vote"`) caem em `kind: 'unknown'` nesta fase, mesma
-  decisão de escopo.
 - **`instance.pairingCode`** — `GET /users/login/{PhoneNumber}` existe e devolve
   `{"code": "123-456"}`, mas `InstanceApi.connect()` não recebe telefone como parâmetro no contrato
-  atual — exigiria estender o contrato central, fora do escopo desta fase.
-- **`groups.*`/`contacts.*`** — não pesquisados nesta fase (pesquisa focou em
-  autenticação/ciclo-de-vida, envio de mensagens e webhooks núcleo). O OpenAPI sugere suporte
-  (`GroupID`, endpoints de convite) mas nenhum endpoint foi confirmado/mapeado — requer um dossiê
-  dedicado antes de implementar.
+  atual — exigiria estender o contrato central, fora do escopo deste adapter. Mesmo obstáculo
+  estrutural já documentado nos adapters Z-API/uazapi/Wuzapi.
 
 ## Gaps conhecidos (a validar contra uma instância real)
 
@@ -397,6 +495,8 @@ Requer validação contra uma instância real antes de promover a uma fase futur
 | --- | --- |
 | `ConnectResult.qr` (`GET /users/login` → `base64`) | Formato exato (com/sem prefixo `data:image/png;base64,`) não confirmado literalmente. |
 | Resposta de `messages.send*` | Estrutura confirmada só por schema (`SentMessage`/`Message`), sem payload de resposta real capturado; unidade de `timestamp` (segundos) assumida por analogia com webhooks, não confirmada para a resposta de envio especificamente. |
+| `groups.revokeInviteLink` | Assume que revogar (`DELETE .../invite`) sempre gera um código novo, consultado logo em seguida via `GET .../invite` — convenção do protocolo WhatsApp, não afirmada explicitamente pelo OpenAPI (que só documenta o `DELETE` como "revokes"). |
+| Round-trip de `messages.sendReaction` no webhook | Recebimento de reação (`type: "action"`, `action.type: "reaction"`) continua caindo em `kind: 'unknown'` — não implementado neste incremento (só o envio via `messages.sendReaction` foi escopado). |
 | Legenda em `image`/`video` recebidos via webhook | `caption` extraído para `WaMessage.text` por simetria com `messages.sendMedia`, mas sem exemplo literal dedicado de recebimento com legenda (confiança média — `document` já tem exemplo literal confirmado). |
 | `video`/`sticker`/`audio` (`voice`) recebidos via webhook | Shape de `MediaRef` assumido por analogia com `document`, sem exemplo literal capturado. |
 | `AUTH`/`SYNC_ERROR` no webhook `channel` | Citados só em prosa; fixture `webhook-connection-update-auth.json` é reconstruída, `code` não confirmado. |

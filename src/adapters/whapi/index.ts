@@ -7,20 +7,35 @@ import type {
   WebhookInput,
 } from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
-import { WaConnectorError } from '../../core/errors';
+import { extractInviteCode, normalizeInviteLink } from '../../core/chat-id';
+import { isWaConnectorError, WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  CheckExistsResult,
   ConnectResult,
+  Contact,
+  ContactAbout,
+  ContactProfilePicture,
+  CreateGroupInput,
+  GroupInfo,
+  GroupInviteLink,
+  GroupParticipant,
+  GroupParticipantsInput,
   InstanceState,
   InstanceStatus,
+  JoinGroupInviteInput,
   MediaKind,
   MediaRef,
   MessageAck,
   MessageKind,
   SendMediaInput,
+  SendReactionInput,
   SendTextInput,
   SentMessage,
+  UpdateGroupDescriptionInput,
+  UpdateGroupPictureInput,
+  UpdateGroupSubjectInput,
   WaMessage,
 } from '../../core/types';
 
@@ -56,13 +71,10 @@ const PROVIDER = 'whapi';
 const DEFAULT_BASE_URL = 'https://gate.whapi.cloud';
 
 /**
- * Só as capabilities núcleo desta fase (ver CONTEXT.md#metodologia-por-adapter). `groups.*`/
- * `contacts.*`/`messages.sendReaction` NÃO são declaradas aqui mesmo quando a pesquisa confirma
- * suporte no provider (reação: `PUT/DELETE /messages/{MessageID}/reaction`, confirmado) — ficam
- * para um incremento futuro, ver docs/providers/whapi.md#capabilities-confirmadas-mas-não-implementadas-nesta-fase.
- * `instance.pairingCode` também não é declarada: `InstanceApi.connect()` não recebe telefone como
- * parâmetro, e o pairing code do Whapi (`GET /users/login/{PhoneNumber}`) exige o telefone no path
- * — mesmo obstáculo estrutural já documentado nos adapters Z-API/uazapi/Wuzapi.
+ * Todas as capabilities com endpoint confirmado no OpenAPI oficial (ver docs/providers/whapi.md),
+ * exceto `instance.pairingCode`: `InstanceApi.connect()` não recebe telefone como parâmetro, e o
+ * pairing code do Whapi (`GET /users/login/{PhoneNumber}`) exige o telefone no path — mesmo
+ * obstáculo estrutural já documentado nos adapters Z-API/uazapi/Wuzapi.
  */
 const WHAPI_CAPABILITIES: CapabilitySet = [
   'instance.connect',
@@ -70,6 +82,29 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'instance.logout',
   'messages.sendText',
   'messages.sendMedia',
+  'messages.sendReaction',
+  'groups.create',
+  'groups.getInfo',
+  'groups.list',
+  'groups.addParticipants',
+  'groups.removeParticipants',
+  'groups.promoteParticipants',
+  'groups.demoteParticipants',
+  'groups.updateSubject',
+  'groups.updateDescription',
+  'groups.updatePicture',
+  'groups.getInviteLink',
+  'groups.revokeInviteLink',
+  'groups.joinViaInviteLink',
+  'groups.leaveGroup',
+  'contacts.list',
+  'contacts.get',
+  'contacts.checkExists',
+  'contacts.getProfilePicture',
+  'contacts.getAbout',
+  'contacts.block',
+  'contacts.unblock',
+  'contacts.listBlocked',
   'webhooks.parse',
 ];
 
@@ -94,11 +129,36 @@ export function whapi(options: WhapiOptions): WaAdapter {
   const messages: MessagesApi = {
     sendText: (input) => sendText(http, input),
     sendMedia: (input) => sendMedia(http, input),
+    sendReaction: (input) => sendReaction(http, input),
   };
 
-  // Núcleo desta fase: nenhum método de groups.*/contacts.* implementado (ver WHAPI_CAPABILITIES).
-  const groups: GroupsApi = {};
-  const contacts: ContactsApi = {};
+  const groups: GroupsApi = {
+    create: (input) => createGroup(http, input),
+    getInfo: (groupId) => getGroupInfo(http, groupId),
+    list: () => listGroups(http),
+    addParticipants: (input) => updateGroupParticipants(http, input, 'add'),
+    removeParticipants: (input) => updateGroupParticipants(http, input, 'remove'),
+    promoteParticipants: (input) => updateGroupParticipants(http, input, 'promote'),
+    demoteParticipants: (input) => updateGroupParticipants(http, input, 'demote'),
+    updateSubject: (input) => updateGroupSubject(http, input),
+    updateDescription: (input) => updateGroupDescription(http, input),
+    updatePicture: (input) => updateGroupPicture(http, input),
+    getInviteLink: (groupId) => getGroupInviteLink(http, groupId),
+    revokeInviteLink: (groupId) => revokeGroupInviteLink(http, groupId),
+    joinViaInviteLink: (input) => joinGroupViaInviteLink(http, input),
+    leaveGroup: (groupId) => leaveGroupCall(http, groupId),
+  };
+
+  const contacts: ContactsApi = {
+    list: () => listContacts(http),
+    get: (chatId) => getContact(http, chatId),
+    checkExists: (chatId) => checkContactExists(http, chatId),
+    getProfilePicture: (chatId) => getContactProfilePicture(http, chatId),
+    getAbout: (chatId) => getContactAbout(http, chatId),
+    block: (chatId) => blockContact(http, chatId),
+    unblock: (chatId) => unblockContact(http, chatId),
+    listBlocked: () => listBlockedContacts(http),
+  };
 
   return {
     provider: PROVIDER,
@@ -326,6 +386,404 @@ function mapSentMessage(body: unknown, requestedTo: string): SentMessage {
   const chatId = (message ? asString(message.chat_id) : undefined) ?? requestedTo;
   const timestamp = message ? toEpochMs(message.timestamp) : undefined;
   return { id, chatId, timestamp, raw: body };
+}
+
+/**
+ * `PUT /messages/{MessageID}/reaction` (corpo `ReactToMessage {emoji}`, operationId
+ * `reactToMessage`) para reagir; `DELETE /messages/{MessageID}/reaction` (sem corpo, operationId
+ * `removeReactFromMessage`) para remover — os dois endpoints e o schema do corpo confirmados no
+ * OpenAPI oficial (`openapi.yaml`, v1.8.7). `ReactToMessage.emoji` também aceita string vazia como
+ * sentinela alternativo de remoção ("Leave blank to remove the reaction"), mas este adapter usa o
+ * endpoint DEDICADO de remoção quando `input.emoji === ''` (mesma convenção canônica de
+ * `SendReactionInput.emoji`) — mais explícito, e igualmente confirmado no spec.
+ *
+ * Resposta de AMBOS os endpoints: `responses/Success` (`ResponseSuccess {success: boolean}`) —
+ * **sem** o objeto `message` que `messages.sendText`/`sendMedia` devolvem (schema confirmado,
+ * `reactToMessage`/`removeReactFromMessage` não referenciam `SentMessage`). Por isso `SentMessage.id`/
+ * `chatId` aqui ecoam `input.messageId`/`to` (mesmo padrão do adapter WPPConnect para o mesmo caso
+ * de "resposta fixa, sem id próprio") em vez de tentar extrair de `mapSentMessage`; `timestamp`
+ * fica `undefined` (nenhum valor real disponível para popular).
+ */
+async function sendReaction(http: HttpClient, input: SendReactionInput): Promise<SentMessage> {
+  const to = toWhapiChatId(input.to);
+  const path = `/messages/${encodeURIComponent(input.messageId)}/reaction`;
+  const response =
+    input.emoji === ''
+      ? await http.request<unknown>({ method: 'DELETE', path })
+      : await http.request<unknown>({ method: 'PUT', path, body: { emoji: input.emoji } });
+  return { id: input.messageId, chatId: to, raw: response };
+}
+
+// ---------------------------------------------------------------------------
+// groups.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `GroupID` é opaco (ADR-0009) e, no Whapi, sempre o JID `<dígitos>@g.us` (pattern confirmado no
+ * OpenAPI: `^[\d-]{10,31}@g\.us$`) — repassado intacto no path em todo endpoint de `groups.*`,
+ * nunca por `normalizeChatId`.
+ */
+function groupPath(groupId: string, suffix = ''): string {
+  return `/groups/${encodeURIComponent(groupId)}${suffix}`;
+}
+
+/**
+ * `POST /groups`, corpo `CreateGroupRequest {subject, participants}` (ambos obrigatórios,
+ * confirmado no OpenAPI). Resposta `GroupCreate`: `{id, name, type, participants: Participant[],
+ * created_by, unprocessed_participants?}` — reaproveita `mapGroupInfo` (mesmos campos usados que o
+ * schema `Group` de `getInfo`, exceto `description`, ausente em `GroupCreate`).
+ * `unprocessed_participants` (contatos rejeitados pela política anti-spam do WhatsApp ao criar o
+ * grupo, confirmado na descrição do endpoint) não tem campo correspondente em `GroupInfo` — perdido
+ * deliberadamente (core não modela "criação parcial"), não um bug.
+ */
+async function createGroup(http: HttpClient, input: CreateGroupInput): Promise<GroupInfo> {
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: '/groups',
+    body: { subject: input.subject, participants: input.participants },
+  });
+  return mapGroupInfo(response);
+}
+
+/** `GET /groups/{GroupID}`, resposta `Group` (schema completo: id/name/description/participants/created_by). */
+async function getGroupInfo(http: HttpClient, groupId: string): Promise<GroupInfo> {
+  const response = await http.request<unknown>({ method: 'GET', path: groupPath(groupId) });
+  return mapGroupInfo(response, groupId);
+}
+
+/**
+ * `GET /groups`, paginado (`count`/`offset`, default `count=100`, máx. 500, confirmado no OpenAPI)
+ * — este adapter não pagina, devolve só a primeira página (a assinatura canônica
+ * `list(): Promise<GroupInfo[]>` não expõe cursor, mesmo padrão de "sem paginação" já usado por
+ * outros adapters deste pacote, ex.: WAHA). Resposta `GroupsList`: `{groups: Group[], count, total,
+ * offset}`.
+ */
+async function listGroups(http: HttpClient): Promise<GroupInfo[]> {
+  const response = await http.request<unknown>({ method: 'GET', path: '/groups' });
+  const record = asRecord(response);
+  return asRecordArray(record?.groups).map((item) => mapGroupInfo(item));
+}
+
+type GroupParticipantsAction = 'add' | 'remove' | 'promote' | 'demote';
+
+interface GroupParticipantsEndpoint {
+  method: 'POST' | 'DELETE' | 'PATCH';
+  suffix: string;
+}
+
+/**
+ * Quatro operações, endpoints distintos (confirmado no OpenAPI): `add` -> `POST
+ * /groups/{GroupID}/participants` (operationId `addGroupParticipant`); `remove` -> `DELETE` no
+ * MESMO path (`removeGroupParticipant`); `promote` -> `PATCH /groups/{GroupID}/admins`
+ * (`promoteToGroupAdmin`); `demote` -> `DELETE` no MESMO path de admins (`demoteGroupAdmin`).
+ * Corpo idêntico nas quatro: `ListParticipantsRequest {participants: [wa-id,...]}` — um array em
+ * UMA ÚNICA chamada (diferente do WPPConnect, que não confirma suporte a lote e chama uma vez por
+ * participante; aqui o batch é o formato oficial do request body, confirmado no schema).
+ */
+const PARTICIPANT_ENDPOINTS: Record<GroupParticipantsAction, GroupParticipantsEndpoint> = {
+  add: { method: 'POST', suffix: '/participants' },
+  remove: { method: 'DELETE', suffix: '/participants' },
+  promote: { method: 'PATCH', suffix: '/admins' },
+  demote: { method: 'DELETE', suffix: '/admins' },
+};
+
+/**
+ * Resposta (`{success, failed: ContactID[], processed: ContactID[]}`) é ignorada — contrato
+ * retorna `Promise<void>` e não distingue sucesso parcial por participante (mesmo padrão de
+ * "descartar detalhe não modelado" já usado no resto do pacote).
+ */
+async function updateGroupParticipants(
+  http: HttpClient,
+  input: GroupParticipantsInput,
+  action: GroupParticipantsAction,
+): Promise<void> {
+  const endpoint = PARTICIPANT_ENDPOINTS[action];
+  await http.request({
+    method: endpoint.method,
+    path: groupPath(input.groupId, endpoint.suffix),
+    body: { participants: input.participants },
+  });
+}
+
+/**
+ * `PUT /groups/{GroupID}`, corpo `UpdateGroupInfoRequest {subject?, description?}` — MESMO
+ * endpoint para os dois campos (confirmado no OpenAPI: operationId `updateGroupInfo`, "changing the
+ * name and description of a group"; não confundir com `PATCH /groups/{GroupID}`, operationId
+ * `updateGroupSetting`, que é uma operação DIFERENTE — privacidade/permissões do grupo, fora do
+ * escopo de `updateSubject`/`updateDescription`). Cada operação canônica envia SÓ o campo que lhe
+ * corresponde, nunca os dois juntos nem o outro como `undefined` explícito — para não sobrescrever
+ * silenciosamente o campo que não foi pedido (ex.: `updateSubject` não deve apagar a descrição
+ * existente). Resposta: `Success`, ignorada.
+ */
+async function updateGroupSubject(http: HttpClient, input: UpdateGroupSubjectInput): Promise<void> {
+  await http.request({
+    method: 'PUT',
+    path: groupPath(input.groupId),
+    body: { subject: input.subject },
+  });
+}
+
+/** Ver `updateGroupSubject` — MESMO endpoint `PUT /groups/{GroupID}`, envia só `description`. */
+async function updateGroupDescription(
+  http: HttpClient,
+  input: UpdateGroupDescriptionInput,
+): Promise<void> {
+  await http.request({
+    method: 'PUT',
+    path: groupPath(input.groupId),
+    body: { description: input.description },
+  });
+}
+
+/**
+ * `PUT /groups/{GroupID}/icon`, corpo JSON `{media, mime_type?}` (variante `application/json` do
+ * requestBody `UploadImage` — as outras duas variantes, `image/jpeg`/`image/png` binário puro, não
+ * são usadas por este adapter, mesmo padrão de "nunca multipart" já usado em `messages.sendMedia`).
+ * `media` aceita URL, base64 ou media ID pré-upload (os mesmos três formatos de
+ * `messages.sendMedia`, confirmado no OpenAPI: `MediaWithUploadFromUrl`/`FromBase64`/
+ * `WithoutUpload` são todos `type: string`) — reaproveita `resolveMediaValue`. Resposta: `Success`,
+ * ignorada.
+ */
+async function updateGroupPicture(http: HttpClient, input: UpdateGroupPictureInput): Promise<void> {
+  await http.request({
+    method: 'PUT',
+    path: groupPath(input.groupId, '/icon'),
+    body: { media: resolveMediaValue(input.media) },
+  });
+}
+
+/**
+ * `GET /groups/{GroupID}/invite`, resposta `GroupInvite {invite_code}` — só o CÓDIGO, não a URL
+ * completa (confirmado no OpenAPI) — normalizado para link completo via `normalizeInviteLink`
+ * (`core/chat-id.ts`), mesmo padrão dos demais adapters deste pacote.
+ */
+async function getGroupInviteLink(http: HttpClient, groupId: string): Promise<GroupInviteLink> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: groupPath(groupId, '/invite'),
+  });
+  const record = asRecord(response);
+  const code = record ? asString(record.invite_code) : undefined;
+  return { link: normalizeInviteLink(code ?? ''), raw: response };
+}
+
+/**
+ * `DELETE /groups/{GroupID}/invite`, operationId `revokeGroupInvite` — resposta confirmada no
+ * OpenAPI é só `Success` (`{success: boolean}`), **sem** o novo `invite_code` (diferente do
+ * endpoint GET, e diferente de outros adapters deste pacote cujo endpoint de revogação já devolve
+ * o link direto). Como o contrato canônico (`revokeInviteLink -> Promise<GroupInviteLink>`) exige
+ * devolver o NOVO link, este adapter encadeia DELETE (revoga o código atual) + GET (busca o código
+ * recém-girado) — duas chamadas HTTP, exceção deliberada ao padrão de "uma única chamada por
+ * operação" (que em ADR-0010 é uma regra específica de `contacts.get`, não uma regra geral de
+ * `GroupsApi`). **Assunção não confirmada empiricamente**: depende da convenção do protocolo
+ * WhatsApp de que revogar sempre gera um código novo — o OpenAPI só documenta que o DELETE
+ * "revokes" (invalida) o link atual, sem afirmar explicitamente que uma chamada GET subsequente
+ * devolve um código diferente. Ver docs/providers/whapi.md.
+ */
+async function revokeGroupInviteLink(http: HttpClient, groupId: string): Promise<GroupInviteLink> {
+  await http.request({ method: 'DELETE', path: groupPath(groupId, '/invite') });
+  return getGroupInviteLink(http, groupId);
+}
+
+/**
+ * `PUT /groups`, operationId `acceptGroupInvite`, corpo `GroupInvite {invite_code}` — só o CÓDIGO
+ * (confirmado no OpenAPI, exemplo `invite_code: <invite code>`), não a URL completa.
+ * `input.invite` já chega normalizado como link completo (o conector garante isso — ver
+ * `WaConnector.prepareJoinViaInviteLink`), então este adapter extrai o código com
+ * `extractInviteCode` antes de montar o corpo. Resposta `NewGroup {group_id}` ignorada — contrato
+ * retorna `Promise<void>`.
+ */
+async function joinGroupViaInviteLink(
+  http: HttpClient,
+  input: JoinGroupInviteInput,
+): Promise<void> {
+  await http.request({
+    method: 'PUT',
+    path: '/groups',
+    body: { invite_code: extractInviteCode(input.invite) },
+  });
+}
+
+/** `DELETE /groups/{GroupID}`, operationId `leaveGroup`. Resposta `Success`, ignorada. */
+async function leaveGroupCall(http: HttpClient, groupId: string): Promise<void> {
+  await http.request({ method: 'DELETE', path: groupPath(groupId) });
+}
+
+/**
+ * Reaproveitado por `createGroup` (resposta `GroupCreate`), `getInfo` (resposta `Group`) e `list`
+ * (itens de `GroupsList.groups`, também `Group[]`) — os três schemas compartilham os campos usados
+ * aqui (`id`, `name`, `description?`, `participants`, `created_by`), confirmado no OpenAPI.
+ * `fallbackId` cobre o caso defensivo (não confirmado na pesquisa) de `id` vir ausente na resposta
+ * de `getInfo` — usa o `groupId` já conhecido pelo chamador em vez de devolver string vazia.
+ */
+function mapGroupInfo(body: unknown, fallbackId?: string): GroupInfo {
+  const record = asRecord(body);
+  const participants = asRecordArray(record?.participants).map(mapGroupParticipant);
+  return {
+    id: (record ? asString(record.id) : undefined) ?? fallbackId ?? '',
+    subject: (record ? asString(record.name) : undefined) ?? '',
+    description: record ? asString(record.description) : undefined,
+    owner: record ? asString(record.created_by) : undefined,
+    participants,
+    raw: body,
+  };
+}
+
+/**
+ * `Participant {id, rank}` — `rank` é o enum confirmado no OpenAPI: `'admin' | 'member' |
+ * 'creator'` (diferente do booleano `isAdmin` cru usado por outros providers deste pacote).
+ * `creator` mapeia para `isAdmin: true` E `isSuperAdmin: true`; `admin` só `isAdmin`; `member`
+ * nenhum dos dois.
+ */
+function mapGroupParticipant(record: Record<string, unknown>): GroupParticipant {
+  const rank = asString(record.rank);
+  return {
+    id: asString(record.id) ?? '',
+    isAdmin: rank === 'admin' || rank === 'creator',
+    isSuperAdmin: rank === 'creator',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// contacts.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /contacts`, paginado (`count`/`offset`, default 100) — mesma decisão de "só a primeira
+ * página" de `groups.list` (a assinatura canônica `list(): Promise<Contact[]>` não expõe cursor).
+ * Resposta `ContactsList`: `{contacts: Contact[], count, total, offset}`.
+ */
+async function listContacts(http: HttpClient): Promise<Contact[]> {
+  const response = await http.request<unknown>({ method: 'GET', path: '/contacts' });
+  const record = asRecord(response);
+  return asRecordArray(record?.contacts).map(mapContact);
+}
+
+/** `GET /contacts/{ContactID}`, resposta `Contact` (schema completo) direto, sem envelope. */
+async function getContact(http: HttpClient, chatId: string): Promise<Contact> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: `/contacts/${encodeURIComponent(toWhapiChatId(chatId))}`,
+  });
+  return mapContact(response);
+}
+
+/**
+ * `Contact` schema confirmado no OpenAPI: `{id, phone, name, pushname, is_business, profile_pic,
+ * profile_pic_full, status, phonebook}` — sem `about` (endpoint dedicado, ver `getContactAbout`)
+ * nem um booleano de "tem WhatsApp"/"está bloqueado" (ADR-0010: cada adapter mapeia `getContact` a
+ * partir de UMA ÚNICA chamada; campos sem correspondência ficam `undefined`, nunca inventados).
+ * `name` prioriza o nome do catálogo de contatos (`name`); cai para `pushname` (nome definido pelo
+ * próprio usuário no WhatsApp) quando ausente.
+ */
+function mapContact(body: unknown): Contact {
+  const record = asRecord(body);
+  const name = record ? (asString(record.name) ?? asString(record.pushname)) : undefined;
+  const profilePictureUrl = record
+    ? (asString(record.profile_pic_full) ?? asString(record.profile_pic))
+    : undefined;
+  return {
+    id: (record ? asString(record.id) : undefined) ?? '',
+    name,
+    profilePictureUrl,
+    raw: body,
+  };
+}
+
+/**
+ * `HEAD /contacts/{ContactID}`, operationId `checkExist` — "individually checks for a number in
+ * WhatsApp", bate 1:1 com a assinatura single deste método (não batch). Sem corpo em nenhuma
+ * resposta (é `HEAD`): o único sinal é o STATUS HTTP — `200` (`Success`) = existe, `404`
+ * ("Specified contact not registered") = não existe. Diferente de todo outro método deste adapter,
+ * aqui um status não-2xx ESPERADO precisa ser capturado e traduzido para um resultado de domínio
+ * válido, não relançado — `HttpClient` sempre lança `WaConnectorError` para não-2xx; só o `404` é
+ * interceptado aqui (qualquer outro status/erro continua propagando normalmente). `raw` no caminho
+ * de "não existe" carrega o próprio erro capturado (não há corpo de resposta real para expor — uma
+ * requisição `HEAD` nunca tem um).
+ */
+async function checkContactExists(http: HttpClient, chatId: string): Promise<CheckExistsResult> {
+  const contactId = toWhapiChatId(chatId);
+  try {
+    const response = await http.request<unknown>({
+      method: 'HEAD',
+      path: `/contacts/${encodeURIComponent(contactId)}`,
+    });
+    return { exists: true, chatId: contactId, raw: response };
+  } catch (error) {
+    if (isWaConnectorError(error) && error.status === 404) {
+      return { exists: false, raw: error };
+    }
+    throw error;
+  }
+}
+
+/**
+ * `GET /contacts/{ContactID}/profile`, resposta `UserProfile {name, push_name, verified_name,
+ * about, icon, icon_full}` — `icon_full` é o "Profile avatar url" (confirmado na descrição do
+ * schema no OpenAPI), preferido sobre `icon` ("Profile preview icon url", resolução menor).
+ */
+async function getContactProfilePicture(
+  http: HttpClient,
+  chatId: string,
+): Promise<ContactProfilePicture> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: `/contacts/${encodeURIComponent(toWhapiChatId(chatId))}/profile`,
+  });
+  const record = asRecord(response);
+  const url = record ? (asString(record.icon_full) ?? asString(record.icon)) : undefined;
+  return { url, raw: response };
+}
+
+/** `GET /contacts/{ContactID}/about`, resposta `ContactAbout {about}` — confirmado no OpenAPI. */
+async function getContactAbout(http: HttpClient, chatId: string): Promise<ContactAbout> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: `/contacts/${encodeURIComponent(toWhapiChatId(chatId))}/about`,
+  });
+  const record = asRecord(response);
+  return { about: record ? asString(record.about) : undefined, raw: response };
+}
+
+const WHATSAPP_JID_SUFFIX = '@s.whatsapp.net';
+
+/**
+ * O path param dos endpoints `/blacklist/*` (`ContactIdOrLid`) usa um schema DIFERENTE do resto de
+ * `contacts.*` (`ContactID`): pattern `^\d{7,15}(@lid)?$`, confirmado no OpenAPI — só dígitos crus
+ * ou `<dígitos>@lid`, SEM o sufixo `@s.whatsapp.net` que `ContactID` aceita nos demais endpoints.
+ * Remove esse sufixo quando presente antes de montar o path; `@lid` (já aceito pelo pattern) e
+ * dígitos crus passam intactos.
+ */
+function toWhapiBlacklistId(chatId: string): string {
+  return chatId.endsWith(WHATSAPP_JID_SUFFIX)
+    ? chatId.slice(0, chatId.length - WHATSAPP_JID_SUFFIX.length)
+    : chatId;
+}
+
+/** `PUT /blacklist/{ContactIdOrLid}`, operationId `blacklistAdd`. Sem corpo. Resposta `Success`, ignorada. */
+async function blockContact(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({
+    method: 'PUT',
+    path: `/blacklist/${encodeURIComponent(toWhapiBlacklistId(chatId))}`,
+  });
+}
+
+/** `DELETE /blacklist/{ContactIdOrLid}`, operationId `blacklistRemove` — mesmo tratamento de path que `blockContact`. */
+async function unblockContact(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({
+    method: 'DELETE',
+    path: `/blacklist/${encodeURIComponent(toWhapiBlacklistId(chatId))}`,
+  });
+}
+
+/**
+ * `GET /blacklist`, operationId `getBlackList`, resposta `ContactIDList` — array de strings
+ * (`ContactID`: dígitos crus ou com sufixo `@lid`/`@s.whatsapp.net`), já no formato canônico do
+ * waconector, sem transformação necessária.
+ */
+async function listBlockedContacts(http: HttpClient): Promise<string[]> {
+  const response = await http.request<unknown>({ method: 'GET', path: '/blacklist' });
+  return asStringArray(response);
 }
 
 // ---------------------------------------------------------------------------
@@ -712,5 +1170,11 @@ function asRecordArray(value: unknown): Record<string, unknown>[] {
     ? value
         .map((item) => asRecord(item))
         .filter((item): item is Record<string, unknown> => item !== undefined)
+    : [];
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
     : [];
 }
