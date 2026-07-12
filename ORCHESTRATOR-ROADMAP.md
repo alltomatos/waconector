@@ -198,7 +198,8 @@ Estado: **done**
       binário compilado (shebang/argv de ponta a ponta). Exemplos executáveis em `examples/express`
       e `examples/nextjs` (App Router), usando `MockAdapter` por padrão (`npm install && npm
       start`/`npm run dev` sem nenhuma credencial), com job de CI `examples-smoke` (informativo,
-      fora de `ci-required`). **Fecha o último item pendente da F3 — Epic 4 completa.**
+      fora de `ci-required`). **Fecha o último item pendente da F3 — Epic 4 completa.** Mergeado
+      via [PR #29](https://github.com/alltomatos/waconector/pull/29).
 
 ## Epic 5 — v1.0
 
