@@ -229,7 +229,7 @@ Estado: **done**
 
 ## Epic 6 — pós-v1.0: fechar gaps de capabilities nos adapters
 
-Estado: **in_progress**
+Estado: **done**
 
 Depois do v1.0, auditoria de gaps rodada nos 8 adapters (workflow paralelo, 1 agente de pesquisa
 por provider + síntese consolidada) — comparou cada célula "—" da matriz de capabilities contra a
@@ -253,14 +253,42 @@ candidatas ao próximo ADR, seguidas de `chats.*` (archive/mute/pin/markUnread, 
       documentada à regra de "uma chamada por operação"; `checkExists` usa `HEAD` e intercepta
       404 como resultado de domínio válido (único método do adapter que faz isso). Mergeado via
       [PR #32](https://github.com/alltomatos/waconector/pull/32).
-- [ ] WPPConnect (5 capabilities: `groups.list` + `contacts.list/get/getProfilePicture/getAbout` —
-      achado da auditoria: gap veio de profundidade de pesquisa do dossiê original, que parou no
-      controller do server em vez de descer à lib `@wppconnect-team/wppconnect` tipada; não é
-      limitação real do provider).
-- [ ] QuePasa (até 20 capabilities condicionais — a auditoria encontrou indício, lendo código-fonte,
-      de que as rotas v5 de `groups.*`/`contacts.*` antes tidas como bloqueadas por JWT aceitam o
-      mesmo token por instância já usado; **não testado contra instância real**, validar antes de
-      implementar em lote).
+- [x] **WPPConnect**: `groups.list` (`POST /list-chats`, substituto do `GET /all-groups`
+      deprecated) + as 4 operações restantes de `contacts.*` (`list`/`get`/`getProfilePicture`/
+      `getAbout`) — 5 capabilities, todas com shape confirmado descendo à lib
+      `@wppconnect-team/wppconnect` (o gap original vinha de profundidade de pesquisa do dossiê
+      anterior, que parou no controller fino do server). Leva o adapter de 24/30 para **29/30** (só
+      `instance.pairingCode` fora, obstáculo estrutural de sempre). Verificação adversarial
+      encontrou e corrigiu uma afirmação errada herdada do dossiê anterior: `POST /list-chats`
+      responde SEM o envelope padrão `{status, response, mapper}` — única exceção confirmada entre
+      todos os endpoints do provider; docstring, dossiê e stub de teste corrigidos para refletir o
+      shape real (array bruto). Mergeado via
+      [PR #33](https://github.com/alltomatos/waconector/pull/33).
+- [x] **QuePasa**: as até 20 capabilities condicionais (`messages.sendReaction` + `groups.*`/
+      `contacts.*` além de `getInviteLink`/`getProfilePicture`) foram **investigadas e recusadas
+      com evidência** — não implementadas. Validação (leitura adicional de código-fonte do mesmo
+      mirror `deivisonrpg/quepasa`) confirmou o indício técnico (`AuthenticatedAPIHandler` aceita o
+      mesmo `X-QUEPASA-TOKEN` deste adapter como fallback sem JWT, corroborado por
+      `docs/USAGE-authentication-modes.md` do próprio mirror, que recomenda esse modo "for headless
+      bots"). Essa API `/api/v5` "canonical" existe no HEAD da branch `main` (commit `17c3b10b`,
+      2026-07-07) e **não está em nenhuma tag git de nome de versão** — a mais recente é
+      `3.25.0924.2015` (2025-09-24, ~9,5 meses atrás), não `3.25.2707.1705` como uma versão anterior
+      deste registro afirmava (erro corrigido por verificação adversarial). **Mas** "sem tag git" não
+      quer dizer "sem imagem Docker real": a tag `:latest` do Docker Hub (`codeleaks/quepasa`,
+      publicada a cada push em `main` pelo workflow do próprio mirror) foi publicada ~3h depois do
+      commit auditado e segue sendo puxada ativamente (29.965 pulls históricos, último pull hoje) —
+      ou seja, a API v5 e o fallback de token JÁ estão numa imagem real, pública e usada por
+      operadores, não é "trabalho em andamento que pode nunca chegar a produção". A decisão de não
+      implementar segue de pé, mas apoiada só nos argumentos que resistem a essa correção: (1)
+      nenhuma instância real foi de fato exercitada (só leitura de código-fonte e metadados Docker
+      Hub/GitHub, zero tráfego HTTP real), e (2) o próprio pareamento anônimo (`GET /scan`) exige um
+      parâmetro `user` sem fallback (`ScannerController` -> `GetUser`), tensão não resolvida com o
+      modelo "token arbitrário, sem login" que este adapter assume — não confirmado se um token
+      pareado por este adapter teria um `GetOwnedServerRecord` válido para as rotas v5.
+      `QUEPASA_CAPABILITIES` permanece em 7/30 (inalterado). Decisão e evidência completa (incluindo
+      a correção) registradas em `docs/providers/quepasa.md#follow-up-2026-07-12`. Reabrir exigiria
+      uma instância Docker real (ex. `docker pull codeleaks/quepasa:latest`, publicamente disponível)
+      exercitada de ponta a ponta contra tráfego real.
 
 ---
 

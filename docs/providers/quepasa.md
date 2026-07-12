@@ -735,6 +735,117 @@ fallback para `Date.now()` se o parsing falhar (nunca lança).
   foi verificado** nesta pesquisa; validar isso é pré-requisito antes de promover qualquer uma
   destas capabilities numa fase futura.
 
+### Follow-up (2026-07-12): a "indício" do token por instância foi confirmada — e um dos argumentos usados para recusar a implementação estava errado
+
+Uma auditoria de gaps subsequente (Epic 6 do `ORCHESTRATOR-ROADMAP.md`) levantou um indício, só de
+ler código-fonte, de que as rotas v5 acima aceitariam o MESMO `X-QUEPASA-TOKEN` já usado por este
+adapter, sem precisar de JWT de verdade — sinalizado explicitamente como "não testado contra
+instância real, validar antes de implementar em lote". Esta seção documenta a validação feita (via
+leitura adicional de código-fonte do mesmo mirror, `deivisonrpg/quepasa`) e por que a conclusão
+final continua sendo **não implementar** — mas com uma correção importante: uma verificação
+adversarial subsequente (mesmo dia) mostrou que o argumento "nenhuma imagem Docker lançada teria
+essa API" (usado abaixo numa versão anterior desta seção) é **falso** e foi removido. Os detalhes
+da correção estão na subseção "Correção (mesmo dia)" ao final desta seção.
+
+**O indício procede, tecnicamente**: `AuthenticatedAPIHandler` (`src/api/api_authenticated_routes.go`)
+tem um fallback explícito que aceita `X-QUEPASA-TOKEN` quando não há JWT válido no contexto —
+resolve o usuário dono via `findPersistedServerRecord(token).GetUser()` (ou uma sessão viva via
+`runtime.FindLiveSessionByToken`), e depois grava esse token numa `scopedSessionAuth` no contexto da
+requisição. `requireOwnedServerToken()` (usado nas rotas "canonical" de grupos/contatos) em seguida
+chama `ensureTokenScope` — que EXIGE que o `token` da URL bata exatamente com o token usado para
+autenticar — e `GetOwnedServerRecord`, que rejeita se `server.GetUser() != user.Username`. Ou seja:
+com esse código, o MESMO `X-QUEPASA-TOKEN` que este adapter já envia em toda requisição seria
+suficiente, sem JWT, DESDE QUE o registro do servidor tenha um usuário dono associado. Isso é
+corroborado por um documento de primeira mão do próprio mirror,
+`docs/USAGE-authentication-modes.md`, que descreve `X-QUEPASA-TOKEN` como modo de autenticação
+válido para rotas "canonical" protegidas e recomenda explicitamente esse modo "for headless bots" —
+exatamente o perfil deste adapter.
+
+**Mas esse usuário dono não existe no modelo de pareamento anônimo que este adapter (e o resto deste
+dossiê) assume.** Lendo o handler atual de `/scan` (`ScannerController`,
+`src/api/api_handlers+ScannerAndPairCodeController.go`, MESMO snapshot): antes de gerar o QR, ele
+chama `ValidateUsername(r)` -> `GetUsername(r)` -> `GetUser(r)`, e `GetUser` **retorna erro
+"missing user name parameter" quando não há um parâmetro `user`** (path/query/form/header
+`X-QUEPASA-USER`) — sem nenhum fallback anônimo. Este adapter nunca envia esse parâmetro (o modelo
+documentado no início deste dossiê é "token arbitrário, sem login"). Ou seja, no MESMO snapshot que
+confirma o fallback de token, o próprio pareamento parece exigir um usuário dono — uma tensão
+interna que não foi possível resolver só lendo código (pode haver um caminho alternativo de
+pareamento sem essa exigência que a pesquisa não localizou).
+
+**Esta camada não está em nenhuma tag com nome de versão — mas ISSO NÃO significa "não lançada em
+Docker".** Toda essa camada — rotas `/api/v5` "canonical", `AuthenticatedAPIHandler` com fallback de
+token, `docs/USAGE-authentication-modes.md` — existe no HEAD da branch `main` de
+`deivisonrpg/quepasa` (commit `17c3b10bac751346ca4d6c3514839ea60e8d73ce`, 2026-07-07T17:56:12Z,
+autor "Deivison Lincoln", mantenedor deste mirror especificamente — não o autor original).
+Confirmado via API do GitHub (`GET /repos/deivisonrpg/quepasa/tags`, todas as ~39 tags, com data de
+commit de cada uma): a tag de nome de versão mais recente **não é** `3.25.2707.1705` — essa data
+foi lida errado numa versão anterior desta seção. A verdadeira mais recente é **`3.25.0924.2015`**
+(commit `84ea6db9`, **2025-09-24T23:18:07Z**), cerca de **9,5 meses** antes de hoje (2026-07-12),
+não "mais de um ano". Mesmo essa tag correta **não contém** `src/api/v5`
+(`GET /repos/deivisonrpg/quepasa/contents/src/api/v5?ref=3.25.0924.2015` -> 404, verificado
+diretamente) — então a conclusão "nenhuma tag git nomeada tem a API v5" continua de pé, só a tag
+citada como evidência estava errada. A tag `latest` (git, não Docker) aponta para o PRIMEIRO commit
+do repositório (2025-01-29, autor "No Code Leaks", mensagem "first commit ?!"). Não há nenhum
+GitHub Release publicado (`GET /repos/deivisonrpg/quepasa/releases` -> `[]`).
+
+**Mas existe, sim, uma imagem Docker real e ativamente usada com este código.** O workflow
+`.github/workflows/docker.yml` deste mesmo mirror builda e publica a tag **`:latest` do Docker Hub**
+(`IMAGE_NAME: codeleaks/quepasa`, não a tag `latest` do git acima — são coisas diferentes) a cada
+push em `main`. Consultando a API pública do Docker Hub (`GET
+/v2/repositories/codeleaks/quepasa/tags/latest`): essa imagem foi publicada em
+**2026-07-07T21:04:32Z** — cerca de 3h depois do commit `17c3b10b` auditado acima — e puxada pela
+última vez em **2026-07-12T12:41:29Z** (hoje), com **29.965 pulls** históricos acumulados só nessa
+tag e o repositório do Docker Hub ativo desde 2023-04-20. Ou seja: a imagem `:latest`, que é a que
+a maioria dos operadores self-hosted roda por padrão (`docker-compose` sem pin de versão), JÁ
+contém a API v5 e o fallback de token — não é "trabalho em andamento que pode nunca chegar a uma
+instância self-hosted real", já chegou. O argumento "nada disso está em nenhuma versão lançada"
+usado numa versão anterior desta seção estava errado e foi removido — ver "Correção (mesmo dia)"
+abaixo.
+
+**Decisão**: `messages.sendReaction`, `groups.*` (além de `getInviteLink`) e `contacts.*` (além de
+`getProfilePicture`) continuam **não implementadas nesta fase** — mas agora apoiada só nos
+argumentos que de fato se sustentam, não mais em "código não lançado":
+
+1. **Nenhuma instância real foi exercitada.** Toda a validação desta seção (e do dossiê original)
+   é leitura de código-fonte + metadados públicos do Docker Hub/GitHub — nenhuma chamada HTTP real
+   foi feita contra um container rodando. Não há confirmação de que o fluxo completo
+   (`/scan` → pareamento → `X-QUEPASA-TOKEN` → rota v5) realmente autentica de ponta a ponta.
+2. **A tensão do `/scan` exigir `user` continua sem resolver.** O pareamento (`ScannerController` ->
+   `GetUser`) exige um parâmetro `user` sem fallback anônimo, incompatível com o modelo "token
+   arbitrário, sem login" que este adapter assume — não está confirmado que um token pareado por
+   este adapter (sem `user` associado) sequer teria um `GetOwnedServerRecord` válido para passar
+   por `ensureTokenScope` nas rotas v5.
+
+Declarar essas capabilities com base só em leitura de código, sem testar contra tráfego real, viola
+o princípio deste pacote de "declarar apenas capabilities realmente suportadas" — o risco é uma
+integração real receber 401/404 silenciosamente. Este item foi fechado no
+`ORCHESTRATOR-ROADMAP.md` (Epic 6) como "investigado e recusado com evidência", não como
+implementado; reabrir exigiria uma instância Docker real (ex.: `docker pull codeleaks/quepasa:latest`,
+publicamente disponível — ver acima) exercitada de ponta a ponta contra tráfego real, não apenas
+leitura de código ou metadados.
+
+### Correção (mesmo dia): o argumento "não lançado" estava errado
+
+Uma verificação adversarial da seção acima, feita no mesmo dia, encontrou dois erros factuais numa
+versão anterior deste follow-up, ambos corrigidos no texto acima:
+
+- A frase "nenhuma imagem Docker de uma versão tagueada/lançada deste mirror teria essa API v5"
+  tratava "tag git nomeada" como sinônimo de "imagem Docker publicada" — são coisas diferentes. A
+  tag **`:latest` do Docker Hub** (distinta da tag git `latest`) é publicada a partir do HEAD de
+  `main` a cada push, então ela SEGUE o HEAD, não uma tag de versão. Confirmado publicada ~3h após
+  o commit auditado e puxada pela última vez hoje, com quase 30 mil pulls acumulados — uma imagem
+  real, pública e ativamente usada, não "trabalho em andamento não lançado".
+- A tag git de nome de versão citada como "a mais recente" (`3.25.2707.1705`, 2025-07-27) não era a
+  mais recente — pelo menos 20 outras tags do mesmo repositório apontam para commits posteriores; a
+  verdadeira mais recente é `3.25.0924.2015` (2025-09-24). E mesmo para a tag citada originalmente,
+  a diferença até hoje era de ~11,5 meses, não "mais de um ano" como escrito.
+
+A conclusão sobre tags GIT especificamente (nenhuma tag nomeada contém `src/api/v5`) continua
+válida mesmo após a correção — foi verificada de novo contra a tag correta. O que mudou foi a
+inferência daí para "logo não há imagem Docker real com essa API": essa inferência não se sustenta,
+porque a imagem `:latest` do Docker Hub não é construída a partir de uma tag git de versão, e sim
+do HEAD da branch a cada push.
+
 ## Gaps conhecidos (a validar contra uma instância real)
 
 | Ponto | Gap |
