@@ -207,10 +207,23 @@ Estado: **done**
 
 ## Epic 5 — v1.0
 
-Estado: **todo**
+Estado: **done**
 
-- [ ] 3+ adapters passando 100% da suite de contrato
-- [ ] API pública estável (sem breaking changes não documentados)
+- [x] 3+ adapters passando 100% da suite de contrato — 8 adapters reais (WAHA, Evolution GO,
+      uazapi, Z-API, Wuzapi, Whapi, QuePasa, WPPConnect) + `MockAdapter`, confirmado rodando
+      `test/contract/` diretamente antes do release (472 testes, 0 falhas, 2 skips condicionais
+      esperados).
+- [x] API pública estável (sem breaking changes não documentados) — auditoria do `CHANGELOG.md`
+      completo: exatamente 1 breaking change em toda a história (`ConnectResult.raw`/
+      `InstanceStatus.raw` obrigatórios, `v0.1.0`, antes de existir qualquer adapter além de
+      WAHA/Evolution GO). `v0.2.0`→`v0.4.0` (6 adapters novos, `groups.*`/`contacts.*`/
+      `sendReaction`, CLI, exemplos) foram 100% aditivos — nenhuma mudança nos formatos centrais
+      (`WaMessage`/`SendTextInput`/`SendMediaInput`/`InstanceStatus`/`ConnectResult`). Sem
+      marcadores `TODO`/`FIXME`/`@deprecated`/"unstable" em `src/core/`.
+- [x] **v1.0.0 publicado no npm** — changeset `major` (semver de verdade: `0.4.0` → `1.0.0`).
+      `README.md`/`CONTRIBUTING.md`/`docs/CONTEXT.md` atualizados para retirar a linguagem
+      "pré-1.0: breaking changes em minors" — a partir de agora, breaking changes exigem bump
+      major + issue de discussão prévia.
 
 ---
 
