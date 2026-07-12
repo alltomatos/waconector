@@ -337,6 +337,16 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    // messages.markRead (ADR-0013, nível de MENSAGEM): POST /chat/markread — distinto de
+    // chats.markRead (não implementado neste adapter, ver dossiê).
+    if (method === 'POST' && pathname === '/chat/markread') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Message(s) marked as read' },
+      });
+    }
+
     if (method === 'POST' && pathname === '/chat/archive') {
       return jsonResponse(200, {
         code: 200,
@@ -831,6 +841,34 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
 
     expect(capturedBody).toEqual({ Phone: '5511999999999', Id: 'contrato-msg-apagada' });
     expect(result).toBeUndefined();
+  });
+
+  it('messages.markRead envia { Id: [messageId], ChatPhone } (array, sem SenderPhone) para POST /chat/markread', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/markread') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.markRead({ to: '5511999999999', messageId: 'contrato-msg-lida' }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ Id: ['contrato-msg-lida'], ChatPhone: '5511999999999' });
+  });
+
+  it('não declara messages.forward/star/unstar/pin/unpin (busca exaustiva em routes.go não encontrou endpoint)', () => {
+    const adapter = wuzapi(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('messages.forward');
+    expect(adapter.capabilities).not.toContain('messages.pin');
+    expect(adapter.messages.forward).toBeUndefined();
   });
 
   it('chats.archive envia { jid, archive: true } (tags minúsculas) para POST /chat/archive, completando o sufixo @s.whatsapp.net quando o chatId vem em dígitos crus', async () => {

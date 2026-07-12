@@ -19,15 +19,19 @@ import type {
   CreateGroupInput,
   DeleteMessageInput,
   EditMessageInput,
+  ForwardMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipantsInput,
   JoinGroupInviteInput,
+  MarkMessageReadInput,
   MediaRef,
+  PinMessageInput,
   SendMediaInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  StarMessageInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -58,6 +62,12 @@ export interface ConnectorMessagesApi {
   sendReaction(input: SendReactionInput): Promise<SentMessage>;
   edit(input: EditMessageInput): Promise<SentMessage>;
   delete(input: DeleteMessageInput): Promise<void>;
+  forward(input: ForwardMessageInput): Promise<SentMessage>;
+  star(input: StarMessageInput): Promise<void>;
+  unstar(input: StarMessageInput): Promise<void>;
+  pin(input: PinMessageInput): Promise<void>;
+  unpin(input: PinMessageInput): Promise<void>;
+  markRead(input: MarkMessageReadInput): Promise<void>;
 }
 
 /**
@@ -172,6 +182,28 @@ export class WaConnector {
       delete: (input) =>
         this.callMessagesMethod('delete', 'messages.delete', (fn) =>
           fn(this.prepareDeleteMessage(input)),
+        ),
+      forward: (input) =>
+        this.callMessagesMethod('forward', 'messages.forward', (fn) =>
+          fn(this.prepareForwardMessage(input)),
+        ),
+      star: (input) =>
+        this.callMessagesMethod('star', 'messages.star', (fn) =>
+          fn(this.prepareStarMessage(input)),
+        ),
+      unstar: (input) =>
+        this.callMessagesMethod('unstar', 'messages.unstar', (fn) =>
+          fn(this.prepareStarMessage(input)),
+        ),
+      pin: (input) =>
+        this.callMessagesMethod('pin', 'messages.pin', (fn) => fn(this.preparePinMessage(input))),
+      unpin: (input) =>
+        this.callMessagesMethod('unpin', 'messages.unpin', (fn) =>
+          fn(this.preparePinMessage(input)),
+        ),
+      markRead: (input) =>
+        this.callMessagesMethod('markRead', 'messages.markRead', (fn) =>
+          fn(this.prepareMarkMessageRead(input)),
         ),
     };
 
@@ -382,10 +414,58 @@ export class WaConnector {
     return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
   }
 
+  private prepareForwardMessage(input: ForwardMessageInput): ForwardMessageInput {
+    if (typeof input.messageId !== 'string' || input.messageId.length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'messages.forward exige "messageId" não vazio.', {
+        provider: this.provider,
+      });
+    }
+    return {
+      ...input,
+      to: normalizeChatId(this.requireTo(input.to)),
+      fromChatId: input.fromChatId ? normalizeChatId(input.fromChatId) : undefined,
+    };
+  }
+
+  private prepareStarMessage(input: StarMessageInput): StarMessageInput {
+    if (typeof input.messageId !== 'string' || input.messageId.length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'messages.star/unstar exige "messageId" não vazio.',
+        { provider: this.provider },
+      );
+    }
+    return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
+  }
+
+  private preparePinMessage(input: PinMessageInput): PinMessageInput {
+    if (typeof input.messageId !== 'string' || input.messageId.length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'messages.pin/unpin exige "messageId" não vazio.',
+        { provider: this.provider },
+      );
+    }
+    return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
+  }
+
+  private prepareMarkMessageRead(input: MarkMessageReadInput): MarkMessageReadInput {
+    if (typeof input.messageId !== 'string' || input.messageId.length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'messages.markRead exige "messageId" não vazio.',
+        { provider: this.provider },
+      );
+    }
+    return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
+  }
+
   /**
-   * Guard-rail comum aos métodos opcionais de `MessagesApi` (`sendReaction`/`edit`/`delete`) —
-   * generaliza o que antes era inline só para `sendReaction` (ADR-0008), sem mudar o texto do erro
-   * nem o comportamento observável. Reaproveitado para `edit`/`delete` (ADR-0012).
+   * Guard-rail comum aos métodos opcionais de `MessagesApi` (`sendReaction`/`edit`/`delete`/
+   * `forward`/`star`/`unstar`/`pin`/`unpin`/`markRead`) — generaliza o que antes era inline só
+   * para `sendReaction` (ADR-0008), sem mudar o texto do erro nem o comportamento observável.
+   * Reaproveitado para `edit`/`delete` (ADR-0012) e `forward`/`star`/`unstar`/`pin`/`unpin`/
+   * `markRead` (ADR-0013).
    */
   private async callMessagesMethod<K extends keyof MessagesApi, R>(
     method: K,

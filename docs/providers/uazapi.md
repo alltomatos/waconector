@@ -66,6 +66,8 @@ Termo do provider: **"instância"** (`Instance`). Campos documentados do objeto 
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
 `messages.sendMedia`, `messages.sendReaction`, `messages.edit`, `messages.delete`,
+`messages.pin`, `messages.unpin`, `messages.markRead` (ADR-0013 — sem `messages.forward`/`star`,
+ver seção dedicada abaixo),
 `chats.archive`, `chats.unarchive`, `chats.mute`, `chats.unmute`, `chats.pin`, `chats.unpin`,
 `chats.markRead`, `chats.markUnread`, `webhooks.parse`.
 
@@ -421,6 +423,21 @@ levantamento comparativo entre os 5 adapters (uazapi é o único, dos 5, sem ess
 registrada para as demais seções deste dossiê (`instance.*`, `groups.*`). Os shapes de resposta
 acima seguem os schemas documentados no OpenAPI bundled, mas sem confirmação empírica contra
 tráfego real.
+
+## Ações sobre mensagem (`messages.pin`/`unpin`/`markRead`, ADR-0013)
+
+Continuação da pesquisa de `messages.edit`/`delete` (seção "Edição e exclusão de mensagem" acima).
+**Sem `messages.forward`/`star`** — busca exaustiva por padrão de nome de rota (`star`, `forward`,
+`translate`, `poll`, `vote`) nas 132 rotas do spec não encontrou nenhuma correspondência: não há
+rota `*star*`; o "forward" existente é só um campo `forward: boolean` COSMÉTICO nos endpoints de
+envio (`/send/location`, `/send/contact`, etc.) que apenas marca a mensagem NOVA como
+"Encaminhada" no WhatsApp — não reencaminha o conteúdo de uma mensagem já existente por ID. Busca
+negativa confirmada, não gap de pesquisa.
+
+| Capability | Endpoint | Confiança | Observações |
+| --- | --- | --- | --- |
+| `messages.pin` / `messages.unpin` | `POST /message/pin` | Alta | Body `{id, pin?: boolean (default true), duration?: integer (default 30)}`. **Nuance documentada explicitamente**: `duration` só aceita `1`, `7` ou `30` (dias) — qualquer outro valor cai silenciosamente para 30 (exemplo dedicado no spec, `duration: 99` → 30). `PinMessageInput` não expõe duração (ADR-0013); este adapter omite o campo, usando o default do próprio provider (30 dias). Em grupos, a permissão depende da config do WhatsApp do grupo — "o backend não valida localmente se a instância é admin; a decisão final é do WhatsApp". Newsletters/canais não são suportados por este endpoint. Resposta rica (`messageType: "PinInChatMessage"`, `pinned: boolean`) — ignorada, `Promise<void>`. |
+| `messages.markRead` | `POST /message/markread` | Alta | Body `{id: string[]}` — lista de IDs, marca várias mensagens de uma vez; este adapter sempre envia um array com 1 elemento. Resposta `{results: [{message_id, status, error?}]}` (por item, não all-or-nothing) — ignorada, `Promise<void>`. Distinto de `chats.markRead` (`/chat/read`, nível de conversa, ver seção "Chats" abaixo). |
 
 ## Chats (gestão de estado da conversa)
 

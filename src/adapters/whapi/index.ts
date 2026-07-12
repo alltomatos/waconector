@@ -21,6 +21,7 @@ import type {
   CreateGroupInput,
   DeleteMessageInput,
   EditMessageInput,
+  ForwardMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -28,14 +29,17 @@ import type {
   InstanceState,
   InstanceStatus,
   JoinGroupInviteInput,
+  MarkMessageReadInput,
   MediaKind,
   MediaRef,
   MessageAck,
   MessageKind,
+  PinMessageInput,
   SendMediaInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  StarMessageInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -92,6 +96,12 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendReaction',
   'messages.edit',
   'messages.delete',
+  'messages.forward',
+  'messages.star',
+  'messages.unstar',
+  'messages.pin',
+  'messages.unpin',
+  'messages.markRead',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -149,6 +159,12 @@ export function whapi(options: WhapiOptions): WaAdapter {
     sendReaction: (input) => sendReaction(http, input),
     edit: (input) => editMessage(http, input),
     delete: (input) => deleteMessage(http, input),
+    forward: (input) => forwardMessage(http, input),
+    star: (input) => setMessageStarred(http, input, true),
+    unstar: (input) => setMessageStarred(http, input, false),
+    pin: (input) => setMessagePinned(http, input, true),
+    unpin: (input) => setMessagePinned(http, input, false),
+    markRead: (input) => markMessageRead(http, input),
   };
 
   const groups: GroupsApi = {
@@ -490,6 +506,81 @@ async function editMessage(http: HttpClient, input: EditMessageInput): Promise<S
 async function deleteMessage(http: HttpClient, input: DeleteMessageInput): Promise<void> {
   await http.request({
     method: 'DELETE',
+    path: `/messages/${encodeURIComponent(input.messageId)}`,
+  });
+}
+
+/**
+ * `POST /messages/{MessageID}` (ADR-0013; `operationId: forwardMessage`, `openapi.yaml:2334-2387`,
+ * confiança Alta). Corpo `ForwardMessage` (`openapi.yaml:8865-8877`): `to` obrigatório (destino,
+ * `ForwardMessageInput.to`) + `force` opcional (booleano, "Force forward message" — não exposto
+ * pelo contrato canônico, nunca enviado). `ForwardMessageInput.fromChatId` (ADR-0013) não é
+ * necessário: o `messageId` no path já identifica a mensagem/origem. **401 dedicado** "Need
+ * channel authorization for forward message" documentado no spec — sugere que forward pode exigir
+ * plano/permissão extra além do básico; propagado como `WaConnectorError` normal. Resposta:
+ * reaproveita `mapSentMessage` (mesmo shape base de `sendText`/`edit`).
+ */
+async function forwardMessage(http: HttpClient, input: ForwardMessageInput): Promise<SentMessage> {
+  const to = toWhapiChatId(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: `/messages/${encodeURIComponent(input.messageId)}`,
+    body: { to },
+  });
+  return mapSentMessage(response, to);
+}
+
+/**
+ * `PUT /messages/{MessageID}/star` (ADR-0013; `operationId: starMessage`, `openapi.yaml:2541-2579`,
+ * confiança Alta). Corpo `Star` (`openapi.yaml:8885-8892`): `{starred: boolean}` — permanente
+ * (favoritar), sem duração, ao contrário do pin (ver `setMessagePinned`). As 2 capabilities
+ * canônicas (`messages.star`/`unstar`, ADR-0013) mapeiam para `starred: true`/`false` no mesmo
+ * endpoint. Resposta ignorada — contrato retorna `Promise<void>`.
+ */
+async function setMessageStarred(
+  http: HttpClient,
+  input: StarMessageInput,
+  starred: boolean,
+): Promise<void> {
+  await http.request({
+    method: 'PUT',
+    path: `/messages/${encodeURIComponent(input.messageId)}/star`,
+    body: { starred },
+  });
+}
+
+/**
+ * `POST` / `DELETE /messages/{MessageID}/pin` (ADR-0013; `operationId: pinMessage`/`unpinMessage`,
+ * `openapi.yaml:2580-2649`, confiança Alta). Corpo `Pin` (`openapi.yaml:8893-8904`) só no `POST`:
+ * `{time}` — enum `day`\|`week`\|`month` (fixação COM prazo, diferente do `star` permanente). Nota
+ * de spec: o `example` do campo (`2592000`, um número de segundos) é inconsistente com o próprio
+ * enum de strings — possível erro de documentação do provider. `PinMessageInput` do contrato
+ * canônico não expõe duração (ADR-0013 — nenhum formato converge entre providers); este adapter
+ * usa **`'day'`** como default para `pin` — decisão própria, o valor mais conservador do enum.
+ * `unpin` é `DELETE`, sem corpo.
+ */
+async function setMessagePinned(
+  http: HttpClient,
+  input: PinMessageInput,
+  pinned: boolean,
+): Promise<void> {
+  const path = `/messages/${encodeURIComponent(input.messageId)}/pin`;
+  if (pinned) {
+    await http.request({ method: 'POST', path, body: { time: 'day' } });
+    return;
+  }
+  await http.request({ method: 'DELETE', path });
+}
+
+/**
+ * `PUT /messages/{MessageID}` (ADR-0013; `operationId: markMessageAsRead`,
+ * `openapi.yaml:2388-2418`, confiança Alta). Sem corpo. Marca UMA mensagem específica (e, por
+ * extensão de protocolo, a conversa até ali) como lida — distinto de `chats.markRead` (ADR-0012,
+ * `PATCH /chats/{ChatID}` com `mark_unread: false`), que atua no nível do chat inteiro.
+ */
+async function markMessageRead(http: HttpClient, input: MarkMessageReadInput): Promise<void> {
+  await http.request({
+    method: 'PUT',
     path: `/messages/${encodeURIComponent(input.messageId)}`,
   });
 }

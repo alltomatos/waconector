@@ -27,6 +27,7 @@ import type {
   CreateGroupInput,
   DeleteMessageInput,
   EditMessageInput,
+  ForwardMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -42,6 +43,7 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  StarMessageInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -160,6 +162,9 @@ const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'messages.sendReaction',
   'messages.edit',
   'messages.delete',
+  'messages.forward',
+  'messages.star',
+  'messages.unstar',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -218,6 +223,9 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     sendReaction: (input) => sendReaction(http, session, input),
     edit: (input) => editMessage(http, session, input),
     delete: (input) => deleteMessage(http, session, input),
+    forward: (input) => forwardMessage(http, session, input),
+    star: (input) => setMessageStarred(http, session, input, true),
+    unstar: (input) => setMessageStarred(http, session, input, false),
   };
 
   const groups: GroupsApi = {
@@ -703,6 +711,63 @@ async function deleteMessage(
       messageId: input.messageId,
       onlyLocal: false,
     },
+  });
+}
+
+/**
+ * `POST /forward-messages` (ADR-0013; `DeviceController.forwardMessages`, confirmado em código —
+ * commit `f09e2fed`). Body confirmado pelo Swagger real: `{phone, isGroup, messageId}` — o
+ * handler faz `phone[0]` (reescrito para array pelo middleware `statusConnection`, mesmo
+ * mecanismo de `sendText`/`sendMedia`) e chama `forwardMessagesV2(phone[0], messageId)` da lib.
+ * `ForwardMessageInput.fromChatId` nunca é enviado — a implementação real usa só o `messageId` da
+ * mensagem original (que já a identifica), não uma origem separada.
+ *
+ * **Bug real confirmado no controller** (`deviceController.ts:968-1021`): o `if (!isGroup)
+ * {...} else {...}` tem os DOIS ramos chamando exatamente a mesma linha
+ * (`forwardMessagesV2(phone[0], messageId)`) — `isGroup` não tem nenhum efeito real no
+ * comportamento, apesar de aceito no schema. Este adapter envia `isGroup` mesmo assim (por
+ * completude/estabilidade futura), mas documentado aqui para não ser redescoberto.
+ *
+ * Resposta segue o envelope padrão (`{status:'success', response}`) — diferente de `list-chats`
+ * (ver `unwrapResponse`), este endpoint passa pelo padrão normal `returnSucess`. `response` é o
+ * retorno de `forwardMessagesV2` da lib — shape exato não capturado; `mapSentMessageFromMessage`
+ * cai no fallback de id sintético se a resposta não ecoar `id`/`chatId`.
+ */
+async function forwardMessage(
+  http: HttpClient,
+  session: string,
+  input: ForwardMessageInput,
+): Promise<SentMessage> {
+  const recipient = toWppconnectRecipient(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: sessionPath(session, '/forward-messages'),
+    body: {
+      phone: recipient.phone,
+      isGroup: recipient.isGroup,
+      messageId: input.messageId,
+    },
+  });
+  return mapSentMessageFromMessage(response, recipient.phone);
+}
+
+/**
+ * `POST /star-message` (ADR-0013; `DeviceController.starMessage`, confirmado em código). Body:
+ * `{messageId, star: boolean}` — SEM `phone`/`isGroup`: o `messageId` sozinho identifica a
+ * mensagem (`client.starMessage(messageId, star)` da lib). As 2 capabilities canônicas
+ * (`messages.star`/`unstar`, ADR-0013) mapeiam para `star: true`/`star: false` no mesmo endpoint.
+ * Resposta segue o envelope padrão — ignorada, contrato retorna `Promise<void>`.
+ */
+async function setMessageStarred(
+  http: HttpClient,
+  session: string,
+  input: StarMessageInput,
+  star: boolean,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/star-message'),
+    body: { messageId: input.messageId, star },
   });
 }
 

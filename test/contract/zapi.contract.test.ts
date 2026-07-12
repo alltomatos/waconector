@@ -255,6 +255,26 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { value: true });
     }
 
+    // messages.forward (ADR-0013): POST /forward-message. Resposta: só {zaapId}, sem messageId/id.
+    if (method === 'POST' && pathname === `${PREFIX}/forward-message`) {
+      return jsonResponse(200, { zaapId: 'MOCKFORWARDZAAP001' });
+    }
+
+    // messages.pin/unpin (ADR-0013): POST /pin-message.
+    if (method === 'POST' && pathname === `${PREFIX}/pin-message`) {
+      return jsonResponse(200, {
+        zaapId: 'MOCKPINZAAP001',
+        messageId: 'MOCKPIN001',
+        id: 'MOCKPIN001',
+      });
+    }
+
+    // messages.markRead (ADR-0013, nível de MENSAGEM): POST /read-message, 204 vazio — distinto
+    // de chats.markRead (nível de conversa, /modify-chat, ADR-0012).
+    if (method === 'POST' && pathname === `${PREFIX}/read-message`) {
+      return new Response(null, { status: 204 });
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1582,6 +1602,115 @@ describe('zapi adapter: comportamento específico do provider', () => {
     expect(requestedUrl?.searchParams.get('owner')).toBe('true');
     expect(requestedBody).toBeUndefined();
     expect(result).toBeUndefined();
+  });
+
+  it('messages.forward chama POST /forward-message com {phone, messageId, messagePhone}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/forward-message`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const forwarded = await wa.messages.forward({
+      to: '5511999999999',
+      messageId: '3EB0ORIGINAL',
+      fromChatId: '5511988887777',
+    });
+
+    expect(capturedBody).toEqual({
+      phone: '5511999999999',
+      messageId: '3EB0ORIGINAL',
+      messagePhone: '5511988887777',
+    });
+    expect(forwarded.chatId).toBe('5511999999999');
+  });
+
+  it('messages.forward usa "to" como messagePhone quando fromChatId está ausente', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/forward-message`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.forward({ to: '5511999999999', messageId: '3EB0ORIGINAL' });
+
+    expect(capturedBody).toEqual({
+      phone: '5511999999999',
+      messageId: '3EB0ORIGINAL',
+      messagePhone: '5511999999999',
+    });
+  });
+
+  it('messages.pin/unpin chamam POST /pin-message com {phone, messageId, messageAction, pinMessageDuration:"24_hours"}', async () => {
+    const hits: unknown[] = [];
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/pin-message`) {
+            hits.push(JSON.parse(String(init?.body)));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.pin({ to: '5511999999999', messageId: '3EB0ORIGINAL' }),
+    ).resolves.toBeUndefined();
+    await expect(
+      wa.messages.unpin({ to: '5511999999999', messageId: '3EB0ORIGINAL' }),
+    ).resolves.toBeUndefined();
+
+    expect(hits).toEqual([
+      {
+        phone: '5511999999999',
+        messageId: '3EB0ORIGINAL',
+        messageAction: 'pin',
+        pinMessageDuration: '24_hours',
+      },
+      {
+        phone: '5511999999999',
+        messageId: '3EB0ORIGINAL',
+        messageAction: 'unpin',
+        pinMessageDuration: '24_hours',
+      },
+    ]);
+  });
+
+  it('messages.markRead chama POST /read-message com {phone, messageId} e resolve void', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/read-message`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.markRead({ to: '5511999999999', messageId: '3EB0ORIGINAL' }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ phone: '5511999999999', messageId: '3EB0ORIGINAL' });
   });
 
   it.each([

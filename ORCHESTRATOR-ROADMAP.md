@@ -337,6 +337,46 @@ as candidatas mais fortes ao próximo ADR.
       coverage/build/smoke/docs:capabilities) — 670 testes passando, cobertura acima dos
       thresholds. `docs/capabilities.md` regenerado (40 capabilities × 8 providers).
 
+## Epic 8 — bloqueada: reabrir `groups.*`/`contacts.*` do QuePasa
+
+Estado: **blocked** (sem instância real disponível — não faz parte da fila de Epic 9)
+
+Candidato natural de continuação da Epic 6 (QuePasa investigado e recusado com evidência,
+`docs/providers/quepasa.md#follow-up-2026-07-12`). Usuário confirmou (2026-07-12) que não tem uma
+instância QuePasa real disponível para validar contra tráfego real — sem isso, reabrir cairia
+exatamente na razão que já bloqueou da última vez. Retomar quando houver instância disponível
+(`docker pull codeleaks/quepasa:latest`, publicamente disponível, ver dossiê).
+
+## Epic 9 — capabilities novas, rodada 2 (fila sequencial, sem multi-agent)
+
+Estado: **in_progress**
+
+Continuação da Epic 7, cobrindo candidatas que ficaram fora do ADR-0012 (mensagens avançadas +
+domínios inteiramente novos: presença, labels, canais, perfil comercial, chamadas). Diferença
+explícita de processo, a pedido do usuário: fila sequencial, **um item por vez, sem múltiplos
+agentes em paralelo** (nem `Workflow`, nem fan-out via `Agent`) — cada item implementado
+diretamente, provider por provider. Plano completo em
+`C:\Users\ronaldo\.claude\plans\scalable-dreaming-crayon.md`. Reaproveita os 8 relatórios de
+pesquisa já produzidos na Epic 7 (`scratchpad/provider-reports/`), sem repetir pesquisa do zero.
+
+- [x] **`messages.forward`/`star`/`unstar`/`pin`/`unpin`/`markRead`** (ADR-0013) — nível de
+      MENSAGEM, distintas de `chats.pin`/`markRead` (nível de conversa, já implementadas). Enum
+      cresceu de 40 para 46. Cobertura por provider: whapi/waha fecharam as 6 completas (45/46 e
+      40/46); zapi fechou 4 (forward/pin/unpin/markRead, sem star — busca negativa confirmada,
+      42/46); uazapi fechou 3 (pin/unpin/markRead, sem forward/star — busca exaustiva em 132
+      rotas do spec, 41/46); wppconnect fechou 3 (forward/star/unstar, sem pin/markRead de
+      mensagem — só existe `/pin-chat` de nível de conversa, 42/46); evolution/wuzapi/quepasa
+      fecharam só `markRead` (36/46, 34/46, 14/46) — sem `forward`/`star`/`pin` confirmados em
+      nenhuma fonte primária (OpenAPI oficial, busca exaustiva em `handlers.go`, e rotas legacy,
+      respectivamente). Implementado sem `Workflow`/`Agent` (diretamente, um provider por vez, a
+      pedido do usuário). QA gate completo verde: 703 testes, cobertura acima dos thresholds.
+- [ ] `messages.sendLocation`/`sendContactCard`/`sendPoll` (ADR-0014).
+- [ ] `presence.*` (ADR-0015).
+- [ ] `labels.*` (ADR-0016).
+- [ ] `channels.*`/`newsletters.*` (ADR-0017).
+- [ ] `business.*` (ADR-0018).
+- [ ] `calls.*` (ADR-0019).
+
 ---
 
 Atualize este arquivo ao concluir cada milestone; o detalhe de *por quê* de cada fase do produto

@@ -9,15 +9,19 @@ import type {
   CreateGroupInput,
   DeleteMessageInput,
   EditMessageInput,
+  ForwardMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipantsInput,
   InstanceStatus,
   JoinGroupInviteInput,
+  MarkMessageReadInput,
+  PinMessageInput,
   SendMediaInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  StarMessageInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -62,6 +66,18 @@ export interface MessagesApi {
   edit?(input: EditMessageInput): Promise<SentMessage>;
   /** Opcional: só implementado por adapters que declaram a capability `messages.delete`. Ver ADR-0012. */
   delete?(input: DeleteMessageInput): Promise<void>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.forward`. Ver ADR-0013. */
+  forward?(input: ForwardMessageInput): Promise<SentMessage>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.star`. Ver ADR-0013. */
+  star?(input: StarMessageInput): Promise<void>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.unstar`. Ver ADR-0013. */
+  unstar?(input: StarMessageInput): Promise<void>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.pin`. Ver ADR-0013. */
+  pin?(input: PinMessageInput): Promise<void>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.unpin`. Ver ADR-0013. */
+  unpin?(input: PinMessageInput): Promise<void>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.markRead`. Ver ADR-0013. */
+  markRead?(input: MarkMessageReadInput): Promise<void>;
 }
 
 /**

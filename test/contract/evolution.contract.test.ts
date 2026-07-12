@@ -97,6 +97,10 @@ function createFetchStub(): typeof globalThis.fetch {
     if (method === 'POST' && url.pathname === '/message/delete') {
       return jsonResponse(200, { message: 'success' });
     }
+    // messages.markRead (ADR-0013, nível de MENSAGEM): POST /message/markread.
+    if (method === 'POST' && url.pathname === '/message/markread') {
+      return jsonResponse(200, { message: 'success' });
+    }
     if (method === 'DELETE' && url.pathname === '/instance/logout') {
       return jsonResponse(200, { message: 'success' });
     }
@@ -1206,6 +1210,41 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
       messageId: '3EB0FAKE0000000000TEXT',
     });
     expect(result).toBeUndefined();
+  });
+
+  it('messages.markRead envia POST /message/markread com {id: [messageId], number}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/message/markread') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.messages.markRead({ to: '5511999999999', messageId: '3EB0FAKE0000000000TEXT' }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({
+      id: ['3EB0FAKE0000000000TEXT'],
+      number: '5511999999999',
+    });
+  });
+
+  it('não declara messages.forward/star/unstar/pin/unpin (não confirmados no OpenAPI oficial)', () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+    expect(adapter.capabilities).not.toContain('messages.forward');
+    expect(adapter.capabilities).not.toContain('messages.star');
+    expect(adapter.capabilities).not.toContain('messages.pin');
+    expect(adapter.messages.forward).toBeUndefined();
   });
 
   it('chats.archive envia POST /chat/archive com {number}', async () => {

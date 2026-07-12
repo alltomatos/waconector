@@ -117,9 +117,11 @@ dessa identidade.
 
 `instance.pairingCode` **não** foi declarada (ver justificativa acima).
 
-## Capabilities implementadas nesta fase (ADR-0012: edição/exclusão de mensagem + `chats.*`)
+## Capabilities implementadas nesta fase (ADR-0012: edição/exclusão de mensagem + `chats.*`; ADR-0013: ações sobre mensagem)
 
-`messages.edit`, `messages.delete`, `chats.archive`, `chats.unarchive`.
+`messages.edit`, `messages.delete`, `chats.archive`, `chats.unarchive` (ADR-0012);
+`messages.markRead` (ADR-0013 — sem `messages.forward`/`star`/`pin`/`unpin`, ver seção dedicada
+abaixo).
 
 > ⚠️ **Nota de metodologia**: nesta rodada, o relatório de pesquisa dedicado (1 agente por
 > provider, mesma metodologia das rodadas anteriores — ver ADR-0012) não estava disponível para o
@@ -144,6 +146,7 @@ dessa identidade.
 | --- | --- | --- |
 | `messages.edit` | `POST /chat/send/edit` | Corpo `{Phone, Body, Id}`. Ver subseção dedicada abaixo. |
 | `messages.delete` | `POST /chat/delete` | Corpo `{Phone, Id}`. Ver subseção dedicada abaixo. |
+| `messages.markRead` (ADR-0013) | `POST /chat/markread` | Corpo `{Id: string[], ChatPhone}` — nível de MENSAGEM. Este é exatamente o endpoint que a nota de metodologia acima já tinha identificado como "existe, mas não serve a `chats.markRead`" — implementado agora como capability de nível de mensagem. `SenderPhone` (opcional, só necessário em grupos) não é enviado. `Id` é rejeitado com `400` se vazio (`len(t.Id) < 1`); este adapter sempre envia um array com 1 elemento. Campos legados `Chat`/`Sender` não são usados — `ChatPhone`/`SenderPhone` são os "novos campos padronizados e priorizados" segundo o comentário do próprio código-fonte. **Sem `messages.forward`/`star`/`pin`/`unpin`**: busca exaustiva em `handlers.go` (7525 linhas) não encontrou nenhuma ocorrência de `Forward`/`Star`/`Pin`/`pinned`/`BuildPin` — limitação real do provider, não gap de pesquisa. |
 
 ### `messages.edit` — `POST /chat/send/edit`
 

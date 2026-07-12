@@ -80,6 +80,7 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 | `messages.sendReaction` | `POST /message/react` | Ver seção "Reações" abaixo. |
 | `messages.edit` | `POST /message/edit` | Ver seção "Edição e exclusão de mensagem" abaixo. |
 | `messages.delete` | `POST /message/delete` | Ver seção "Edição e exclusão de mensagem" abaixo. |
+| `messages.markRead` | `POST /message/markread` | ADR-0013, nível de MENSAGEM. Ver seção "Edição e exclusão de mensagem" abaixo. |
 | `groups.create` | `POST /group/create` | Ver seção "Grupos (núcleo)" abaixo. |
 | `groups.getInfo` | `POST /group/info` | Ver seção "Grupos (núcleo)" abaixo. |
 | `groups.list` | `GET /group/list` | Ver seção "Grupos (núcleo)" abaixo. |
@@ -176,6 +177,24 @@ não só código-fonte Go — mesmo padrão de confiança já usado no resto des
   presente). A operação canônica retorna `Promise<void>`, então o adapter ignora o corpo da
   resposta deliberadamente; o shape exato de `data` é irrelevante ao comportamento.
 - Mesma ausência de janela de tempo documentada que em `messages.edit`.
+
+### `messages.markRead` — `POST /message/markread` (ADR-0013, nível de MENSAGEM)
+
+- Confirmado via `evo-go-message.yaml`, schema `MarkRead: {id: string[], number: string}` —
+  confiança Alta. `id` é array — permite marcar várias mensagens de uma vez; este adapter sempre
+  envia um array com 1 elemento.
+- Resposta `{"message":"success"}` — ignorada, `Promise<void>`.
+- **Sem `chats.markRead`** (nível de conversa): a pesquisa dedicada de capabilities novas não
+  encontrou um endpoint de "marcar CHAT INTEIRO como lido/não lido" em `evo-go-chat.yaml` — só o
+  endpoint de nível de mensagem acima.
+
+### Candidatas NÃO confirmadas: `messages.forward`/`star`/`pin`/`unpin`
+
+Busca na mesma pesquisa (`evo-go-message.yaml` e `evo-go-chat.yaml` completos) não encontrou
+endpoint para nenhuma das 4 — diferente de `messages.markRead`, que tem confirmação direta no
+schema, `forward`/`star`/`pin`/`unpin` simplesmente não aparecem em nenhum dos dois specs.
+Tratado como limitação real do provider (busca exaustiva nos dois arquivos OpenAPI relevantes),
+não gap de pesquisa.
 
 ## Grupos (núcleo)
 

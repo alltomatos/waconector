@@ -21,6 +21,7 @@ import type {
   CreateGroupInput,
   DeleteMessageInput,
   EditMessageInput,
+  ForwardMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -28,10 +29,12 @@ import type {
   InstanceState,
   InstanceStatus,
   JoinGroupInviteInput,
+  MarkMessageReadInput,
   MediaKind,
   MediaRef,
   MessageAck,
   MessageKind,
+  PinMessageInput,
   SendMediaInput,
   SendReactionInput,
   SendTextInput,
@@ -94,6 +97,10 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendReaction',
   'messages.edit',
   'messages.delete',
+  'messages.forward',
+  'messages.pin',
+  'messages.unpin',
+  'messages.markRead',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -162,6 +169,10 @@ export function zapi(options: ZapiOptions): WaAdapter {
     sendReaction: (input) => sendReaction(http, prefix, input),
     edit: (input) => editMessage(http, prefix, input),
     delete: (input) => deleteMessage(http, prefix, input),
+    forward: (input) => forwardMessage(http, prefix, input),
+    pin: (input) => setMessagePinned(http, prefix, input, 'pin'),
+    unpin: (input) => setMessagePinned(http, prefix, input, 'unpin'),
+    markRead: (input) => markMessageRead(http, prefix, input),
   };
 
   const groups: GroupsApi = {
@@ -573,6 +584,81 @@ async function deleteMessage(
     method: 'DELETE',
     path: `${prefix}/messages`,
     query: { messageId: input.messageId, phone, owner: true },
+  });
+}
+
+/**
+ * `messages.forward` (ADR-0013) — `POST /forward-message`, confiança Média-Alta no relatório de
+ * pesquisa dedicada. Body: `{phone, messageId, messagePhone}` — `phone` é o DESTINO
+ * (`input.to`), `messagePhone` é a ORIGEM da mensagem (`ForwardMessageInput.fromChatId`,
+ * obrigatório para este provider especificamente: diferente de outros adapters, a Z-API não
+ * resolve a origem sozinha a partir do `messageId`). Quando `fromChatId` está ausente, este
+ * adapter usa `phone` (destino) também como origem — best-effort, **não confirmado contra
+ * instância real**; o chamador deve sempre informar `fromChatId` para encaminhar de um chat
+ * diferente do destino. Resposta: `{zaapId}` só — **não** o trio completo `{zaapId, messageId, id}`
+ * de `send-text`/`send-media` (um shape a menos); `mapSentMessage` cai no fallback de id sintético.
+ */
+async function forwardMessage(
+  http: HttpClient,
+  prefix: string,
+  input: ForwardMessageInput,
+): Promise<SentMessage> {
+  const phone = toZapiPhone(input.to);
+  const messagePhone = input.fromChatId ? toZapiPhone(input.fromChatId) : phone;
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: `${prefix}/forward-message`,
+    body: { phone, messageId: input.messageId, messagePhone },
+  });
+  return mapSentMessage(response, phone);
+}
+
+type ZapiPinAction = 'pin' | 'unpin';
+
+/**
+ * `messages.pin`/`unpin` (ADR-0013) — `POST /pin-message`, confiança Média-Alta. Body:
+ * `{phone, messageId, messageAction: "pin"|"unpin", pinMessageDuration}` — a doc afirma
+ * explicitamente que `pinMessageDuration` **"does not have effect in the case of unfixing a
+ * message"**, então é enviado sempre, mesmo em `unpin` (ignorado pelo provider nesse caso).
+ * Valores documentados: `"24_hours"`, `"7_days"`, `"30_days"` — `PinMessageInput` do contrato
+ * canônico não expõe duração (ADR-0013); este adapter usa **`"24_hours"`** como default, decisão
+ * própria. Resposta: `{zaapId, messageId, id}` (mesmo shape de `mapSentMessage`) — ignorada,
+ * contrato retorna `Promise<void>`.
+ */
+async function setMessagePinned(
+  http: HttpClient,
+  prefix: string,
+  input: PinMessageInput,
+  action: ZapiPinAction,
+): Promise<void> {
+  const phone = toZapiPhone(input.to);
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/pin-message`,
+    body: {
+      phone,
+      messageId: input.messageId,
+      messageAction: action,
+      pinMessageDuration: '24_hours',
+    },
+  });
+}
+
+/**
+ * `messages.markRead` (ADR-0013, nível de MENSAGEM) — `POST /read-message`, confiança Alta.
+ * Body: `{phone, messageId}`. Resposta `204` vazia. Distinto de `chats.markRead` (nível de
+ * conversa, `POST /modify-chat` com `action: "read"`, ADR-0012).
+ */
+async function markMessageRead(
+  http: HttpClient,
+  prefix: string,
+  input: MarkMessageReadInput,
+): Promise<void> {
+  const phone = toZapiPhone(input.to);
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/read-message`,
+    body: { phone, messageId: input.messageId },
   });
 }
 

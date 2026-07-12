@@ -33,6 +33,7 @@ import type {
   MessageAck,
   MessageKind,
   SentMessage,
+  StarMessageInput,
   WaMessage,
 } from '../../core/types';
 
@@ -81,6 +82,12 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'messages.sendReaction',
   'messages.edit',
   'messages.delete',
+  'messages.forward',
+  'messages.star',
+  'messages.unstar',
+  'messages.pin',
+  'messages.unpin',
+  'messages.markRead',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -263,6 +270,87 @@ export function waha(options: WahaOptions): WaAdapter {
       await http.request({
         method: 'DELETE',
         path: messagePath(session, input.to, input.messageId),
+      });
+    },
+
+    /**
+     * `POST /api/forwardMessage` (ADR-0013; `operationId ChattingController_forwardMessage`,
+     * schema `MessageForwardRequest` — confiança Alta, página dedicada com exemplo completo).
+     * Body: `{chatId, messageId, session}` — `chatId` aqui é o DESTINO (`input.to`); a origem da
+     * mensagem é resolvida pelo próprio `messageId` (formato `{fromMe}_{chat}_{id}` já
+     * autoidentifica o chat de origem), então `input.fromChatId` (opcional no contrato canônico,
+     * ADR-0013) nunca é necessário para este provider e é ignorado se enviado. Resposta `201`:
+     * `WAMessage` completo, mesmo shape de `mapSentMessage`. **Nuance documentada verbatim**: "You
+     * can forward a message to another chat (that you chatted before, otherwise it may fail)" —
+     * encaminhar para um chat nunca contatado pode falhar (limitação do protocolo, não bug do
+     * adapter).
+     */
+    forward: async (input) => {
+      const chatId = toWahaChatId(input.to);
+      const body = await http.request<unknown>({
+        method: 'POST',
+        path: '/api/forwardMessage',
+        body: { chatId, messageId: input.messageId, session },
+      });
+      return mapSentMessage(body, chatId);
+    },
+
+    /**
+     * `PUT /api/star` (ADR-0013; `operationId ChattingController_setStar`, schema
+     * `MessageStarRequest` — confiança Alta, página dedicada "Star and unstar message"). Body:
+     * `{messageId, chatId, star, session}` — diferente de `sendReaction` (que resolve o chat só
+     * pelo `messageId`), aqui `chatId` é campo obrigatório separado. Um único endpoint com flag
+     * booleana cobre as duas direções; `star`/`unstar` do contrato canônico (ADR-0013, capabilities
+     * separadas) mapeiam para `star: true`/`star: false` no mesmo endpoint. Resposta `200` sem
+     * schema — ignorada, contrato retorna `void`.
+     */
+    star: async (input) => {
+      await setStarred(http, session, input, true);
+    },
+    unstar: async (input) => {
+      await setStarred(http, session, input, false);
+    },
+
+    /**
+     * `POST .../messages/{messageId}/pin` / `.../unpin` (ADR-0013; schema `PinMessageRequest`,
+     * confiança Alta para request, Média para o schema de resposta — doc e `openapi.json`
+     * divergem, mesma classe de gap já documentada em `groups.updatePicture`). `pin` exige
+     * `duration` em SEGUNDOS — só 3 valores são aceitos nativamente pelo WhatsApp: `86400` (24h),
+     * `604800` (7 dias), `2592000` (30 dias). `PinMessageInput` do contrato canônico não expõe
+     * duração (ADR-0013 — nenhum formato converge entre providers); este adapter usa `86400` (24h)
+     * como default, decisão própria documentada aqui, não um default do provider. `unpin` não tem
+     * body. Resposta (segundo a doc, não o schema): `{success: true}` — ignorada, `Promise<void>`.
+     */
+    pin: async (input) => {
+      await http.request({
+        method: 'POST',
+        path: messagePath(session, input.to, input.messageId, 'pin'),
+        body: { duration: WAHA_PIN_DURATION_SECONDS },
+      });
+    },
+    unpin: async (input) => {
+      await http.request({
+        method: 'POST',
+        path: messagePath(session, input.to, input.messageId, 'unpin'),
+      });
+    },
+
+    /**
+     * `POST /api/sendSeen` (ADR-0013; `operationId ChattingController_sendSeen`, schema
+     * `SendSeenRequest` — confiança Alta). Nível de MENSAGEM (`messageIds`), distinto de
+     * `chats.markRead` (nível de conversa, `POST .../chats/{chatId}/messages/read`, ADR-0012).
+     * Body: `{chatId, messageIds: [messageId], session}` — `messageId` (singular) existe no schema
+     * mas está `deprecated: true`; este adapter sempre usa o array `messageIds` com um elemento.
+     * `participant` (obrigatório só para grupos em engines NOWEB/GOWS) não é enviado — não exposto
+     * pelo contrato canônico (`MarkMessageReadInput` não carrega esse campo); pode ser necessário
+     * para marcar mensagens de terceiros em grupo, não confirmado contra instância real.
+     */
+    markRead: async (input) => {
+      const chatId = toWahaChatId(input.to);
+      await http.request({
+        method: 'POST',
+        path: '/api/sendSeen',
+        body: { chatId, messageIds: [input.messageId], session },
       });
     },
   };
@@ -658,14 +746,37 @@ function chatPath(session: string, chatId: string, suffix: string): string {
 }
 
 /**
- * Monta o path `/api/{session}/chats/{chatId}/messages/{messageId}` usado por
- * `messages.edit`/`messages.delete` (retrofit ADR-0012). `messageId` já vem no formato de JID de
- * mensagem que o WAHA espera (ex.: `true_5585999999999@c.us_AAAA...`) — a doc chama atenção
- * explicitamente para escapar `@` (`%40`) tanto em `chatId` quanto em `messageId`, o que
- * `encodeURIComponent` já cobre para os dois.
+ * Monta o path `/api/{session}/chats/{chatId}/messages/{messageId}[/<suffix>]` usado por
+ * `messages.edit`/`messages.delete` (ADR-0012) e `messages.pin`/`unpin` (ADR-0013, via `suffix`
+ * opcional). `messageId` já vem no formato de JID de mensagem que o WAHA espera (ex.:
+ * `true_5585999999999@c.us_AAAA...`) — a doc chama atenção explicitamente para escapar `@`
+ * (`%40`) tanto em `chatId` quanto em `messageId`, o que `encodeURIComponent` já cobre para os dois.
  */
-function messagePath(session: string, chatId: string, messageId: string): string {
-  return chatPath(session, chatId, `messages/${encodeURIComponent(messageId)}`);
+function messagePath(session: string, chatId: string, messageId: string, suffix?: string): string {
+  const base = `messages/${encodeURIComponent(messageId)}`;
+  return chatPath(session, chatId, suffix ? `${base}/${suffix}` : base);
+}
+
+/**
+ * `messages.pin` (ADR-0013) exige `duration` em segundos; o WhatsApp só aceita 3 valores nativos
+ * (24h/7d/30d — ver docstring de `pin` acima). Sem sentinela "permanente" documentado, este
+ * adapter usa 24h (`86400`) como default — decisão própria, não do provider.
+ */
+const WAHA_PIN_DURATION_SECONDS = 86400;
+
+/** `messages.star`/`unstar` (ADR-0013) compartilham `PUT /api/star`, variando só o campo `star`. */
+async function setStarred(
+  http: HttpClient,
+  session: string,
+  input: StarMessageInput,
+  star: boolean,
+): Promise<void> {
+  const chatId = toWahaChatId(input.to);
+  await http.request({
+    method: 'PUT',
+    path: '/api/star',
+    body: { messageId: input.messageId, chatId, star, session },
+  });
 }
 
 interface WahaRemoteFile {

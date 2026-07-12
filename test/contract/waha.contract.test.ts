@@ -301,6 +301,40 @@ function createFetchStub(): typeof globalThis.fetch {
       return new Response(null, { status: 200 });
     }
 
+    // messages.forward (ADR-0013): POST /api/forwardMessage. Resposta 201: WAMessage completo.
+    if (method === 'POST' && pathname === '/api/forwardMessage') {
+      return jsonResponse(201, {
+        id: 'true_5585999999999@c.us_MOCKFORWARD0000000001',
+        timestamp: 1735689600,
+        from: '5585999999999@c.us',
+        fromMe: true,
+        to: '5585999999999@c.us',
+        body: 'texto original',
+        hasMedia: false,
+      });
+    }
+
+    // messages.star/unstar (ADR-0013): PUT /api/star. Resposta 200 sem schema.
+    if (method === 'PUT' && pathname === '/api/star') {
+      return jsonResponse(200, {});
+    }
+
+    // messages.pin/unpin (ADR-0013): POST .../messages/{messageId}/pin|unpin — checado ANTES do
+    // catch-all PUT/DELETE de edit/delete acima (método POST não colide).
+    if (
+      method === 'POST' &&
+      pathname.startsWith(`/api/${SESSION}/chats/`) &&
+      (pathname.endsWith('/pin') || pathname.endsWith('/unpin'))
+    ) {
+      return jsonResponse(200, { success: true });
+    }
+
+    // messages.markRead (ADR-0013, nível de MENSAGEM): POST /api/sendSeen — distinto de
+    // chats.markRead (nível de conversa, /chats/{chatId}/messages/read, ADR-0012).
+    if (method === 'POST' && pathname === '/api/sendSeen') {
+      return new Response(null, { status: 201 });
+    }
+
     throw new Error(`fetchStub: rota não configurada — ${method} ${pathname}`);
   };
 }
@@ -1126,6 +1160,132 @@ describe('WAHA adapter: comportamento específico do provider', () => {
     expect(calls[0]?.path).toBe(
       `/api/${SESSION}/chats/${CHAT_ID_ENCODED}/messages/true_5585999999999%40c.us_MOCKDELETE00000000000001`,
     );
+  });
+
+  it('messages.forward chama POST /api/forwardMessage com {chatId, messageId, session}', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.forward({
+      to: '5585999999999',
+      messageId: 'true_5585988888888@c.us_MOCKORIGINAL00000001',
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe('/api/forwardMessage');
+    expect(calls[0]?.body).toEqual({
+      chatId: '5585999999999@c.us',
+      messageId: 'true_5585988888888@c.us_MOCKORIGINAL00000001',
+      session: SESSION,
+    });
+    expect(sent.chatId).toBe('5585999999999@c.us');
+    expect(sent).toHaveProperty('raw');
+  });
+
+  it('messages.star/unstar chamam PUT /api/star com {messageId, chatId, star, session}', async () => {
+    const calls: Array<{ body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/api/star') {
+            calls.push({ body: init?.body ? JSON.parse(String(init.body)) : undefined });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.messages.star({ to: '5585999999999', messageId: 'MOCKSTAR001' });
+    await wa.messages.unstar({ to: '5585999999999', messageId: 'MOCKSTAR001' });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.body).toEqual({
+      messageId: 'MOCKSTAR001',
+      chatId: '5585999999999@c.us',
+      star: true,
+      session: SESSION,
+    });
+    expect(calls[1]?.body).toEqual({
+      messageId: 'MOCKSTAR001',
+      chatId: '5585999999999@c.us',
+      star: false,
+      session: SESSION,
+    });
+  });
+
+  it('messages.pin envia duration em segundos (86400, decisão do adapter); messages.unpin sem body', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith('/pin') || url.pathname.endsWith('/unpin')) {
+            calls.push({
+              path: url.pathname,
+              body: init?.body ? JSON.parse(String(init.body)) : undefined,
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.messages.pin({ to: '5585999999999', messageId: 'MOCKPIN001' });
+    await wa.messages.unpin({ to: '5585999999999', messageId: 'MOCKPIN001' });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/chats/${CHAT_ID_ENCODED}/messages/MOCKPIN001/pin`);
+    expect(calls[0]?.body).toEqual({ duration: 86400 });
+    expect(calls[1]?.path).toBe(
+      `/api/${SESSION}/chats/${CHAT_ID_ENCODED}/messages/MOCKPIN001/unpin`,
+    );
+    expect(calls[1]?.body).toBeUndefined();
+  });
+
+  it('messages.markRead chama POST /api/sendSeen com {chatId, messageIds:[messageId], session} e resolve void', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.markRead({ to: '5585999999999', messageId: 'MOCKREAD001' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe('/api/sendSeen');
+    expect(calls[0]?.body).toEqual({
+      chatId: '5585999999999@c.us',
+      messageIds: ['MOCKREAD001'],
+      session: SESSION,
+    });
   });
 
   it('chats.archive chama POST /api/{session}/chats/{chatId}/archive e resolve void', async () => {

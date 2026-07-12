@@ -132,6 +132,57 @@ describe('MockAdapter: outbox', () => {
       isWaConnectorError(deleteFailure) && deleteFailure.code === 'INSTANCE_DISCONNECTED',
     ).toBe(true);
   });
+
+  it('messages.forward devolve um novo SentMessage quando conectado', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const forwarded = await wa.messages.forward({ to: '5585999999999', messageId: 'msg-1' });
+    expect(forwarded.chatId).toBe('5585999999999');
+    expect(forwarded.id).toBeTruthy();
+  });
+
+  it('star/unstar alternam o estado consultável via isMessageStarred', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    expect(adapter.isMessageStarred('msg-1')).toBe(false);
+    await wa.messages.star({ to: '5585999999999', messageId: 'msg-1' });
+    expect(adapter.isMessageStarred('msg-1')).toBe(true);
+    await wa.messages.unstar({ to: '5585999999999', messageId: 'msg-1' });
+    expect(adapter.isMessageStarred('msg-1')).toBe(false);
+  });
+
+  it('pin/unpin alternam o estado consultável via isMessagePinned', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    await wa.messages.pin({ to: '5585999999999', messageId: 'msg-1' });
+    expect(adapter.isMessagePinned('msg-1')).toBe(true);
+    await wa.messages.unpin({ to: '5585999999999', messageId: 'msg-1' });
+    expect(adapter.isMessagePinned('msg-1')).toBe(false);
+  });
+
+  it('markRead marca o estado consultável via isMessageRead', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    expect(adapter.isMessageRead('msg-1')).toBe(false);
+    await wa.messages.markRead({ to: '5585999999999', messageId: 'msg-1' });
+    expect(adapter.isMessageRead('msg-1')).toBe(true);
+  });
+
+  it('forward/star/pin/markRead exigem instância conectada (INSTANCE_DISCONNECTED)', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.messages.forward({ to: '5585999999999', messageId: 'msg-1' }));
+    expect(isWaConnectorError(failure) && failure.code === 'INSTANCE_DISCONNECTED').toBe(true);
+  });
 });
 
 describe('MockAdapter: chats', () => {
