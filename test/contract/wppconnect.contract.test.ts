@@ -452,6 +452,26 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(201, envelope({ message: 'success' }));
     }
 
+    // channels.create (ADR-0017): POST /newsletter — resposta SEM envelope (diferente de
+    // /add-new-label), `client.createNewsletter` faz `return` corretamente no wa-js.
+    if (method === 'POST' && suffix === '/newsletter') {
+      return jsonResponse(201, {
+        idJid: '222222222222222222@newsletter',
+        inviteCode: 'ABC123',
+        inviteLink: 'https://whatsapp.com/channel/ABC123',
+        name: 'Contrato: Canal Novo',
+        state: 'active',
+        subscribersCount: 0,
+        description: null,
+        timestamp: 1700000000,
+      });
+    }
+
+    // channels.delete (ADR-0017): DELETE /newsletter/{id} — resposta SEM envelope.
+    if (method === 'DELETE' && /^\/newsletter\/.+$/.test(suffix)) {
+      return jsonResponse(201, { idJid: '111111111111111111@newsletter' });
+    }
+
     throw new Error(`fetchStub (wppconnect): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1800,6 +1820,92 @@ describe('wppconnect adapter: comportamento específico do provider', () => {
     expect(isWaConnectorError(failure)).toBe(true);
     if (isWaConnectorError(failure)) {
       expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+    }
+  });
+
+  it('channels.create chama POST /newsletter com {name, options: {description}} e mapeia idJid/name/description/subscribersCount', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          const suffix = url.pathname.slice(API_PREFIX.length);
+          if (suffix === '/newsletter') {
+            calls.push({ path: suffix, body: JSON.parse(String(init?.body)) });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const channel = await wa.channels.create({ name: 'Canal Novo', description: 'Descrição' });
+
+    expect(calls).toEqual([
+      { path: '/newsletter', body: { name: 'Canal Novo', options: { description: 'Descrição' } } },
+    ]);
+    expect(channel).toEqual({
+      id: '222222222222222222@newsletter',
+      name: 'Contrato: Canal Novo',
+      // A resposta simulada devolve description:null (real do provider — o campo não é sempre
+      // ecoado); o mapper cai para o description enviado no input original ("Descrição").
+      description: 'Descrição',
+      subscribersCount: 0,
+      raw: expect.anything(),
+    });
+  });
+
+  it('channels.delete chama DELETE /newsletter/{id}', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          const suffix = url.pathname.slice(API_PREFIX.length);
+          if (suffix.startsWith('/newsletter/')) {
+            calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: suffix });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.channels.delete('111111111111111111@newsletter')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([
+      { method: 'DELETE', path: '/newsletter/111111111111111111%40newsletter' },
+    ]);
+  });
+
+  it('não declara "channels.list"/"getInfo"/"follow"/"unfollow" (sem endpoint HTTP exposto pelo servidor, mesmo com a lib subjacente suportando follow/unfollow) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    for (const capability of [
+      'channels.list',
+      'channels.getInfo',
+      'channels.follow',
+      'channels.unfollow',
+    ] as const) {
+      expect(adapter.capabilities).not.toContain(capability);
+    }
+    expect(adapter.channels?.list).toBeUndefined();
+    expect(adapter.channels?.getInfo).toBeUndefined();
+    expect(adapter.channels?.follow).toBeUndefined();
+    expect(adapter.channels?.unfollow).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const calls = [
+      () => wa.channels.list(),
+      () => wa.channels.getInfo('111111111111111111@newsletter'),
+      () => wa.channels.follow('111111111111111111@newsletter'),
+      () => wa.channels.unfollow('111111111111111111@newsletter'),
+    ];
+    for (const call of calls) {
+      const failure = await call().catch((error: unknown) => error);
+      expect(isWaConnectorError(failure)).toBe(true);
+      if (isWaConnectorError(failure)) {
+        expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+      }
     }
   });
 

@@ -1,4 +1,5 @@
 import type {
+  ChannelsApi,
   ChatsApi,
   ContactsApi,
   GroupsApi,
@@ -14,11 +15,13 @@ import { WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  ChannelInfo,
   CheckExistsResult,
   ConnectResult,
   Contact,
   ContactAbout,
   ContactProfilePicture,
+  CreateChannelInput,
   CreateGroupInput,
   DeleteMessageInput,
   EditMessageInput,
@@ -139,6 +142,7 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'chats.markRead',
   'chats.markUnread',
   'labels.list',
+  'channels.create',
   'webhooks.parse',
 ];
 
@@ -249,6 +253,16 @@ export function zapi(options: ZapiOptions): WaAdapter {
     list: () => listLabels(http, prefix),
   };
 
+  /**
+   * Namespace `channels.*` (ADR-0017). Cobertura 1/6 — só `create`, mesmo critério de "não
+   * arredondar cobertura" já aplicado a `labels.*` (1/6, ADR-0016) e `presence.*` (0/3, ADR-0015)
+   * deste mesmo adapter: as demais 8 operações do índice (`newsletter-list`, `update-newsletter-*`,
+   * `delete-newsletter`, `follow`/`unfollow-newsletter`) só confirmadas por nome, confiança Baixa.
+   */
+  const channels: ChannelsApi = {
+    create: (input) => createChannel(http, prefix, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: ZAPI_CAPABILITIES,
@@ -258,6 +272,7 @@ export function zapi(options: ZapiOptions): WaAdapter {
     contacts,
     chats,
     labels,
+    channels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1327,6 +1342,37 @@ function mapZapiLabel(body: unknown): LabelInfo {
     id: (record ? asString(record.id) : undefined) ?? '',
     name: (record ? asString(record.name) : undefined) ?? '',
     color,
+    raw: body,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// channels.* (ver ADR-0017)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /instances/{id}/token/{token}/create-newsletter` (confiança Média-Alta — payload real
+ * confirmado no dossiê). Body `{name, description?}` — **não aceita foto na criação** (a doc diz
+ * explicitamente que imagem não é suportada nesse endpoint; precisaria de
+ * `update-newsletter-picture` depois, fora do escopo desta ADR). Resposta:
+ * `{id: "999999999999999999@newsletter"}` — só o id, sem `name`/`description` ecoados; este
+ * adapter usa o `input` como fallback para popular o resto do `ChannelInfo`.
+ */
+async function createChannel(
+  http: HttpClient,
+  prefix: string,
+  input: CreateChannelInput,
+): Promise<ChannelInfo> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: `${prefix}/create-newsletter`,
+    body: { name: input.name, description: input.description },
+  });
+  const record = asRecord(body);
+  return {
+    id: (record ? asString(record.id) : undefined) ?? '',
+    name: input.name,
+    description: input.description,
     raw: body,
   };
 }

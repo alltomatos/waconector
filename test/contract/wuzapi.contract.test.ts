@@ -406,6 +406,26 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { code: 200, success: true, data: { Details: 'Subscribed' } });
     }
 
+    // channels.list (ADR-0017): GET /newsletter/list.
+    if (method === 'GET' && pathname === '/newsletter/list') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: {
+          Newsletter: [
+            {
+              id: '111111111111111111@newsletter',
+              thread_metadata: {
+                name: { text: 'Canal Contrato' },
+                description: { text: 'Descrição' },
+                subscribers_count: '10',
+              },
+            },
+          ],
+        },
+      });
+    }
+
     throw new Error(`fetchStub (wuzapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1115,6 +1135,56 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
 
     await expect(wa.presence.subscribe('5511999999999')).resolves.toBeUndefined();
     expect(capturedBody).toEqual({ Phone: '5511999999999' });
+  });
+
+  it('channels.list chama GET /newsletter/list e mapeia thread_metadata.{name,description}.text + subscribers_count', async () => {
+    const adapter = wuzapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const channels = await wa.channels.list();
+
+    expect(channels).toEqual([
+      {
+        id: '111111111111111111@newsletter',
+        name: 'Canal Contrato',
+        description: 'Descrição',
+        subscribersCount: 10,
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
+  it('só declara "channels.list" (somente leitura — busca negativa confirmada para create/getInfo/delete/follow/unfollow) e lança UNSUPPORTED_CAPABILITY ao chamar os demais', async () => {
+    const adapter = wuzapi(buildAdapterOptions());
+    for (const capability of [
+      'channels.create',
+      'channels.getInfo',
+      'channels.delete',
+      'channels.follow',
+      'channels.unfollow',
+    ] as const) {
+      expect(adapter.capabilities).not.toContain(capability);
+    }
+    expect(adapter.channels?.create).toBeUndefined();
+    expect(adapter.channels?.getInfo).toBeUndefined();
+    expect(adapter.channels?.delete).toBeUndefined();
+    expect(adapter.channels?.follow).toBeUndefined();
+    expect(adapter.channels?.unfollow).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const calls = [
+      () => wa.channels.create({ name: 'Canal Novo' }),
+      () => wa.channels.getInfo('111111111111111111@newsletter'),
+      () => wa.channels.delete('111111111111111111@newsletter'),
+      () => wa.channels.follow('111111111111111111@newsletter'),
+      () => wa.channels.unfollow('111111111111111111@newsletter'),
+    ];
+    for (const call of calls) {
+      const failure = await call().catch((error: unknown) => error);
+      expect(isWaConnectorError(failure)).toBe(true);
+      if (isWaConnectorError(failure)) {
+        expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+      }
+    }
   });
 
   it('não declara chats.mute/unmute/pin/unpin/markRead/markUnread (sem endpoint equivalente confirmado no código-fonte para o contrato canônico)', () => {

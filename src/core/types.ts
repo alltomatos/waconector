@@ -275,6 +275,26 @@ export interface LabelChatInput {
   labelId: string;
 }
 
+/**
+ * Canal do WhatsApp ("WhatsApp Channels" — nome público do produto; a maioria dos providers chama
+ * de "newsletter" internamente, herdado do protocolo reverso-projetado, ver ADR-0017). `id` é um
+ * identificador OPACO (mesmo critério de `GroupInfo.id`, ADR-0009): normalmente um JID
+ * `<dígitos>@newsletter`, repassado como o adapter recebe — nunca passa por `normalizeChatId`.
+ */
+export interface ChannelInfo {
+  id: string;
+  name: string;
+  description?: string;
+  subscribersCount?: number;
+  raw: unknown;
+}
+
+/** Ver ADR-0017. */
+export interface CreateChannelInput {
+  name: string;
+  description?: string;
+}
+
 /** Participante de um grupo, normalizado. Ver ADR-0009. */
 export interface GroupParticipant {
   /** Telefone E.164 sem `+` ou JID explícito — mesma convenção de chatId de mensagem. */

@@ -394,6 +394,53 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { success: true });
     }
 
+    // channels.list (ADR-0017): GET /newsletters.
+    if (method === 'GET' && pathname === '/newsletters') {
+      return jsonResponse(200, {
+        newsletters: [
+          {
+            id: '111111111111111111@newsletter',
+            name: 'Canal Contrato',
+            description: 'Descrição',
+            subscribers_count: 10,
+          },
+        ],
+      });
+    }
+
+    // channels.create (ADR-0017): POST /newsletters.
+    if (method === 'POST' && pathname === '/newsletters') {
+      return jsonResponse(200, {
+        id: '222222222222222222@newsletter',
+        name: 'Contrato: Canal Novo',
+        description: '',
+        subscribers_count: 0,
+      });
+    }
+
+    // channels.getInfo/delete (ADR-0017): GET/DELETE /newsletters/{id}.
+    if (/^\/newsletters\/[^/]+$/.test(pathname)) {
+      if (method === 'GET') {
+        return jsonResponse(200, {
+          id: '111111111111111111@newsletter',
+          name: 'Canal Contrato',
+          description: 'Descrição',
+          subscribers_count: 10,
+        });
+      }
+      if (method === 'DELETE') {
+        return jsonResponse(200, { success: true });
+      }
+    }
+
+    // channels.follow/unfollow (ADR-0017): POST/DELETE /newsletters/{id}/subscription.
+    if (
+      (method === 'POST' || method === 'DELETE') &&
+      /^\/newsletters\/[^/]+\/subscription$/.test(pathname)
+    ) {
+      return jsonResponse(200, { success: true });
+    }
+
     throw new Error(`fetchStub (whapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1577,6 +1624,110 @@ describe('whapi adapter: comportamento específico do provider', () => {
     expect(calls).toEqual([
       { method: 'POST', path: `/labels/0/${RECIPIENT}` },
       { method: 'DELETE', path: `/labels/0/${RECIPIENT}` },
+    ]);
+  });
+
+  it('channels.list chama GET /newsletters e mapeia {id, name, description, subscribers_count}', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const channels = await wa.channels.list();
+
+    expect(channels).toEqual([
+      {
+        id: '111111111111111111@newsletter',
+        name: 'Canal Contrato',
+        description: 'Descrição',
+        subscribersCount: 10,
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
+  it('channels.create chama POST /newsletters com {name, description}', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/newsletters' && (init?.method ?? 'GET').toUpperCase() === 'POST') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const channel = await wa.channels.create({ name: 'Canal Novo', description: 'Descrição' });
+
+    expect(calls).toEqual([{ name: 'Canal Novo', description: 'Descrição' }]);
+    expect(channel.id).toBe('222222222222222222@newsletter');
+    expect(channel.name).toBe('Contrato: Canal Novo');
+  });
+
+  it('channels.getInfo chama GET /newsletters/{id}', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const channel = await wa.channels.getInfo('111111111111111111@newsletter');
+
+    expect(channel.name).toBe('Canal Contrato');
+  });
+
+  it('channels.delete chama DELETE /newsletters/{id} e resolve void', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/newsletters/111111111111111111%40newsletter') {
+            calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.channels.delete('111111111111111111@newsletter')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([
+      { method: 'DELETE', path: '/newsletters/111111111111111111%40newsletter' },
+    ]);
+  });
+
+  it('channels.follow/unfollow chamam POST/DELETE /newsletters/{id}/subscription sem corpo', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/newsletters/111111111111111111%40newsletter/subscription') {
+            calls.push({
+              method: (init?.method ?? 'GET').toUpperCase(),
+              path: url.pathname,
+              body: init?.body,
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.channels.follow('111111111111111111@newsletter');
+    await wa.channels.unfollow('111111111111111111@newsletter');
+
+    expect(calls).toEqual([
+      {
+        method: 'POST',
+        path: '/newsletters/111111111111111111%40newsletter/subscription',
+        body: undefined,
+      },
+      {
+        method: 'DELETE',
+        path: '/newsletters/111111111111111111%40newsletter/subscription',
+        body: undefined,
+      },
     ]);
   });
 

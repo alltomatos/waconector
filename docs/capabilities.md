@@ -13,14 +13,14 @@ Nenhuma linha aqui é escrita à mão.
 
 ## Resumo por provider
 
-- **waha**: 50/58
-- **evolution**: 46/58
-- **uazapi**: 52/58
-- **zapi**: 46/58
-- **wuzapi**: 40/58
-- **whapi**: 57/58
-- **quepasa**: 24/58
-- **wppconnect**: 53/58
+- **waha**: 56/64
+- **evolution**: 50/64
+- **uazapi**: 58/64
+- **zapi**: 47/64
+- **wuzapi**: 41/64
+- **whapi**: 63/64
+- **quepasa**: 24/64
+- **wppconnect**: 55/64
 
 ## Detalhe por namespace
 
@@ -115,6 +115,17 @@ Nenhuma linha aqui é escrita à mão.
 | `labels.delete` | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ |
 | `labels.addToChat` | — | ✅ | ✅ | — | — | ✅ | ✅ | ✅ |
 | `labels.removeFromChat` | — | ✅ | ✅ | — | — | ✅ | ✅ | ✅ |
+
+### `channels.*`
+
+| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `channels.list` | ✅ | ✅ | ✅ | — | ✅ | ✅ | — | — |
+| `channels.create` | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | ✅ |
+| `channels.getInfo` | ✅ | ✅ | ✅ | — | — | ✅ | — | — |
+| `channels.delete` | ✅ | — | ✅ | — | — | ✅ | — | ✅ |
+| `channels.follow` | ✅ | ✅ | ✅ | — | — | ✅ | — | — |
+| `channels.unfollow` | ✅ | — | ✅ | — | — | ✅ | — | — |
 
 ### `webhooks.*`
 

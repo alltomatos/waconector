@@ -307,6 +307,11 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, [{ id: '1', name: 'Cliente', color: 2 }]);
     }
 
+    // channels.create (ADR-0017): POST /create-newsletter.
+    if (method === 'POST' && pathname === `${PREFIX}/create-newsletter`) {
+      return jsonResponse(200, { id: '999999999999999999@newsletter' });
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1935,6 +1940,66 @@ describe('zapi adapter: comportamento específico do provider', () => {
       () => wa.labels.delete('1'),
       () => wa.labels.addToChat({ chatId: '5511999999999', labelId: '1' }),
       () => wa.labels.removeFromChat({ chatId: '5511999999999', labelId: '1' }),
+    ];
+    for (const call of calls) {
+      const failure = await call().catch((error: unknown) => error);
+      expect(isWaConnectorError(failure)).toBe(true);
+      if (isWaConnectorError(failure)) {
+        expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+      }
+    }
+  });
+
+  it('channels.create chama POST /create-newsletter com {name, description} e ecoa o input no ChannelInfo (resposta só devolve o id)', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/create-newsletter`) {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const channel = await wa.channels.create({ name: 'Canal Novo', description: 'Descrição' });
+
+    expect(calls).toEqual([{ name: 'Canal Novo', description: 'Descrição' }]);
+    expect(channel).toEqual({
+      id: '999999999999999999@newsletter',
+      name: 'Canal Novo',
+      description: 'Descrição',
+      raw: expect.anything(),
+    });
+  });
+
+  it('só declara "channels.create" (demais 8 operações do índice só confirmadas por nome, confiança Baixa) e lança UNSUPPORTED_CAPABILITY ao chamar os demais', async () => {
+    const adapter = zapi(buildAdapterOptions());
+    for (const capability of [
+      'channels.list',
+      'channels.getInfo',
+      'channels.delete',
+      'channels.follow',
+      'channels.unfollow',
+    ] as const) {
+      expect(adapter.capabilities).not.toContain(capability);
+    }
+    expect(adapter.channels?.list).toBeUndefined();
+    expect(adapter.channels?.getInfo).toBeUndefined();
+    expect(adapter.channels?.delete).toBeUndefined();
+    expect(adapter.channels?.follow).toBeUndefined();
+    expect(adapter.channels?.unfollow).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const calls = [
+      () => wa.channels.list(),
+      () => wa.channels.getInfo('999999999999999999@newsletter'),
+      () => wa.channels.delete('999999999999999999@newsletter'),
+      () => wa.channels.follow('999999999999999999@newsletter'),
+      () => wa.channels.unfollow('999999999999999999@newsletter'),
     ];
     for (const call of calls) {
       const failure = await call().catch((error: unknown) => error);

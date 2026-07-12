@@ -253,6 +253,22 @@ Confiança Baixa demais para declarar nesta rodada — mesmo critério de "decla
 relatório confirma com payload real" já aplicado a outras capabilities de baixa confiança neste
 adapter (ex.: `presence.*`, 0/3).
 
+## Canais (`channels.create`, ADR-0017)
+
+Cobertura 1/6 — só `channels.create`, mesmo critério de "não arredondar cobertura" já aplicado a
+`labels.*`/`presence.*` deste mesmo adapter.
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `channels.create` | `POST /instances/{id}/token/{token}/create-newsletter` | Confiança Média-Alta — payload real confirmado no dossiê. Body `{name, description?}` — **não aceita foto na criação** (a doc diz explicitamente que imagem não é suportada nesse endpoint; precisaria de `update-newsletter-picture` depois, fora do escopo desta ADR). Resposta: `{id: "999999999999999999@newsletter"}` — só o id, sem `name`/`description` ecoados; este adapter usa o `input` (nome/descrição enviados) como fallback para popular o resto do `ChannelInfo`. |
+
+**Demais 8 operações do índice (`newsletter-list`, `update-newsletter-name`/`description`/
+`picture`/`config`, `delete-newsletter`, `follow`/`unfollow-newsletter`) deliberadamente NÃO
+implementadas** — só confirmadas por NOME no índice completo da doc oficial; nenhuma página
+individual foi aberta para confirmar payload/schema. Confiança Baixa demais para declarar nesta
+rodada — mesmo critério de "declarar só o que o relatório confirma com payload real" já aplicado a
+`labels.*`/`presence.*` deste adapter.
+
 ## Grupos (núcleo)
 
 Fonte primária: `developer.z-api.io/group/*` (páginas `create-group`, `group-metadata`,

@@ -1,4 +1,5 @@
 import type {
+  ChannelsApi,
   ChatsApi,
   ContactsApi,
   GroupsApi,
@@ -14,6 +15,7 @@ import { extractInviteCode, normalizeInviteLink } from '../core/chat-id';
 import { WaConnectorError } from '../core/errors';
 import type { CanonicalEvent } from '../core/events';
 import {
+  type ChannelInfo,
   type Contact,
   type GroupInfo,
   type GroupParticipant,
@@ -58,12 +60,14 @@ export class MockAdapter implements WaAdapter {
   readonly chats: ChatsApi;
   readonly presence: PresenceApi;
   readonly labels: LabelsApi;
+  readonly channels: ChannelsApi;
 
   private state: InstanceState;
   private seq = 0;
   private groupSeq = 0;
   private inviteSeq = 0;
   private labelSeq = 0;
+  private channelSeq = 0;
   private readonly groupsById = new Map<string, GroupInfo>();
   private readonly groupIdByInviteCode = new Map<string, string>();
   private readonly contactsById = new Map<string, Contact>();
@@ -80,6 +84,8 @@ export class MockAdapter implements WaAdapter {
   private readonly subscribedPresenceChatIds = new Set<string>();
   private readonly labelsById = new Map<string, LabelInfo>();
   private readonly labelIdsByChatId = new Map<string, Set<string>>();
+  private readonly channelsById = new Map<string, ChannelInfo>();
+  private readonly followedChannelIds = new Set<string>();
 
   constructor(options: MockAdapterOptions = {}) {
     this.provider = options.provider ?? 'mock';
@@ -402,6 +408,45 @@ export class MockAdapter implements WaAdapter {
         this.labelIdsByChatId.get(chatId)?.delete(labelId);
       },
     };
+
+    this.channels = {
+      list: async () => {
+        this.assertConnected();
+        return Array.from(this.channelsById.values());
+      },
+      create: async (input) => {
+        this.assertConnected();
+        const channel: ChannelInfo = {
+          id: `mock-channel-${++this.channelSeq}@newsletter`,
+          name: input.name,
+          description: input.description,
+          subscribersCount: 0,
+          raw: { mock: true, input },
+        };
+        this.channelsById.set(channel.id, channel);
+        return channel;
+      },
+      getInfo: async (channelId) => {
+        this.assertConnected();
+        return this.requireChannel(channelId);
+      },
+      delete: async (channelId) => {
+        this.assertConnected();
+        this.requireChannel(channelId);
+        this.channelsById.delete(channelId);
+        this.followedChannelIds.delete(channelId);
+      },
+      follow: async (channelId) => {
+        this.assertConnected();
+        this.requireChannel(channelId);
+        this.followedChannelIds.add(channelId);
+      },
+      unfollow: async (channelId) => {
+        this.assertConnected();
+        this.requireChannel(channelId);
+        this.followedChannelIds.delete(channelId);
+      },
+    };
   }
 
   /** Consulta de estado só para testes (não faz parte do contrato `ChatsApi`). */
@@ -457,6 +502,11 @@ export class MockAdapter implements WaAdapter {
   /** Consulta de estado só para testes (não faz parte do contrato `LabelsApi`). Ver ADR-0016. */
   getChatLabelIds(chatId: string): string[] {
     return Array.from(this.labelIdsByChatId.get(chatId) ?? []);
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `ChannelsApi`). Ver ADR-0017. */
+  isFollowingChannel(channelId: string): boolean {
+    return this.followedChannelIds.has(channelId);
   }
 
   simulateConnected(): void {
@@ -617,6 +667,18 @@ export class MockAdapter implements WaAdapter {
       });
     }
     return label;
+  }
+
+  private requireChannel(channelId: string): ChannelInfo {
+    const channel = this.channelsById.get(channelId);
+    if (!channel) {
+      throw new WaConnectorError(
+        'PROVIDER_ERROR',
+        `MockAdapter: canal "${channelId}" não existe.`,
+        { provider: this.provider },
+      );
+    }
+    return channel;
   }
 
   private issueInviteLink(groupId: string): { link: string; raw: unknown } {

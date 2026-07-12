@@ -490,6 +490,29 @@ chat — o contrato canônico ADR-0016 não modela uma operação de LEITURA de 
 escrita) e `labels.getChatsByLabel` (`GET /api/{session}/labels/{labelId}/chats`, resposta cujo
 formato "depende do engine", mesmo padrão de risco já visto em `groups.list`).
 
+## Canais (`channels.*`, ADR-0017)
+
+Cobertura 6/6, confiança Alta — schema completo (`Channel`/`CreateChannelRequest`) confirmado no
+`openapi.json` oficial (tag "📢 Channels"), a MELHOR cobertura desta ADR junto com uazapi/Whapi.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `channels.list` | `GET /api/{session}/channels` | Query `role` (`OWNER`\|`ADMIN`\|`SUBSCRIBER`) não exposta pelo contrato canônico — omitida, lista todos os canais próprios e inscritos. |
+| `channels.create` | `POST /api/{session}/channels` | Schema `CreateChannelRequest {name, description?, picture?}` — `picture` não exposto pelo contrato canônico (ver ADR-0017). Resposta: `Channel` completo (`id`, `name`, `invite`, `preview`, `picture`, `role`, `verified`, `subscribersCount`, `description`) — campos exclusivos do provider (`invite`/`preview`/`picture`/`role`/`verified`) ficam só em `raw`. |
+| `channels.getInfo` | `GET /api/{session}/channels/{id}` | Aceita tanto o `id` (`@newsletter`) quanto o código de convite puro — mesmo endpoint resolve os dois formatos. |
+| `channels.delete` | `DELETE /api/{session}/channels/{id}` | **Só permite deletar canais onde o chamador é OWNER** — restrição explícita da doc, erro do próprio provider se violada. |
+| `channels.follow` | `POST /api/{session}/channels/{id}/follow` | Sem body, `201` sem schema de resposta. |
+| `channels.unfollow` | `POST /api/{session}/channels/{id}/unfollow` | Sem body, `201` sem schema de resposta. |
+
+**Fora de escopo desta ADR** (candidatas para rodada futura): `channels.mute`/`unmute` (confirmados
+só no schema OpenAPI, sem prosa dedicada — confiança Média); `channels.searchByView`/`searchByText`
+(descoberta de canais públicos de terceiros, não gestão de canais próprios); `channels.previewMessages`
+(mensagens de canais públicos não inscritos). Ver ADR-0017 para a justificativa completa do recorte.
+
+**Nuance de escopo já documentada em Reações**: `messages.sendReaction` tem uma variação de formato
+de `messageId` específica para canais (`{fromMe}_{id}@newsletter_{serverID}_{clientID}`) — ver seção
+"Reações" acima.
+
 ## Conversas (`chats.*`, retrofit ADR-0012)
 
 Namespace novo (ADR-0012) de gestão de estado de conversa. Cobertura real na pesquisa de

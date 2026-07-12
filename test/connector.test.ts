@@ -188,6 +188,19 @@ describe('capabilities no conector', () => {
       wa.labels.removeFromChat({ chatId: '5585999999999', labelId: 'label-1' }),
     );
     expect(labelsRemoveFromChatFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const channelsListFailure = await reject(wa.channels.list());
+    expect(channelsListFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const channelsCreateFailure = await reject(wa.channels.create({ name: 'Canal' }));
+    expect(channelsCreateFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const channelsGetInfoFailure = await reject(wa.channels.getInfo('channel-1'));
+    expect(channelsGetInfoFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const channelsDeleteFailure = await reject(wa.channels.delete('channel-1'));
+    expect(channelsDeleteFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const channelsFollowFailure = await reject(wa.channels.follow('channel-1'));
+    expect(channelsFollowFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const channelsUnfollowFailure = await reject(wa.channels.unfollow('channel-1'));
+    expect(channelsUnfollowFailure).toBeInstanceOf(UnsupportedCapabilityError);
   });
 
   it('adapter que declara messages.forward sem implementar o método falha com PROVIDER_ERROR', async () => {
@@ -251,6 +264,16 @@ describe('capabilities no conector', () => {
     const wa = createConnector(adapter);
 
     const failure = await reject(wa.labels.list());
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('adapter que declara channels.list mas não implementa o namespace channels inteiro falha com PROVIDER_ERROR (nunca TypeError)', async () => {
+    const adapter = new MockAdapter({ capabilities: ['channels.list', 'webhooks.parse'] });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (channels inteiro ausente, mesmo com a capability declarada) para testar o guard-rail do conector.
+    (adapter as any).channels = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.channels.list());
     expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
 
@@ -831,6 +854,59 @@ describe('validação e normalização de labels.*', () => {
 
     await wa.labels.delete(label.id);
     expect(await wa.labels.list()).toEqual([]);
+  });
+});
+
+describe('validação e normalização de channels.*', () => {
+  it('rejeita name vazio em create com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.channels.create({ name: '' }));
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('rejeita channelId vazio em getInfo/delete/follow/unfollow com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () => wa.channels.getInfo(''),
+      () => wa.channels.delete(''),
+      () => wa.channels.follow(''),
+      () => wa.channels.unfollow(''),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+    }
+  });
+
+  it('create/list/getInfo/delete refletem o CRUD completo', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const channel = await wa.channels.create({ name: 'Meu Canal', description: 'Descrição' });
+    expect(await wa.channels.list()).toEqual([channel]);
+    expect(await wa.channels.getInfo(channel.id)).toEqual(channel);
+
+    await wa.channels.delete(channel.id);
+    expect(await wa.channels.list()).toEqual([]);
+  });
+
+  it('follow/unfollow alternam o estado consultável via isFollowingChannel', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const channel = await wa.channels.create({ name: 'Meu Canal' });
+
+    expect(adapter.isFollowingChannel(channel.id)).toBe(false);
+    await wa.channels.follow(channel.id);
+    expect(adapter.isFollowingChannel(channel.id)).toBe(true);
+    await wa.channels.unfollow(channel.id);
+    expect(adapter.isFollowingChannel(channel.id)).toBe(false);
   });
 });
 

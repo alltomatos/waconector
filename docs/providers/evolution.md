@@ -285,6 +285,63 @@ adapter garante um JID totalmente qualificado antes de enviar, reaproveitando a 
   do servidor, ou se um label apagado continua aparecendo na listagem (o repositório que persiste
   `label_model.Label` não foi encontrado/lido nesta pesquisa).
 
+## Canais (`channels.*`, ADR-0017)
+
+Cobertura 4/6 (`list`/`create`/`getInfo`/`follow`) — sem `delete` nem `unfollow`, busca no
+`newsletter.yaml` oficial e no código-fonte real (`newsletter_handler.go`/`newsletter_service.go`,
+verificado ao vivo via `gh api`) não encontrou `DELETE /newsletter/{id}` nem
+`POST /newsletter/unsubscribe`.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `channels.list` | `GET /newsletter/list` | Resposta `{message, data: NewsletterMetadata[]}`. |
+| `channels.create` | `POST /newsletter/create` | Schema `CreateNewsletterStruct {name, description}`. Resposta rica `{message, data: NewsletterMetadata}` — ver mapeamento abaixo. |
+| `channels.getInfo` | `POST /newsletter/info` | Schema `GetNewsletterStruct {jid}`. |
+| `channels.follow` | `POST /newsletter/subscribe` | Mesmo schema `GetNewsletterStruct {jid}` de `getInfo` — a lib whatsmeow chama essa operação de "subscribe", mapeada para `follow` no contrato canônico (ver ADR-0017, Justificativa). |
+
+**Achado ao vivo que corrige uma leitura equivocada do OpenAPI estático**: o `newsletter.yaml`
+tipa o campo `jid` (usado em `getInfo`/`follow`) como um objeto ESTRUTURADO
+`{user, server, device, integrator, rawAgent}` — reflexo ingênuo dos campos Go de `types.JID`
+(whatsmeow) pelo gerador de spec (`swaggo`/similar, que não introspecta `MarshalText`/
+`UnmarshalText`). Verificação ao vivo contra o código-fonte real de `types.JID`
+(`tulir/whatsmeow`, `types/jid.go`) confirma que `JID` implementa `encoding.TextMarshaler`/
+`TextUnmarshaler` — `encoding/json` do Go respeita essa interface e trata o campo inteiro como uma
+STRING opaca (`jid.String()` → `"<user>@<server>"` na saída; `ParseJID(string)` na entrada) — **o
+schema documentado no OpenAPI é enganoso**. Este adapter envia/recebe `channelId` como string
+simples, sem decompor (`toEvolutionChannelId`, função identidade) — mesmo tratamento de
+`toProviderNumber`.
+
+### Mapeamento de `ChannelInfo` (`thread_metadata`)
+
+A resposta de `create`/`list`/`getInfo` é o struct whatsmeow `types.NewsletterMetadata` serializado:
+
+```json
+{
+  "id": "120360000000000001@newsletter",
+  "state": { "type": "active" },
+  "thread_metadata": {
+    "creation_time": "1700000000",
+    "invite": "0029VaAbBbCcDdEeFfGgHh01",
+    "name": { "text": "Nome do canal", "id": "...", "update_time": "..." },
+    "description": { "text": "Descrição", "id": "...", "update_time": "..." },
+    "subscribers_count": "0",
+    "verification": "unverified"
+  },
+  "viewer_metadata": { "mute": "on", "role": "owner" }
+}
+```
+
+`name`/`description` vêm aninhados em `thread_metadata.{name,description}.text` (schema
+`NewsletterText`, um formato versionado com `id`/`update_time` — só `.text` é usado pelo contrato
+canônico). `subscribers_count` é uma STRING no JSON (`json:"subscribers_count,string"` no struct
+Go `NewsletterThreadMetadata`), convertida para número por `mapEvolutionChannel`.
+
+**Fora de escopo desta ADR** (candidatas para rodada futura): `channels.getInviteLink`
+(`POST /newsletter/link`, schema `{key: string}` — não fica claro se `key` é o JID, o código de
+convite, ou outro identificador; ambiguidade não resolvida pela doc disponível) e
+`channels.getMessages` (`POST /newsletter/messages`, histórico de posts do canal — capability de
+conteúdo, não de gestão do canal em si).
+
 ## Grupos (núcleo)
 
 As 14 operações de `groups.*` (ver ADR-0009) são suportadas por este adapter. **Nenhuma das 4
