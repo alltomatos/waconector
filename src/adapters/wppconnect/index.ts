@@ -3,6 +3,7 @@ import type {
   ContactsApi,
   GroupsApi,
   InstanceApi,
+  LabelsApi,
   MessagesApi,
   PresenceApi,
   WaAdapter,
@@ -26,6 +27,7 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  CreateLabelInput,
   DeleteMessageInput,
   EditMessageInput,
   ForwardMessageInput,
@@ -36,6 +38,8 @@ import type {
   InstanceState,
   InstanceStatus,
   JoinGroupInviteInput,
+  LabelChatInput,
+  LabelInfo,
   MediaKind,
   MediaRef,
   MessageAck,
@@ -207,6 +211,11 @@ const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'presence.setTyping',
   'presence.set',
   'presence.subscribe',
+  'labels.list',
+  'labels.create',
+  'labels.delete',
+  'labels.addToChat',
+  'labels.removeFromChat',
   'webhooks.parse',
 ];
 
@@ -288,6 +297,20 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     subscribe: (chatId) => subscribePresence(http, session, chatId),
   };
 
+  /**
+   * Namespace `labels.*` (ADR-0016). Cobertura 5/6 — **sem `labels.update`**: busca exaustiva nas
+   * rotas registradas (`routes.ts`) só encontrou `add-new-label`/`get-all-labels`/`delete-label`/
+   * `add-or-remove-label` — nenhuma rota edita um label existente (renomear/recolorir). Capability
+   * NÃO declarada, método NÃO implementado.
+   */
+  const labels: LabelsApi = {
+    list: () => listLabels(http, session),
+    create: (input) => createLabel(http, session, input),
+    delete: (labelId) => deleteLabel(http, session, labelId),
+    addToChat: (input) => setChatLabel(http, session, input, 'add'),
+    removeFromChat: (input) => setChatLabel(http, session, input, 'remove'),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WPPCONNECT_CAPABILITIES,
@@ -297,6 +320,7 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     contacts,
     chats,
     presence,
+    labels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1580,6 +1604,109 @@ async function subscribePresence(http: HttpClient, session: string, chatId: stri
     path: sessionPath(session, '/subscribe-presence'),
     body: { phone: recipient.phone, isGroup: recipient.isGroup, all: false },
   });
+}
+
+// ---------------------------------------------------------------------------
+// labels.* (ver ADR-0016)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /api/{session}/get-all-labels` (`LabelsController.getAllLabels`, confiança Alta — rota e
+ * controller confirmados ao vivo via `gh api`). Resposta `{status, response: Label[]}` — `Label
+ * {id, name, color, count, hexColor}` (interface da lib `@wppconnect/wa-js`, reaproveitada pelo
+ * server). `LabelInfo.color` mapeia do campo numérico `color` (convertido para string) —
+ * `hexColor` (cor computada) não é usado, mesmo critério de "repassar o valor nativo, sem campo
+ * derivado" já aplicado a outros adapters desta ADR.
+ */
+async function listLabels(http: HttpClient, session: string): Promise<LabelInfo[]> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: sessionPath(session, '/get-all-labels'),
+  });
+  const record = asRecord(body);
+  const items = record && Array.isArray(record.response) ? record.response : [];
+  return items.map((item) => mapWppconnectLabel(item));
+}
+
+/**
+ * `POST /api/{session}/add-new-label` (confiança Alta) — body `{name, options?: {labelColor}}`.
+ * **A resposta não devolve o label criado com confiabilidade**: o wrapper do server
+ * (`client.addNewLabel`, `labels.layer.ts` da lib `@wppconnect/wa-js`) chama
+ * `WPP.labels.addNewLabel(name, options)` dentro de uma função avaliada no browser SEM `return`
+ * (confirmado ao vivo via `gh api`) — o campo `response` da resposta HTTP fica `undefined`. Este
+ * adapter, como a uazapi (ADR-0016), descobre o `id` atribuído por DIFF: lista os labels antes e
+ * depois da criação, e usa o `id` presente só na segunda lista — 3 chamadas HTTP no total (list,
+ * create, list), necessárias porque não há outra forma confiável de saber qual id foi atribuído.
+ * Lança `PROVIDER_ERROR` se nenhum id novo aparecer (ex.: condição de corrida com outra criação
+ * concorrente no mesmo instante).
+ */
+async function createLabel(
+  http: HttpClient,
+  session: string,
+  input: CreateLabelInput,
+): Promise<LabelInfo> {
+  const before = new Set((await listLabels(http, session)).map((label) => label.id));
+  const body: Record<string, unknown> = { name: input.name };
+  if (input.color !== undefined) {
+    body.options = { labelColor: input.color };
+  }
+  await http.request({ method: 'POST', path: sessionPath(session, '/add-new-label'), body });
+  const after = await listLabels(http, session);
+  const created = after.find((label) => !before.has(label.id));
+  if (!created) {
+    throw new WaConnectorError(
+      'PROVIDER_ERROR',
+      'WPPConnect: não foi possível determinar o id do label criado por /add-new-label — ' +
+        'GET /get-all-labels não trouxe nenhum id novo em relação à listagem anterior.',
+      { provider: PROVIDER },
+    );
+  }
+  return created;
+}
+
+/**
+ * `labels.delete`: `PUT /api/{session}/delete-label/{id}` — **método PUT, não DELETE** (confirmado
+ * na rota registrada em `routes.ts`, quirk do próprio provider). Sem body.
+ */
+async function deleteLabel(http: HttpClient, session: string, labelId: string): Promise<void> {
+  await http.request({
+    method: 'PUT',
+    path: sessionPath(session, `/delete-label/${encodeURIComponent(labelId)}`),
+  });
+}
+
+/**
+ * `labels.addToChat`/`removeFromChat`: `POST /api/{session}/add-or-remove-label` — endpoint BULK
+ * (`chatIds: string[]`, `options: [{labelId, type: 'add'|'remove'}]`, exemplo literal do dossiê),
+ * usado aqui com arrays de 1 elemento — mesma chamada única, sem round-trip, só varia o tamanho do
+ * array. `chatIds` exige JID completo (`"[number]@c.us"`) — reaproveita `toWppconnectMentionJid`
+ * (mesma conversão já usada para `mentions` de `messages.sendText`).
+ */
+async function setChatLabel(
+  http: HttpClient,
+  session: string,
+  input: LabelChatInput,
+  type: 'add' | 'remove',
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/add-or-remove-label'),
+    body: {
+      chatIds: [toWppconnectMentionJid(input.chatId)],
+      options: [{ labelId: input.labelId, type }],
+    },
+  });
+}
+
+function mapWppconnectLabel(body: unknown): LabelInfo {
+  const record = asRecord(body);
+  const color = record ? asNumber(record.color) : undefined;
+  return {
+    id: (record ? asString(record.id) : undefined) ?? '',
+    name: (record ? asString(record.name) : undefined) ?? '',
+    color: color === undefined ? undefined : String(color),
+    raw: body,
+  };
 }
 
 // ---------------------------------------------------------------------------

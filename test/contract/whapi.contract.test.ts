@@ -369,6 +369,31 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { success: true });
     }
 
+    // labels.list (ADR-0016): GET /labels.
+    if (method === 'GET' && pathname === '/labels') {
+      return jsonResponse(200, [{ id: '0', name: 'Cliente', color: 'salmon' }]);
+    }
+
+    // labels.create (ADR-0016): POST /labels.
+    if (method === 'POST' && pathname === '/labels') {
+      return jsonResponse(200, { success: true });
+    }
+
+    // labels.update (ADR-0016): PATCH /labels/{LabelID}.
+    if (method === 'PATCH' && /^\/labels\/\d+$/.test(pathname)) {
+      return jsonResponse(200, { success: true });
+    }
+
+    // labels.delete (ADR-0016): DELETE /labels/{LabelID}.
+    if (method === 'DELETE' && /^\/labels\/\d+$/.test(pathname)) {
+      return jsonResponse(200, { success: true });
+    }
+
+    // labels.addToChat/removeFromChat (ADR-0016): POST/DELETE /labels/{LabelID}/{AssociationID}.
+    if ((method === 'POST' || method === 'DELETE') && /^\/labels\/\d+\/[^/]+$/.test(pathname)) {
+      return jsonResponse(200, { success: true });
+    }
+
     throw new Error(`fetchStub (whapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1410,6 +1435,149 @@ describe('whapi adapter: comportamento específico do provider', () => {
     await expect(wa.presence.subscribe(RECIPIENT)).resolves.toBeUndefined();
     expect(capturedMethod).toBe('POST');
     expect(capturedBody).toBeUndefined();
+  });
+
+  it('labels.list chama GET /labels e mapeia {id, name, color}', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const labels = await wa.labels.list();
+
+    expect(labels).toEqual([{ id: '0', name: 'Cliente', color: 'salmon', raw: expect.anything() }]);
+  });
+
+  it('labels.create lista os labels existentes, escolhe o menor labelId numérico livre e chama POST /labels com {id, name, color}', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/labels' && (init?.method ?? 'GET').toUpperCase() === 'POST') {
+            editCalls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const label = await wa.labels.create({ name: 'Cliente VIP', color: 'gold' });
+
+    expect(editCalls).toEqual([{ id: '1', name: 'Cliente VIP', color: 'gold' }]);
+    expect(label).toEqual({ id: '1', name: 'Cliente VIP', color: 'gold', raw: expect.anything() });
+  });
+
+  it('labels.create usa "salmon" como default quando color está ausente (o schema do provider exige color)', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/labels' && (init?.method ?? 'GET').toUpperCase() === 'POST') {
+            editCalls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.labels.create({ name: 'Cliente VIP' });
+
+    expect(editCalls).toEqual([{ id: '1', name: 'Cliente VIP', color: 'salmon' }]);
+  });
+
+  it('labels.create falha com PROVIDER_ERROR quando os 20 ids (0-19) já estão em uso', async () => {
+    const fullList = Array.from({ length: 20 }, (_, i) => ({
+      id: String(i),
+      name: `Label ${i}`,
+      color: 'salmon',
+    }));
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/labels' && (init?.method ?? 'GET').toUpperCase() === 'GET') {
+            return new Response(JSON.stringify(fullList), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const failure = await wa.labels
+      .create({ name: 'Cliente novo' })
+      .catch((error: unknown) => error);
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('labels.update chama PATCH /labels/{LabelID} com {name} (sem "color" — o provider só suporta renomear)', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/labels/0' && (init?.method ?? 'GET').toUpperCase() === 'PATCH') {
+            calls.push({ path: url.pathname, body: JSON.parse(String(init?.body)) });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.labels.update({ labelId: '0', name: 'Cliente Ouro', color: 'gold' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ path: '/labels/0', body: { name: 'Cliente Ouro' } }]);
+  });
+
+  it('labels.delete chama DELETE /labels/{LabelID} sem corpo', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/labels/0') {
+            calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.labels.delete('0')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ method: 'DELETE', path: '/labels/0' }]);
+  });
+
+  it('labels.addToChat/removeFromChat chamam POST/DELETE /labels/{LabelID}/{AssociationID}', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/labels/0/${RECIPIENT}`) {
+            calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.labels.addToChat({ chatId: RECIPIENT, labelId: '0' });
+    await wa.labels.removeFromChat({ chatId: RECIPIENT, labelId: '0' });
+
+    expect(calls).toEqual([
+      { method: 'POST', path: `/labels/0/${RECIPIENT}` },
+      { method: 'DELETE', path: `/labels/0/${RECIPIENT}` },
+    ]);
   });
 
   it('chats.archive/unarchive enviam POST /chats/{ChatID} com {archive: boolean}', async () => {

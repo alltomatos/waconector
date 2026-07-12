@@ -3,6 +3,7 @@ import type {
   ContactsApi,
   GroupsApi,
   InstanceApi,
+  LabelsApi,
   MessagesApi,
   PresenceApi,
   WaAdapter,
@@ -19,6 +20,7 @@ import type {
   Contact,
   ContactProfilePicture,
   CreateGroupInput,
+  CreateLabelInput,
   DeleteMessageInput,
   EditMessageInput,
   GroupInfo,
@@ -28,6 +30,8 @@ import type {
   InstanceState,
   InstanceStatus,
   JoinGroupInviteInput,
+  LabelChatInput,
+  LabelInfo,
   MarkMessageReadInput,
   MediaKind,
   MediaRef,
@@ -46,6 +50,7 @@ import type {
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
+  UpdateLabelInput,
   WaMessage,
 } from '../../core/types';
 
@@ -131,6 +136,12 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'contacts.block',
   'contacts.unblock',
   'contacts.listBlocked',
+  'labels.list',
+  'labels.create',
+  'labels.update',
+  'labels.delete',
+  'labels.addToChat',
+  'labels.removeFromChat',
   'webhooks.parse',
 ];
 
@@ -213,6 +224,15 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     // um contato na uazapi. Ver docs/providers/uazapi.md#contatos.
   };
 
+  const labels: LabelsApi = {
+    list: () => listLabels(http),
+    create: (input) => createLabel(http, input),
+    update: (input) => updateLabel(http, input),
+    delete: (labelId) => deleteLabel(http, labelId),
+    addToChat: (input) => setChatLabel(http, input, 'add'),
+    removeFromChat: (input) => setChatLabel(http, input, 'remove'),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: UAZAPI_CAPABILITIES,
@@ -222,6 +242,7 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     contacts,
     chats,
     presence,
+    labels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1087,6 +1108,139 @@ async function setPresence(http: HttpClient, state: PresenceState): Promise<void
     path: '/instance/presence',
     body: { presence: state === 'online' ? 'available' : 'unavailable' },
   });
+}
+
+// ---------------------------------------------------------------------------
+// labels.* (ver ADR-0016)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /labels` — confiança Média (schema `Label` tipado no OpenAPI bundled, mas a doc avisa que a
+ * resposta 200 é um array "sem schema tipado" nas versões mais antigas; erro 500 documentado
+ * "Failed to fetch labels from database" sugere que a lista serve de um cache local, populado por
+ * `POST /labels/refresh` — não usado por este adapter). O schema `Label` tem DOIS campos de id:
+ * `id` (UUID interno do banco) e `labelid` (o id de fato usado pelo WhatsApp, o mesmo esperado por
+ * `/label/edit` e `/chat/labels`) — `LabelInfo.id` mapeia para `labelid` (não `id`), já que é esse
+ * o valor que o chamador precisa para `update`/`delete`/`addToChat`/`removeFromChat`.
+ */
+async function listLabels(http: HttpClient): Promise<LabelInfo[]> {
+  const body = await http.request<unknown>({ method: 'GET', path: '/labels' });
+  const items = Array.isArray(body) ? body : [];
+  return items.map((item) => mapUazapiLabel(item));
+}
+
+/**
+ * `POST /label/edit` é o ÚNICO endpoint de escrita de label (criar/editar/deletar, discriminado
+ * por convenção de valor — sem campo `action` dedicado). Body: `{labelid, name?, color? (0-19),
+ * delete?}`. `color` é opaco no contrato canônico (ADR-0016), mas o provider exige um inteiro
+ * 0-19 — `toUazapiLabelColor` converte.
+ */
+async function editLabel(
+  http: HttpClient,
+  labelId: string,
+  name: string | undefined,
+  color: string | undefined,
+  deleted: boolean,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/label/edit',
+    body: { labelid: labelId, name, color: toUazapiLabelColor(color), delete: deleted },
+  });
+}
+
+/**
+ * `labels.create`: a convenção do provider para criar é enviar o literal `labelid: "new"` — o
+ * backend "gera o próximo labelid numérico disponível" (não necessariamente sequencial: reaproveita
+ * ids liberados por labels deletados), mas **a resposta de `/label/edit` não devolve esse id** (só
+ * a string enum `"Label created"`/`"Label edited"`). A doc recomenda consultar `GET /labels` depois
+ * para descobrir o id final. Este adapter faz exatamente isso, mas por DIFF (lista antes + lista
+ * depois, `labelid` presente só na segunda) em vez de assumir "o maior número" — como o id pode ser
+ * um número reaproveitado (não necessariamente o maior), o diff é a única forma confiável de
+ * identificar QUAL entrada é a nova, mesmo às custas de uma chamada HTTP extra (3 chamadas no
+ * total: list antes, create, list depois). Lança `PROVIDER_ERROR` se nenhum `labelid` novo aparecer
+ * (ex.: condição de corrida com outra criação concorrente no mesmo instante).
+ */
+async function createLabel(http: HttpClient, input: CreateLabelInput): Promise<LabelInfo> {
+  const before = new Set((await listLabels(http)).map((label) => label.id));
+  await editLabel(http, 'new', input.name, input.color, false);
+  const after = await listLabels(http);
+  const created = after.find((label) => !before.has(label.id));
+  if (!created) {
+    throw new WaConnectorError(
+      'PROVIDER_ERROR',
+      'uazapi: não foi possível determinar o labelid criado por /label/edit (labelid:"new") — ' +
+        'GET /labels não trouxe nenhum id novo em relação à listagem anterior.',
+      { provider: PROVIDER },
+    );
+  }
+  return created;
+}
+
+/** `labels.update`: envia o `labelId` real do chamador (diferente de `create`, que usa o literal `"new"`). */
+async function updateLabel(http: HttpClient, input: UpdateLabelInput): Promise<void> {
+  await editLabel(http, input.labelId, input.name, input.color, false);
+}
+
+/**
+ * `labels.delete`: diferente do Evolution GO, o exemplo oficial de deleção do uazapi mostra
+ * `name: ""` explicitamente — `name`/`color` NÃO são obrigatórios para `delete: true` (só `labelid`
+ * é `required` no schema de `/label/edit`), então este adapter não precisa buscar o `name`/`color`
+ * atuais antes de deletar (sem round-trip extra, diferente do Evolution GO).
+ */
+async function deleteLabel(http: HttpClient, labelId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/label/edit',
+    body: { labelid: labelId, delete: true },
+  });
+}
+
+/**
+ * `labels.addToChat`/`removeFromChat`: `POST /chat/labels`, um dos 3 modos mutuamente exclusivos
+ * do schema (`labelids`/`add_labelid`/`remove_labelid` — "Use apenas um dos três parâmetros por
+ * requisição"). Este adapter sempre usa os modos de UM label (`add_labelid`/`remove_labelid`),
+ * nunca o modo bulk-replace `labelids` — mesma chamada única, sem round-trip.
+ */
+async function setChatLabel(
+  http: HttpClient,
+  input: LabelChatInput,
+  direction: 'add' | 'remove',
+): Promise<void> {
+  const field = direction === 'add' ? 'add_labelid' : 'remove_labelid';
+  await http.request({
+    method: 'POST',
+    path: '/chat/labels',
+    body: { number: toUazapiNumber(input.chatId), [field]: input.labelId },
+  });
+}
+
+/**
+ * `LabelInfo.color` é opaco (ADR-0016), mas o provider exige um inteiro 0-19 em `/label/edit` —
+ * converte a string opaca para número; ausente ou não numérico vira `0` (default, sem paleta
+ * documentada para esse caso).
+ */
+function toUazapiLabelColor(color: string | undefined): number {
+  if (color === undefined) return 0;
+  const parsed = Number(color);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Mapeia um item de `GET /labels` (schema `Label`) para `LabelInfo`. `labelid` (id de fato do
+ * WhatsApp) é preferido a `id` (UUID interno do banco) — ver docstring de `listLabels`.
+ */
+function mapUazapiLabel(body: unknown): LabelInfo {
+  const record = asRecord(body);
+  const id =
+    (record ? asString(record.labelid) : undefined) ?? (record ? asString(record.id) : undefined);
+  const color = record ? asNumber(record.color) : undefined;
+  return {
+    id: id ?? '',
+    name: (record ? asString(record.name) : undefined) ?? '',
+    color: color === undefined ? undefined : String(color),
+    raw: body,
+  };
 }
 
 // ---------------------------------------------------------------------------

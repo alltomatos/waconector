@@ -302,6 +302,11 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    // labels.list (ADR-0016): GET /tags.
+    if (method === 'GET' && pathname === `${PREFIX}/tags`) {
+      return jsonResponse(200, [{ id: '1', name: 'Cliente', color: 2 }]);
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1895,6 +1900,48 @@ describe('zapi adapter: comportamento específico do provider', () => {
     expect(isWaConnectorError(failure)).toBe(true);
     if (isWaConnectorError(failure)) {
       expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+    }
+  });
+
+  it('labels.list chama GET /tags e mapeia {id, name, color}', async () => {
+    const adapter = zapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const labels = await wa.labels.list();
+
+    expect(labels).toEqual([{ id: '1', name: 'Cliente', color: '2', raw: expect.anything() }]);
+  });
+
+  it('só declara "labels.list" (create/update/delete/addToChat/removeFromChat só confirmados por nome no índice, confiança Baixa) e lança UNSUPPORTED_CAPABILITY ao chamar os demais', async () => {
+    const adapter = zapi(buildAdapterOptions());
+    for (const capability of [
+      'labels.create',
+      'labels.update',
+      'labels.delete',
+      'labels.addToChat',
+      'labels.removeFromChat',
+    ] as const) {
+      expect(adapter.capabilities).not.toContain(capability);
+    }
+    expect(adapter.labels?.create).toBeUndefined();
+    expect(adapter.labels?.update).toBeUndefined();
+    expect(adapter.labels?.delete).toBeUndefined();
+    expect(adapter.labels?.addToChat).toBeUndefined();
+    expect(adapter.labels?.removeFromChat).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const calls = [
+      () => wa.labels.create({ name: 'Cliente' }),
+      () => wa.labels.update({ labelId: '1', name: 'Cliente VIP' }),
+      () => wa.labels.delete('1'),
+      () => wa.labels.addToChat({ chatId: '5511999999999', labelId: '1' }),
+      () => wa.labels.removeFromChat({ chatId: '5511999999999', labelId: '1' }),
+    ];
+    for (const call of calls) {
+      const failure = await call().catch((error: unknown) => error);
+      expect(isWaConnectorError(failure)).toBe(true);
+      if (isWaConnectorError(failure)) {
+        expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+      }
     }
   });
 });

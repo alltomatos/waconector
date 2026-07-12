@@ -3,6 +3,7 @@ import type {
   ContactsApi,
   GroupsApi,
   InstanceApi,
+  LabelsApi,
   MessagesApi,
   PresenceApi,
   WaAdapter,
@@ -20,6 +21,7 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  CreateLabelInput,
   DeleteMessageInput,
   EditMessageInput,
   ForwardMessageInput,
@@ -30,6 +32,8 @@ import type {
   InstanceState,
   InstanceStatus,
   JoinGroupInviteInput,
+  LabelChatInput,
+  LabelInfo,
   MarkMessageReadInput,
   MediaKind,
   MediaRef,
@@ -49,6 +53,7 @@ import type {
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
+  UpdateLabelInput,
   WaMessage,
 } from '../../core/types';
 
@@ -144,6 +149,12 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'presence.setTyping',
   'presence.set',
   'presence.subscribe',
+  'labels.list',
+  'labels.create',
+  'labels.update',
+  'labels.delete',
+  'labels.addToChat',
+  'labels.removeFromChat',
   'webhooks.parse',
 ];
 
@@ -227,6 +238,15 @@ export function whapi(options: WhapiOptions): WaAdapter {
     subscribe: (chatId) => subscribePresence(http, chatId),
   };
 
+  const labels: LabelsApi = {
+    list: () => listLabels(http),
+    create: (input) => createLabel(http, input),
+    update: (input) => renameLabel(http, input),
+    delete: (labelId) => deleteLabel(http, labelId),
+    addToChat: (input) => setLabelAssociation(http, input, true),
+    removeFromChat: (input) => setLabelAssociation(http, input, false),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WHAPI_CAPABILITIES,
@@ -236,6 +256,7 @@ export function whapi(options: WhapiOptions): WaAdapter {
     contacts,
     chats,
     presence,
+    labels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1200,6 +1221,110 @@ async function subscribePresence(http: HttpClient, chatId: string): Promise<void
     method: 'POST',
     path: `/presences/${encodeURIComponent(toWhapiChatId(chatId))}`,
   });
+}
+
+// ---------------------------------------------------------------------------
+// labels.* (ver ADR-0016)
+// ---------------------------------------------------------------------------
+
+/** Primeira cor do enum fechado do Whapi (20 cores nomeadas) — usada como default quando `CreateLabelInput.color` está ausente (o schema `CreateLabel` do provider exige `color`, diferente do contrato canônico onde é opcional). */
+const WHAPI_DEFAULT_LABEL_COLOR = 'salmon';
+
+/**
+ * `GET /labels` (ADR-0016; `operationId: getLabels`, confiança Alta) — resposta é um array cru de
+ * `Label {id, name, color, count?}`. **Pré-requisito documentado pelo provider, não validável por
+ * este adapter**: "retrieve all your registered labels in your WhatsApp Business" — etiquetas só
+ * existem em contas WhatsApp Business.
+ */
+async function listLabels(http: HttpClient): Promise<LabelInfo[]> {
+  const body = await http.request<unknown>({ method: 'GET', path: '/labels' });
+  const items = Array.isArray(body) ? body : [];
+  return items.map((item) => mapWhapiLabel(item));
+}
+
+/**
+ * `POST /labels` (schema `CreateLabel {id, name, color}`, TODOS obrigatórios — `operationId:
+ * createLabel`, confiança Alta). Diferente de Evolution GO/uazapi, o `id` aqui segue um formato
+ * ESTRITO (`LabelID` pattern `^([\d]{1,2})?$` — 1-2 dígitos, mesmo espaço 0-19 do enum de 20 cores
+ * fixas), então não pode ser um UUID/valor arbitrário gerado livremente (violaria a validação do
+ * provider). Este adapter lista os labels existentes primeiro (`GET /labels`) para encontrar o
+ * menor id numérico livre em 0-19, então cria com esse id — 2 chamadas HTTP (list + create),
+ * necessárias porque o provider não atribui o id automaticamente (diferente da uazapi) nem aceita
+ * um formato livre (diferente do Evolution GO). `color` é obrigatório no schema do provider mas
+ * opcional no contrato canônico — quando ausente, usa `salmon` (primeira cor do enum) como default
+ * DESTE adapter, não do provider. Lança `PROVIDER_ERROR` se todos os 20 ids (0-19) já estiverem em
+ * uso (limite real de labels do WhatsApp Business).
+ */
+async function createLabel(http: HttpClient, input: CreateLabelInput): Promise<LabelInfo> {
+  const existing = await listLabels(http);
+  const usedIds = new Set(existing.map((label) => label.id));
+  let id: string | undefined;
+  for (let candidate = 0; candidate <= 19; candidate++) {
+    if (!usedIds.has(String(candidate))) {
+      id = String(candidate);
+      break;
+    }
+  }
+  if (id === undefined) {
+    throw new WaConnectorError(
+      'PROVIDER_ERROR',
+      'Whapi: não há labelId numérico livre entre 0 e 19 (limite de labels do WhatsApp Business atingido).',
+      { provider: PROVIDER },
+    );
+  }
+  const color = input.color ?? WHAPI_DEFAULT_LABEL_COLOR;
+  await http.request({ method: 'POST', path: '/labels', body: { id, name: input.name, color } });
+  return { id, name: input.name, color, raw: { id, name: input.name, color } };
+}
+
+/**
+ * `labels.update`: `PATCH /labels/{LabelID}` (schema `RenameLabel {name}` — SEM campo `color`,
+ * `operationId: renameLabel`, confiança Alta). Diferente de outros providers desta ADR, o Whapi só
+ * permite RENOMEAR um label — não há endpoint para mudar a cor após a criação.
+ * `UpdateLabelInput.color`, se fornecido, é ignorado silenciosamente (documentado aqui e no
+ * dossiê) — o contrato canônico não modela "update parcial com campos por provider", e simular a
+ * mudança de cor exigiria uma chamada sem endpoint real por trás.
+ */
+async function renameLabel(http: HttpClient, input: UpdateLabelInput): Promise<void> {
+  await http.request({
+    method: 'PATCH',
+    path: `/labels/${encodeURIComponent(input.labelId)}`,
+    body: { name: input.name },
+  });
+}
+
+/** `labels.delete`: `DELETE /labels/{LabelID}` (confiança Alta). Sem body. */
+async function deleteLabel(http: HttpClient, labelId: string): Promise<void> {
+  await http.request({ method: 'DELETE', path: `/labels/${encodeURIComponent(labelId)}` });
+}
+
+/**
+ * `labels.addToChat`/`removeFromChat`: `POST`/`DELETE /labels/{LabelID}/{AssociationID}`
+ * (`operationId: addLabelAssociation`/`deleteLabelAssociation`, confiança Alta). `AssociationID`
+ * usa o mesmo formato de `ChatID` (`toWhapiChatId`, identidade) — a doc também aceita um MessageID
+ * ali ("Specified chat or message not found"), mas o contrato canônico `LabelChatInput` só modela
+ * chat. 409 documentado "Label association already exists" para uma associação repetida — não
+ * tratado especialmente aqui, propaga como erro HTTP normal do `HttpClient`.
+ */
+async function setLabelAssociation(
+  http: HttpClient,
+  input: LabelChatInput,
+  add: boolean,
+): Promise<void> {
+  await http.request({
+    method: add ? 'POST' : 'DELETE',
+    path: `/labels/${encodeURIComponent(input.labelId)}/${encodeURIComponent(toWhapiChatId(input.chatId))}`,
+  });
+}
+
+function mapWhapiLabel(body: unknown): LabelInfo {
+  const record = asRecord(body);
+  return {
+    id: (record ? asString(record.id) : undefined) ?? '',
+    name: (record ? asString(record.name) : undefined) ?? '',
+    color: record ? asString(record.color) : undefined,
+    raw: body,
+  };
 }
 
 // ---------------------------------------------------------------------------

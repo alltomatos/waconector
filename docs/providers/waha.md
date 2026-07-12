@@ -451,6 +451,45 @@ request — configuração do servidor, não deste adapter. `POST /startTyping`/
 (atalhos documentados para `presence` com `typing`/`paused`) não são usados por este adapter —
 `presence.setTyping` já cobre os dois via o enum.
 
+## Etiquetas (`labels.*`, ADR-0016)
+
+Cobertura 4/6, confiança Alta para CRUD (schema completo + página dedicada, incluindo mapa de 20
+cores fixas `color`↔`colorHex`).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `labels.list` | `GET /api/{session}/labels` | Resposta `[{id, name, color, colorHex}]`. |
+| `labels.create` | `POST /api/{session}/labels` | Schema `LabelBody`: `name` obrigatório, `color` OU `colorHex` — a doc recomenda preferir `color` ("consider using `color` value instead of `colorHex` when creating/updating"), pois o mapa `color`↔`colorHex` "pode mudar no futuro". `LabelInfo.color` é opaco (ver ADR-0016): repassado direto como `color`, sem tradução. |
+| `labels.update` | `PUT /api/{session}/labels/{labelId}` | Mesmo body de `create`. |
+| `labels.delete` | `DELETE /api/{session}/labels/{labelId}` | Sem body. |
+
+**`labels.addToChat`/`labels.removeFromChat` NÃO são implementados** — o único endpoint de
+associação (`PUT /api/{session}/labels/chats/{chatId}`) é bulk-replace: a doc avisa explicitamente
+"You need to provide the full list of labels you want to set to the chat. All other labels will be
+removed" (`labels: []` remove todas). Emular um add/remove incremental exigiria um `GET
+/api/{session}/labels/chats/{chatId}` prévio para montar a lista completa antes do `PUT` — violaria
+a convenção já estabelecida nesta sessão de "uma operação canônica = uma chamada HTTP, sem
+round-trip extra" (mesmo critério do `chats.markRead` da Wuzapi, ADR-0012), além de introduzir uma
+condição de corrida não-atômica entre o GET e o PUT.
+
+**Pré-requisito documentado pelo provider, não validável por este adapter**: a própria página
+começa com "You can work with WhatsApp Labels available in WhatsApp Business using the API!" —
+etiquetas só existem em contas WhatsApp Business, não em contas pessoais regulares. O WAHA não
+expõe "esta sessão é Business?" em `SessionInfo` (pelo que a pesquisa encontrou), então uma conta
+pessoal comum provavelmente falha com erro do próprio provider (não deste adapter) ao chamar
+qualquer método de `labels.*`.
+
+**Não confirmado nesta pesquisa** (a validar contra uma instância WAHA real): o shape exato do
+corpo de resposta de `POST`/`PUT /labels` (a doc declara `LabelBody` para o request, mas não
+detalha com certeza total o schema de resposta) — `mapWahaLabel` cai num fallback baseado no
+próprio input quando `id`/`name` vêm ausentes, mesmo padrão de `mapGroupInfo`/`GroupInfoFallback`.
+
+**Fora de escopo desta ADR** (candidatas para rodada futura, cobertura/risco insuficientes para
+esta fase): `labels.getForChat` (`GET /api/{session}/labels/chats/{chatId}`, lista labels de um
+chat — o contrato canônico ADR-0016 não modela uma operação de LEITURA de associação, só
+escrita) e `labels.getChatsByLabel` (`GET /api/{session}/labels/{labelId}/chats`, resposta cujo
+formato "depende do engine", mesmo padrão de risco já visto em `groups.list`).
+
 ## Conversas (`chats.*`, retrofit ADR-0012)
 
 Namespace novo (ADR-0012) de gestão de estado de conversa. Cobertura real na pesquisa de

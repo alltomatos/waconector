@@ -3,6 +3,7 @@ import type {
   ContactsApi,
   GroupsApi,
   InstanceApi,
+  LabelsApi,
   MessagesApi,
   PresenceApi,
   WaAdapter,
@@ -18,6 +19,7 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  CreateLabelInput,
   DeleteMessageInput,
   EditMessageInput,
   ForwardMessageInput,
@@ -25,6 +27,8 @@ import type {
   GroupInviteLink,
   GroupParticipantsInput,
   JoinGroupInviteInput,
+  LabelChatInput,
+  LabelInfo,
   MarkMessageReadInput,
   MediaRef,
   PinMessageInput,
@@ -42,6 +46,7 @@ import type {
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
+  UpdateLabelInput,
 } from './types';
 
 export type WaEventListener<T extends CanonicalEventType | '*'> = (
@@ -149,6 +154,20 @@ export interface ConnectorPresenceApi {
 }
 
 /**
+ * `LabelsApi` exposta pelo conector: todo método sempre presente (diferente da interface do
+ * adapter, onde o NAMESPACE INTEIRO é opcional — ver ADR-0016, mesmo critério de `ChatsApi`/
+ * `PresenceApi`).
+ */
+export interface ConnectorLabelsApi {
+  list(): Promise<LabelInfo[]>;
+  create(input: CreateLabelInput): Promise<LabelInfo>;
+  update(input: UpdateLabelInput): Promise<void>;
+  delete(labelId: string): Promise<void>;
+  addToChat(input: LabelChatInput): Promise<void>;
+  removeFromChat(input: LabelChatInput): Promise<void>;
+}
+
+/**
  * Camada de ergonomia e política sobre um adapter: checagem de capabilities,
  * validação e normalização de entrada, eventos e parsing seguro de webhooks.
  */
@@ -162,6 +181,7 @@ export class WaConnector {
   readonly contacts: ConnectorContactsApi;
   readonly chats: ConnectorChatsApi;
   readonly presence: ConnectorPresenceApi;
+  readonly labels: ConnectorLabelsApi;
   readonly webhooks: WebhooksApi;
 
   private readonly listeners = new Map<string, Set<AnyListener>>();
@@ -357,6 +377,28 @@ export class WaConnector {
       subscribe: (chatId) =>
         this.callPresenceMethod('subscribe', 'presence.subscribe', (fn) =>
           fn(this.requireChatId(chatId)),
+        ),
+    };
+
+    this.labels = {
+      list: () => this.callLabelsMethod('list', 'labels.list', (fn) => fn()),
+      create: (input) =>
+        this.callLabelsMethod('create', 'labels.create', (fn) =>
+          fn(this.prepareCreateLabel(input)),
+        ),
+      update: (input) =>
+        this.callLabelsMethod('update', 'labels.update', (fn) =>
+          fn(this.prepareUpdateLabel(input)),
+        ),
+      delete: (labelId) =>
+        this.callLabelsMethod('delete', 'labels.delete', (fn) => fn(this.requireLabelId(labelId))),
+      addToChat: (input) =>
+        this.callLabelsMethod('addToChat', 'labels.addToChat', (fn) =>
+          fn(this.prepareLabelChat(input)),
+        ),
+      removeFromChat: (input) =>
+        this.callLabelsMethod('removeFromChat', 'labels.removeFromChat', (fn) =>
+          fn(this.prepareLabelChat(input)),
         ),
     };
 
@@ -573,6 +615,53 @@ export class WaConnector {
     return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
   }
 
+  private prepareCreateLabel(input: CreateLabelInput): CreateLabelInput {
+    if (typeof input.name !== 'string' || input.name.length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'labels.create exige "name" não vazio.', {
+        provider: this.provider,
+      });
+    }
+    return input;
+  }
+
+  /**
+   * `name` é sempre obrigatório aqui (ver `UpdateLabelInput`/ADR-0016) — nunca um patch parcial,
+   * mesmo quando só a cor muda.
+   */
+  private prepareUpdateLabel(input: UpdateLabelInput): UpdateLabelInput {
+    return {
+      labelId: this.requireLabelId(input.labelId),
+      name: this.requireLabelName(input.name),
+      color: input.color,
+    };
+  }
+
+  private requireLabelName(name: unknown): string {
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'labels.update exige "name" não vazio.', {
+        provider: this.provider,
+      });
+    }
+    return name;
+  }
+
+  private prepareLabelChat(input: LabelChatInput): LabelChatInput {
+    return {
+      chatId: normalizeChatId(this.requireTo(input.chatId)),
+      labelId: this.requireLabelId(input.labelId),
+    };
+  }
+
+  /** `labelId` é opaco (mesmo critério de `groupId` — ver ADR-0009): não passa por `normalizeChatId`. */
+  private requireLabelId(labelId: unknown): string {
+    if (typeof labelId !== 'string' || labelId.trim().length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'Campo "labelId" é obrigatório.', {
+        provider: this.provider,
+      });
+    }
+    return labelId;
+  }
+
   /**
    * Guard-rail comum aos métodos opcionais de `MessagesApi` (`sendReaction`/`edit`/`delete`/
    * `forward`/`star`/`unstar`/`pin`/`unpin`/`markRead`/`sendLocation`/`sendContactCard`/
@@ -688,6 +777,28 @@ export class WaConnector {
       );
     }
     return invoke(fn as NonNullable<PresenceApi[K]>);
+  }
+
+  /**
+   * Guard-rail de `labels.*` — mesmo padrão de `callPresenceMethod`/`callChatsMethod` (namespace
+   * inteiro opcional no adapter, ver ADR-0016).
+   */
+  private async callLabelsMethod<K extends keyof LabelsApi, R>(
+    method: K,
+    capability: Capability,
+    invoke: (fn: NonNullable<LabelsApi[K]>) => Promise<R>,
+  ): Promise<R> {
+    this.assertCapability(capability);
+    const fn = this.adapter.labels?.[method];
+    if (!fn) {
+      throw new WaConnectorError(
+        'PROVIDER_ERROR',
+        `Adapter "${this.provider}" declara a capability "${capability}" mas não implementa ` +
+          `labels.${String(method)} — isso é um bug no adapter, não uma entrada inválida.`,
+        { provider: this.provider },
+      );
+    }
+    return invoke(fn as NonNullable<LabelsApi[K]>);
   }
 
   /**

@@ -428,6 +428,30 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, envelope({ message: 'Subscribe presence executed' }));
     }
 
+    // labels.list (ADR-0016): GET /get-all-labels.
+    if (method === 'GET' && suffix === '/get-all-labels') {
+      return jsonResponse(
+        200,
+        envelope([{ id: '1', name: 'Cliente', color: 2, count: 0, hexColor: '#fed428' }]),
+      );
+    }
+
+    // labels.create (ADR-0016): POST /add-new-label — resposta real não devolve o label criado
+    // (bug confirmado no wrapper do provider, ver docstring de createLabel).
+    if (method === 'POST' && suffix === '/add-new-label') {
+      return jsonResponse(201, envelope(undefined));
+    }
+
+    // labels.delete (ADR-0016): PUT /delete-label/{id} — método PUT, não DELETE.
+    if (method === 'PUT' && /^\/delete-label\/.+$/.test(suffix)) {
+      return jsonResponse(201, envelope({ message: 'success' }));
+    }
+
+    // labels.addToChat/removeFromChat (ADR-0016): POST /add-or-remove-label.
+    if (method === 'POST' && suffix === '/add-or-remove-label') {
+      return jsonResponse(201, envelope({ message: 'success' }));
+    }
+
     throw new Error(`fetchStub (wppconnect): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1637,6 +1661,146 @@ describe('wppconnect adapter: comportamento específico do provider', () => {
 
     await expect(wa.presence.subscribe('5511999999999')).resolves.toBeUndefined();
     expect(capturedBody).toEqual({ phone: '5511999999999', isGroup: false, all: false });
+  });
+
+  it('labels.list chama GET /get-all-labels e mapeia {id, name, color}', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const labels = await wa.labels.list();
+
+    expect(labels).toEqual([{ id: '1', name: 'Cliente', color: '2', raw: expect.anything() }]);
+  });
+
+  it('labels.create chama POST /add-new-label e descobre o id criado por diff em GET /get-all-labels (antes/depois) — a resposta de create não devolve o label', async () => {
+    let listCalls = 0;
+    const editCalls: Array<Record<string, unknown>> = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          const suffix = url.pathname.slice(API_PREFIX.length);
+          if (suffix === '/get-all-labels' && (init?.method ?? 'GET').toUpperCase() === 'GET') {
+            listCalls += 1;
+            const response =
+              listCalls === 1
+                ? [{ id: '1', name: 'Cliente', color: 2 }]
+                : [
+                    { id: '1', name: 'Cliente', color: 2 },
+                    { id: '2', name: 'Cliente VIP', color: 3 },
+                  ];
+            return jsonResponse(200, envelope(response));
+          }
+          if (suffix === '/add-new-label') {
+            editCalls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const label = await wa.labels.create({ name: 'Cliente VIP', color: '3' });
+
+    expect(listCalls).toBe(2);
+    expect(editCalls).toEqual([{ name: 'Cliente VIP', options: { labelColor: '3' } }]);
+    expect(label).toEqual({ id: '2', name: 'Cliente VIP', color: '3', raw: expect.anything() });
+  });
+
+  it('labels.create omite "options" quando color está ausente', async () => {
+    const editCalls: Array<Record<string, unknown>> = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          const suffix = url.pathname.slice(API_PREFIX.length);
+          if (suffix === '/add-new-label') {
+            editCalls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const failure = await wa.labels
+      .create({ name: 'Cliente novo' })
+      .catch((error: unknown) => error);
+    // A stub padrão devolve sempre o mesmo label — nenhum id novo aparece, então cai em PROVIDER_ERROR
+    // (mesmo assim, o corpo de /add-new-label já foi capturado antes da segunda listagem).
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+    expect(editCalls).toEqual([{ name: 'Cliente novo' }]);
+  });
+
+  it('labels.create falha com PROVIDER_ERROR quando GET /get-all-labels não traz nenhum id novo após o create', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+
+    const failure = await wa.labels
+      .create({ name: 'Cliente VIP' })
+      .catch((error: unknown) => error);
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('labels.delete chama PUT /delete-label/{id} (método PUT, não DELETE)', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          const suffix = url.pathname.slice(API_PREFIX.length);
+          if (suffix === '/delete-label/1') {
+            calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: suffix });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.labels.delete('1')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ method: 'PUT', path: '/delete-label/1' }]);
+  });
+
+  it('labels.addToChat/removeFromChat chamam POST /add-or-remove-label com {chatIds: [jid], options: [{labelId, type}]}', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          const suffix = url.pathname.slice(API_PREFIX.length);
+          if (suffix === '/add-or-remove-label') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.labels.addToChat({ chatId: '5511999999999', labelId: '1' });
+    await wa.labels.removeFromChat({ chatId: '5511999999999', labelId: '1' });
+
+    expect(calls).toEqual([
+      { chatIds: ['5511999999999@c.us'], options: [{ labelId: '1', type: 'add' }] },
+      { chatIds: ['5511999999999@c.us'], options: [{ labelId: '1', type: 'remove' }] },
+    ]);
+  });
+
+  it('não declara "labels.update" (sem endpoint de edição de label confirmado na pesquisa) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('labels.update');
+    expect(adapter.labels?.update).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const failure = await wa.labels
+      .update({ labelId: '1', name: 'Cliente VIP' })
+      .catch((error: unknown) => error);
+
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+    }
   });
 
   it('chats.archive envia { phone, isGroup, value: true } para POST /archive-chat', async () => {

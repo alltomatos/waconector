@@ -338,6 +338,83 @@ describe('MockAdapter: presence', () => {
   });
 });
 
+describe('MockAdapter: labels', () => {
+  it('create gera um id novo e list reflete o label criado', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    expect(await wa.labels.list()).toEqual([]);
+    const label = await wa.labels.create({ name: 'Cliente', color: '1' });
+    expect(label.id).toBeTruthy();
+    expect(await wa.labels.list()).toEqual([label]);
+  });
+
+  it('update substitui name/color do label existente', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const label = await wa.labels.create({ name: 'Cliente' });
+    await wa.labels.update({ labelId: label.id, name: 'Cliente VIP', color: 'salmon' });
+    const [updated] = await wa.labels.list();
+    expect(updated).toMatchObject({ id: label.id, name: 'Cliente VIP', color: 'salmon' });
+  });
+
+  it('delete remove o label e desassocia de todos os chats via getChatLabelIds', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const label = await wa.labels.create({ name: 'Cliente' });
+    await wa.labels.addToChat({ chatId: '5585999999999', labelId: label.id });
+    expect(adapter.getChatLabelIds('5585999999999')).toEqual([label.id]);
+
+    await wa.labels.delete(label.id);
+    expect(await wa.labels.list()).toEqual([]);
+    expect(adapter.getChatLabelIds('5585999999999')).toEqual([]);
+  });
+
+  it('addToChat/removeFromChat registram e removem a associação consultável via getChatLabelIds', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const label = await wa.labels.create({ name: 'Cliente' });
+    expect(adapter.getChatLabelIds('5585999999999')).toEqual([]);
+
+    await wa.labels.addToChat({ chatId: '5585999999999', labelId: label.id });
+    expect(adapter.getChatLabelIds('5585999999999')).toEqual([label.id]);
+
+    await wa.labels.removeFromChat({ chatId: '5585999999999', labelId: label.id });
+    expect(adapter.getChatLabelIds('5585999999999')).toEqual([]);
+  });
+
+  it('operações sobre um labelId inexistente falham com PROVIDER_ERROR', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () => wa.labels.update({ labelId: 'inexistente', name: 'X' }),
+      () => wa.labels.delete('inexistente'),
+      () => wa.labels.addToChat({ chatId: '5585999999999', labelId: 'inexistente' }),
+      () => wa.labels.removeFromChat({ chatId: '5585999999999', labelId: 'inexistente' }),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+    }
+  });
+
+  it('todo método de labels.* exige instância conectada (INSTANCE_DISCONNECTED)', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.labels.create({ name: 'Cliente' }));
+    expect(isWaConnectorError(failure) && failure.code === 'INSTANCE_DISCONNECTED').toBe(true);
+  });
+});
+
 describe('MockAdapter: groups', () => {
   it('cria um grupo e permite consultá-lo via getInfo/list', async () => {
     const adapter = new MockAdapter();

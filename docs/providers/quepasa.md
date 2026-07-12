@@ -542,6 +542,40 @@ Confiança alta: aceita E.164 (`+55...` ou dígitos puros) OU JID completo
 o chatId canônico do waconector — `toQuepasaChatId` é função identidade, mesmo padrão do
 `toWhapiChatId`/`toWuzapiPhone` dos demais adapters.
 
+## Etiquetas (`labels.*`, ADR-0016)
+
+Cobertura 6/6, confiança Alta — código-fonte completo lido ao vivo via `gh api`
+(`api_handlers+ConversationLabelController.go`, `api/legacy/routes.go`,
+`models/qp_conversation_label.go`, `api/models/conversation_labels_response.go`, todos contra o
+commit pinado `17c3b10b`).
+
+**Rota legacy, não v5-JWT**: `GET/POST/PUT/DELETE /labels` e `GET/POST/DELETE /chat/labels` estão
+registrados em `api/legacy/routes.go` usando `ConversationLabelController`/
+`ConversationChatLabelController` — a MESMA família não-JWT já confiável usada por `chats.*`/
+`messages.markRead`/`messages.delete` neste adapter. Existe também uma família "canônica" v5
+paralela (`api_routes_labels.go`, `AuthenticatedConversationLabelController`, exige `GetAuthenticatedUser`
+— JWT) que este adapter **não usa**, mesmo critério que levou a Epic 6 a recusar `groups.*`/
+`contacts.*` daquela família.
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `labels.list` | `GET /labels` | Resposta `ConversationLabelsResponse.labels`: array de `QpConversationLabel {id (int64), name, color, active, timestamp}`. `id` numérico convertido para string. |
+| `labels.create` | `POST /labels` | Corpo `{name, color}` — **`id` NÃO é enviado nem exigido**: o servidor atribui via autoincrement e devolve o label criado completo em `response.label` (com o novo `id`) — único provider desta ADR onde `create` não precisa de round-trip extra para descobrir o id (diferente de Evolution GO/uazapi/Whapi). `name` obrigatório (400 "name is required" se vazio, validado server-side); `color` opcional (`omitempty`). |
+| `labels.update` | `PUT /labels` | Corpo `{id, name, color}` — `id` obrigatório (400 "id is required" se ausente/zero). **Sobrescreve incondicionalmente `Name`/`Color`** (`current.Name = request.Name; current.Color = request.Color`, sem merge parcial — confirmado no código-fonte). |
+| `labels.delete` | `DELETE /labels` | Corpo `{id}` — diferente de `messages.delete` (id no PATH), esta rota não tem `{id}` na URL; o servidor lê `id` do corpo JSON (ou de um query param `id`, usado só por chamadores que não enviam corpo). `HttpClient` permite corpo em `DELETE` sem restrição. |
+| `labels.addToChat` | `POST /chat/labels` | Corpo `{chatid, labelid}` — `chatid` seguindo o mesmo `FormatEndpoint()` de `messages.*` (`toQuepasaChatId`, identidade). |
+| `labels.removeFromChat` | `DELETE /chat/labels` | Mesmo endpoint/corpo de `addToChat`, método `DELETE`. |
+
+**Caveat documentado (não resolvido, por design)** — a razão original por trás da decisão de
+tornar `UpdateLabelInput.name` sempre obrigatório no contrato canônico (ADR-0016, Decisão #2): o
+servidor sobrescreve `Name`/`Color` incondicionalmente em `PUT /labels`, sem merge parcial. Tornar
+`name` obrigatório no contrato elimina a classe de erro "esqueci o name e apaguei sem querer" — mas
+**`color` continua vulnerável**: se `UpdateLabelInput.color` for omitido, o servidor grava uma
+string vazia no lugar da cor atual (não valida `color` como obrigatório, apenas persiste o que
+vier). Decisão consciente de expor o comportamento real do provider em vez de simular um merge
+parcial que o servidor não faz — quem quiser preservar a cor precisa reenviá-la explicitamente em
+todo `labels.update`.
+
 ### `messages.sendText`
 
 `QpSendRequest` (`src/models/qp_send_request.go`):

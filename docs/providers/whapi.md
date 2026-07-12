@@ -387,6 +387,27 @@ Cobertura 3/3, confiança **Alta** para as 3 — a MELHOR cobertura da fila junt
 `Presence` em `:10725`), mas cobertura cross-provider insuficiente (só 2/8) para unificar um shape
 de resposta com confiança — candidata para rodada futura.
 
+## Etiquetas (`labels.*`, ADR-0016)
+
+Cobertura 6/6, confiança Alta — schema completo (`Label`/`CreateLabel`/`RenameLabel`) confirmado no
+`openapi.yaml`.
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `labels.list` | `GET /labels` (`operationId: getLabels`) | Resposta é um array cru de `Label {id, name, color, count?}`. Descrição explícita: "retrieve all your registered labels in your **WhatsApp Business**" — capability condicionada ao tipo de conta, não disponível em WhatsApp pessoal. |
+| `labels.create` | `POST /labels` (`operationId: createLabel`) | Schema `CreateLabel {id, name, color}` — **os TRÊS campos são obrigatórios**, diferente de todo outro provider desta ADR. `id` (schema `LabelID`) segue um formato ESTRITO — `pattern: ^([\d]{1,2})?$` (1-2 dígitos) — mesmo espaço de 0-19 do enum de 20 cores fixas (`salmon`...`rebeccapurple`); não pode ser um UUID/valor livre. Este adapter lista os labels existentes (`GET /labels`) para achar o menor id numérico livre em 0-19, então cria com esse id (2 chamadas HTTP). `color` (obrigatório no schema, opcional no contrato canônico) usa `salmon` como default deste adapter quando ausente. |
+| `labels.update` | `PATCH /labels/{LabelID}` (`operationId: renameLabel`) | Schema `RenameLabel {name}` — **sem campo `color`**: o Whapi só permite RENOMEAR um label, não recolorir depois de criado. `UpdateLabelInput.color`, se fornecido, é ignorado silenciosamente. |
+| `labels.delete` | `DELETE /labels/{LabelID}` (`operationId: deleteLabel`) | Sem body. |
+| `labels.addToChat` | `POST /labels/{LabelID}/{AssociationID}` (`operationId: addLabelAssociation`) | `AssociationID` usa o schema `ChatID` — a doc também aceita um MessageID ali ("Specified chat **or message** not found"), mas `LabelChatInput` só modela chat. 409 documentado "Label association already exists" numa associação repetida. |
+| `labels.removeFromChat` | `DELETE /labels/{LabelID}/{AssociationID}` (`operationId: deleteLabelAssociation`) | Mesmo endpoint/schema de `addToChat`, método `DELETE`. |
+
+**Caveat documentado (não resolvido, por design, mesmo padrão do `color`-erasure do QuePasa)**: o
+diff feito por `labels.create` (listar antes de escolher um id) tem uma condição de corrida
+inerente — se dois processos criarem labels simultaneamente, ambos podem escolher o mesmo id
+"livre" e um dos dois sobrescreveria o outro (o schema não documenta um 409 de "id já em uso" para
+`POST /labels`, diferente do 409 real de `addToChat`). Não há como eliminar esse risco do lado do
+cliente sem uma operação atômica no servidor.
+
 ## Conversas (`chats.*`, ADR-0012)
 
 Namespace novo de gestão de ESTADO da conversa (distinto de `messages.*`, que age sobre UMA

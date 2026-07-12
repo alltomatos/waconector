@@ -506,6 +506,26 @@ sem endpoint de ENVIO) — confirmado via `gh api` contra `wppconnect-server@f09
 | `presence.set` | `POST /set-online-presence` (`SessionController.setOnlinePresence`) | Body: `{isOnline: boolean}` — `PresenceState` mapeia direto (`online` → `true`, `offline` → `false`). Presença GLOBAL da conta. |
 | `presence.subscribe` | `POST /subscribe-presence` (`SessionController.subscribePresence`) | Body: `{phone, isGroup, all}` — este adapter sempre envia `all: false` (inscrição num contato específico); `all: true` inscreveria em todos os contatos/grupos (resolvido internamente via `getAllContacts`/`getAllGroups`), fora do escopo de `chatId` único do contrato canônico. |
 
+## Etiquetas (`labels.*`, ADR-0016)
+
+Cobertura 5/6 — **sem `labels.update`**: busca exaustiva nas rotas registradas (`routes.ts`) só
+encontrou `add-new-label`/`get-all-labels`/`delete-label`/`delete-all-labels`/`add-or-remove-label`
+— nenhuma rota edita um label existente (renomear/recolorir).
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `labels.list` | `GET /api/{session}/get-all-labels` (`LabelsController.getAllLabels`) | Resposta `{status, response: Label[]}` — `Label {id, name, color, count, hexColor}` (interface da lib `@wppconnect/wa-js`, reaproveitada pelo server). `LabelInfo.color` mapeia do campo numérico `color` (convertido para string); `hexColor` (cor computada) não é usado. |
+| `labels.create` | `POST /api/{session}/add-new-label` (`LabelsController.addNewLabel`) | Body `{name, options?: {labelColor}}` — `options` omitido quando `CreateLabelInput.color` está ausente (não é `required` de fato, apesar do schema do swagger dizer o contrário: o controller só valida `name`). **A resposta não devolve o label criado com confiabilidade**: o wrapper `client.addNewLabel` (`labels.layer.ts` da lib `@wppconnect/wa-js`) chama `WPP.labels.addNewLabel(name, options)` dentro de uma função avaliada no browser SEM `return` — confirmado ao vivo via `gh api` — então `response` na resposta HTTP fica `undefined`. Este adapter, como a uazapi (ADR-0016), descobre o `id` atribuído por DIFF (lista antes + lista depois da criação, `id` presente só na segunda) — 3 chamadas HTTP no total. |
+| `labels.delete` | `PUT /api/{session}/delete-label/{id}` (`LabelsController.deleteLabel`) | **Método PUT, não DELETE** — confirmado na rota registrada em `routes.ts` (quirk do próprio provider, não deste adapter). Sem body. |
+| `labels.addToChat` | `POST /api/{session}/add-or-remove-label` (`LabelsController.addOrRemoveLabels`) | Endpoint BULK: `{chatIds: string[], options: [{labelId, type: 'add'\|'remove'}]}` (exemplo literal do dossiê original) — este adapter usa arrays de 1 elemento, mesma chamada única. `chatIds` exige JID completo (`"[number]@c.us"`) — reaproveita `toWppconnectMentionJid` (mesma conversão já usada para `mentions` de `messages.sendText`). |
+| `labels.removeFromChat` | `POST /api/{session}/add-or-remove-label` | Mesmo endpoint de `addToChat`, variando só `type: 'remove'` no array `options`. |
+
+**Não confirmado nesta pesquisa** (a validar contra uma instância real): se `GET /get-all-labels`
+tem alguma paginação/limite que afetaria o diff usado por `labels.create` em contas com muitos
+labels; e se o bug de `return` ausente em `client.addNewLabel` já foi corrigido em versões mais
+recentes da lib `@wppconnect/wa-js` (o commit pinado usado nesta pesquisa é `f09e2fed`,
+tag `v2.10.0`).
+
 ## Grupos
 
 14 operações confirmadas com endpoint. Todos POST/GET, nenhum PUT/PATCH/DELETE (confirmado em
