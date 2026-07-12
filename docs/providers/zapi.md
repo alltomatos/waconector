@@ -237,6 +237,22 @@ explícitos passam intactos; qualquer outra entrada é filtrada para dígitos pu
 defensiva (o conector já entrega o formato certo, mas o adapter pode ser instanciado diretamente,
 sem `createConnector`).
 
+## Etiquetas (`labels.list`, ADR-0016)
+
+Cobertura 1/6 — só `labels.list`, mesmo critério de "não arredondar cobertura" já aplicado ao
+`presence.*` deste mesmo adapter (0/3, acima).
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `labels.list` | `GET /instances/{id}/token/{token}/tags` | Confiança Média-Alta — payload confirmado no dossiê: `[{id, name, color}]`. Tipo exato de `color` não confirmado (número ou string); `mapZapiLabel` aceita os dois, mesmo critério defensivo já usado no adapter WAHA. **Restrição de plataforma documentada verbatim**: "Este método está disponível apenas para dispositivos conectados a versão Multi-Devices do WhatsApp" — mesma classe de restrição já vista para os estados `paused`/`recording` de presença (ADR-0015), não uma limitação deste adapter. |
+
+**`create`/`update`/`delete`/`addToChat`/`removeFromChat` deliberadamente NÃO implementados** — os
+endpoints (`create-tag`/`edit-tag`/`delete-tag`/`tags-add`/`tags-remove`) aparecem só por NOME no
+índice completo da doc oficial; nenhuma página individual foi aberta para confirmar payload/schema.
+Confiança Baixa demais para declarar nesta rodada — mesmo critério de "declarar só o que o
+relatório confirma com payload real" já aplicado a outras capabilities de baixa confiança neste
+adapter (ex.: `presence.*`, 0/3).
+
 ## Grupos (núcleo)
 
 Fonte primária: `developer.z-api.io/group/*` (páginas `create-group`, `group-metadata`,

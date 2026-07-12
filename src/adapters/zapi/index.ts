@@ -3,6 +3,7 @@ import type {
   ContactsApi,
   GroupsApi,
   InstanceApi,
+  LabelsApi,
   MessagesApi,
   WaAdapter,
   WebhookInput,
@@ -29,6 +30,7 @@ import type {
   InstanceState,
   InstanceStatus,
   JoinGroupInviteInput,
+  LabelInfo,
   MarkMessageReadInput,
   MediaKind,
   MediaRef,
@@ -136,6 +138,7 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'chats.unpin',
   'chats.markRead',
   'chats.markUnread',
+  'labels.list',
   'webhooks.parse',
 ];
 
@@ -234,6 +237,18 @@ export function zapi(options: ZapiOptions): WaAdapter {
     markUnread: (chatId) => modifyChat(http, prefix, chatId, 'unread'),
   };
 
+  /**
+   * Namespace `labels.*` (ADR-0016). Cobertura 1/6 — só `list`, mesmo critério de "não arredondar
+   * cobertura" já aplicado ao `presence.*` do próprio Z-API (0/3, ADR-0015): `create`/`update`/
+   * `delete`/`addToChat`/`removeFromChat` aparecem só por NOME no índice da doc oficial
+   * (`create-tag`/`edit-tag`/`delete-tag`/`tags-add`/`tags-remove`, sem página aberta/payload
+   * confirmado) — confiança Baixa demais para declarar nesta rodada. Ver
+   * docs/providers/zapi.md#etiquetas-labelslist-adr-0016.
+   */
+  const labels: LabelsApi = {
+    list: () => listLabels(http, prefix),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: ZAPI_CAPABILITIES,
@@ -242,6 +257,7 @@ export function zapi(options: ZapiOptions): WaAdapter {
     groups,
     contacts,
     chats,
+    labels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1278,6 +1294,41 @@ async function modifyChat(
     path: `${prefix}/modify-chat`,
     body: { phone, action },
   });
+}
+
+// ---------------------------------------------------------------------------
+// labels.* (ver ADR-0016)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /instances/{id}/token/{token}/tags` (confiança Média-Alta — payload confirmado no dossiê,
+ * `[{id, name, color}]`). **Restrição de plataforma documentada verbatim pela doc oficial**: "Este
+ * método está disponível apenas para dispositivos conectados a versão Multi-Devices do WhatsApp" —
+ * mesma classe de restrição já vista para os estados `paused`/`recording` de presença (ADR-0015),
+ * não uma limitação deste adapter.
+ */
+async function listLabels(http: HttpClient, prefix: string): Promise<LabelInfo[]> {
+  const body = await http.request<unknown>({ method: 'GET', path: `${prefix}/tags` });
+  const items = Array.isArray(body) ? body : [];
+  return items.map((item) => mapZapiLabel(item));
+}
+
+/** `color` não tem o tipo confirmado no dossiê (só o payload `{id, name, color}`) — aceita string OU número, mesmo critério defensivo já usado em `mapWahaLabel`. */
+function mapZapiLabel(body: unknown): LabelInfo {
+  const record = asRecord(body);
+  const colorRaw = record?.color;
+  const color =
+    typeof colorRaw === 'string'
+      ? colorRaw
+      : typeof colorRaw === 'number'
+        ? String(colorRaw)
+        : undefined;
+  return {
+    id: (record ? asString(record.id) : undefined) ?? '',
+    name: (record ? asString(record.name) : undefined) ?? '',
+    color,
+    raw: body,
+  };
 }
 
 // ---------------------------------------------------------------------------

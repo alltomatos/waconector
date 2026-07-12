@@ -207,6 +207,15 @@ Cobertura 3/3, confiança Alta para as 3 — a MELHOR cobertura da fila junto co
 | `presence.set` | `POST /user/presence` | Código confirmado (`handlers.go:3387-3440`), **não documentado** no `API.md`. Corpo: `{type: "available"\|"unavailable"}` — só esses dois valores são aceitos, qualquer outro retorna 400. Presença GLOBAL da conta, distinta da presença por-chat acima. Resposta: `{"Details":"Presence set successfuly"}` (erro de digitação "successfuly" no próprio código, não é typo deste dossiê). |
 | `presence.subscribe` | `POST /user/presence/subscribe` | Documentado no `API.md` (linhas 1010-1023) e no código (`handlers.go:3446+`). Corpo: `{Phone}`. A resposta HTTP síncrona só confirma o registro da inscrição — o resultado real (status online/offline, `last_seen`) chega depois, assíncrono, via webhook ("Presence" events) que este adapter **não reconhece hoje** (`parseWebhookUnsafe` não tem `case 'Presence'` — cairia em `unknown`). Depende também de a sessão estar com presença "available" (efeito colateral de `presence.set`) e das configurações de privacidade do contato (`last_seen` pode não vir). |
 
+## Etiquetas — NÃO implementado (ADR-0016)
+
+**Busca negativa confirmada, 0/6**: nenhuma capability de `labels.*` é declarada nem implementada
+por este adapter. Busca dedicada no `API.md` e no código-fonte (`handlers.go`) não encontrou
+nenhuma rota, campo ou struct relacionada a etiquetas/labels/tags do WhatsApp Business — limitação
+real do provider (Wuzapi não expõe essa feature), não gap de pesquisa. Mesmo padrão de "busca
+negativa explícita, documentada em vez de omitida" já usado para `presence.*` do Z-API (ADR-0015) e
+`contacts.getAbout` da uazapi.
+
 ## Conversas (`chats.*`)
 
 | Operação canônica | Endpoint | Observações |

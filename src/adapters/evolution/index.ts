@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import type {
   ChatsApi,
   ContactsApi,
   GroupsApi,
   InstanceApi,
+  LabelsApi,
   MessagesApi,
   PresenceApi,
   WaAdapter,
@@ -26,6 +28,7 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  CreateLabelInput,
   DeleteMessageInput,
   EditMessageInput,
   GroupInfo,
@@ -35,6 +38,8 @@ import type {
   InstanceState,
   InstanceStatus,
   JoinGroupInviteInput,
+  LabelChatInput,
+  LabelInfo,
   MarkMessageReadInput,
   MediaRef,
   MessageAck,
@@ -50,6 +55,7 @@ import type {
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
+  UpdateLabelInput,
   WaMessage,
 } from '../../core/types';
 
@@ -127,6 +133,12 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'chats.pin',
   'chats.unpin',
   'presence.setTyping',
+  'labels.list',
+  'labels.create',
+  'labels.update',
+  'labels.delete',
+  'labels.addToChat',
+  'labels.removeFromChat',
   'webhooks.parse',
 ];
 
@@ -210,6 +222,22 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     setTyping: (input) => setChatPresence(http, input),
   };
 
+  /**
+   * Namespace `labels.*` (ADR-0016). Cobertura 6/6 — `list` é achado ao vivo desta pesquisa
+   * (`GET /label/list`, via `label_handler.go`/`label_service.go` do código-fonte real): a
+   * pesquisa original (`evo-go-label.yaml`, spec estático) não tinha encontrado esse endpoint,
+   * mesmo padrão de "achado que muda o cálculo de risco" já visto para o `presence.*` do
+   * WPPConnect (ADR-0015). Ver docs/providers/evolution.md#etiquetas-labels-adr-0016.
+   */
+  const labels: LabelsApi = {
+    list: () => listLabels(http),
+    create: (input) => createLabel(http, input),
+    update: (input) => updateLabel(http, input),
+    delete: (labelId) => deleteLabel(http, labelId),
+    addToChat: (input) => labelChat(http, input, true),
+    removeFromChat: (input) => labelChat(http, input, false),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: EVOLUTION_CAPABILITIES,
@@ -219,6 +247,7 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     contacts,
     chats,
     presence,
+    labels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1139,6 +1168,131 @@ async function setChatPresence(http: HttpClient, input: SetTypingInput): Promise
       isAudio: input.state === 'recording',
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// labels.* (ver ADR-0016)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /label/list` (achado ao vivo, `label_handler.go`/`label_service.go` — não existia na
+ * pesquisa original baseada só no `evo-go-label.yaml`). Resposta: array cru (sem envelope
+ * `{message, data}`, diferente do resto do provider) de registros `label_model.Label`
+ * (`{id, instance_id, label_id, label_name, label_color, predefined_id}`, persistidos no banco do
+ * próprio Evolution GO a partir de eventos de app-state sync). `label_id`/`label_name`/
+ * `label_color` mapeiam para `LabelInfo.id`/`name`/`color` — `label_color` já vem como STRING no
+ * banco, então não precisa da conversão numérica usada em `create`/`update` (ver `toLabelColor`).
+ */
+async function listLabels(http: HttpClient): Promise<LabelInfo[]> {
+  const body = await http.request<unknown>({ method: 'GET', path: '/label/list' });
+  const items = Array.isArray(body) ? body : [];
+  return items.map((item) => mapEvolutionLabel(item));
+}
+
+/**
+ * `POST /label/edit` (schema `EditLabel: {labelId, name, color: integer, deleted}`) é o ÚNICO
+ * endpoint de escrita de label do Evolution GO — não existe `/label/create` nem `/label/delete`
+ * separados; `create`/`update`/`delete` (canônicos) todos convergem aqui, variando só `deleted` e
+ * a origem do `labelId`. `color` é `integer` no schema do provider (diferente do resto do contrato
+ * canônico, onde `color` é opaco) — `toLabelColor` converte a string opaca para o inteiro esperado.
+ */
+async function editLabel(
+  http: HttpClient,
+  labelId: string,
+  name: string,
+  color: string | undefined,
+  deleted: boolean,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/label/edit',
+    body: { labelId, name, color: toLabelColor(color), deleted },
+  });
+}
+
+/**
+ * `labels.create`: diferente de `update`/`delete`, o handler EXIGE um `labelId` já escolhido pelo
+ * chamador (`label id is required`) — o Evolution GO não tem um conceito de "criar e o servidor
+ * atribui um id novo"; tudo é "editar (ou criar, se ainda não existir) o registro com este id".
+ * Como o contrato canônico `CreateLabelInput` não expõe um id, este adapter gera um `labelId` novo
+ * via `randomUUID()` — não colide com nenhum id existente e satisfaz a validação do handler com uma
+ * única chamada HTTP. **Caveat documentado** (ver docs/providers/evolution.md#etiquetas-labels-adr-0016):
+ * o app oficial WhatsApp Business tradicionalmente usa ids numéricos pequenos ("1".."20") para
+ * labels — um id UUID passa na validação e funciona para toda operação feita por ESTE adapter
+ * (list/update/delete/addToChat/removeFromChat ecoam o mesmo id), mas não há confirmação de que o
+ * app oficial exibiria corretamente um label criado com um id fora desse padrão numérico.
+ */
+async function createLabel(http: HttpClient, input: CreateLabelInput): Promise<LabelInfo> {
+  const labelId = randomUUID();
+  await editLabel(http, labelId, input.name, input.color, false);
+  return { id: labelId, name: input.name, color: input.color, raw: { labelId, ...input } };
+}
+
+/** `labels.update`: `UpdateLabelInput.name` é sempre obrigatório no contrato canônico (ADR-0016), o que já cobre a exigência de `name` não vazio do handler `/label/edit` sem necessidade de round-trip. */
+async function updateLabel(http: HttpClient, input: UpdateLabelInput): Promise<void> {
+  await editLabel(http, input.labelId, input.name, input.color, false);
+}
+
+/**
+ * `labels.delete`: diferente de `update`, o contrato canônico `delete(labelId: string)` não carrega
+ * um `name` — mas o handler `/label/edit` exige `name` não vazio em TODA chamada, inclusive quando
+ * `deleted: true` (soft-delete, sem endpoint de exclusão física). Buscar o `name`/`color` atuais via
+ * `GET /label/list` antes do `POST /label/edit` é uma exceção deliberada à convenção de "uma
+ * chamada HTTP por operação" (diferente da recusa de `addToChat`/`removeFromChat` da WAHA, que foi
+ * uma ESCOLHA para não emular; aqui é uma NECESSIDADE do único endpoint disponível, que não faz
+ * merge parcial e rejeitaria a chamada sem esse campo). Lança `PROVIDER_ERROR` se o `labelId` não
+ * for encontrado na listagem (a chamada nunca chegaria a `/label/edit` com dado inventado).
+ */
+async function deleteLabel(http: HttpClient, labelId: string): Promise<void> {
+  const labels = await listLabels(http);
+  const current = labels.find((label) => label.id === labelId);
+  if (!current) {
+    throw new WaConnectorError(
+      'PROVIDER_ERROR',
+      `Evolution GO: label "${labelId}" não encontrado em /label/list — não é possível apagar sem o "name" atual (exigido pelo próprio endpoint /label/edit).`,
+      { provider: PROVIDER },
+    );
+  }
+  await editLabel(http, labelId, current.name, current.color, true);
+}
+
+/**
+ * `labels.addToChat`/`removeFromChat`: `POST /label/chat` (`{jid, labelId}`) / `POST /unlabel/chat`
+ * (mesmo schema `ChatLabel`). Diferente do campo `number` de `messages.*`/`chats.*` (que o servidor
+ * normaliza via `utils.CreateJID` independente do formato), `label_service.go` chama
+ * `utils.ParseJID(data.JID)` diretamente sobre o campo `jid` — sem a mesma normalização tolerante —
+ * então este adapter garante um JID totalmente qualificado antes de enviar, reaproveitando a MESMA
+ * lógica já usada por `toMentionJid` (adiciona `@s.whatsapp.net` só quando `chatId` ainda não é JID;
+ * `@g.us`/outros domínios passam intactos).
+ */
+async function labelChat(http: HttpClient, input: LabelChatInput, add: boolean): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: add ? '/label/chat' : '/unlabel/chat',
+    body: { jid: toMentionJid(input.chatId), labelId: input.labelId },
+  });
+}
+
+/**
+ * `LabelInfo.color` é opaco (ADR-0016), mas o Evolution GO exige um `integer` no corpo de
+ * `/label/edit` — converte a string opaca para número (`Number('3')` -> `3`); ausente ou não
+ * numérico vira `0` (default do provider, sem paleta documentada no spec estático).
+ */
+function toLabelColor(color: string | undefined): number {
+  if (color === undefined) return 0;
+  const parsed = Number(color);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** Mapeia um registro `label_model.Label` (`GET /label/list`) para `LabelInfo`. */
+function mapEvolutionLabel(body: unknown): LabelInfo {
+  const record = asRecord(body);
+  return {
+    id: (record ? asString(record.label_id) : undefined) ?? '',
+    name: (record ? asString(record.label_name) : undefined) ?? '',
+    color: record ? asString(record.label_color) : undefined,
+    raw: body,
+  };
 }
 
 // ---------------------------------------------------------------------------

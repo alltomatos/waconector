@@ -13,14 +13,14 @@ Nenhuma linha aqui é escrita à mão.
 
 ## Resumo por provider
 
-- **waha**: 46/52
-- **evolution**: 40/52
-- **uazapi**: 46/52
-- **zapi**: 45/52
-- **wuzapi**: 40/52
-- **whapi**: 51/52
-- **quepasa**: 18/52
-- **wppconnect**: 48/52
+- **waha**: 50/58
+- **evolution**: 46/58
+- **uazapi**: 52/58
+- **zapi**: 46/58
+- **wuzapi**: 40/58
+- **whapi**: 57/58
+- **quepasa**: 24/58
+- **wppconnect**: 53/58
 
 ## Detalhe por namespace
 
@@ -104,6 +104,17 @@ Nenhuma linha aqui é escrita à mão.
 | `presence.setTyping` | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ |
 | `presence.set` | ✅ | — | ✅ | — | ✅ | ✅ | — | ✅ |
 | `presence.subscribe` | ✅ | — | — | — | ✅ | ✅ | — | ✅ |
+
+### `labels.*`
+
+| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `labels.list` | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ |
+| `labels.create` | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ |
+| `labels.update` | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | — |
+| `labels.delete` | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ |
+| `labels.addToChat` | — | ✅ | ✅ | — | — | ✅ | ✅ | ✅ |
+| `labels.removeFromChat` | — | ✅ | ✅ | — | — | ✅ | ✅ | ✅ |
 
 ### `webhooks.*`
 

@@ -7,6 +7,7 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  CreateLabelInput,
   DeleteMessageInput,
   EditMessageInput,
   ForwardMessageInput,
@@ -15,6 +16,8 @@ import type {
   GroupParticipantsInput,
   InstanceStatus,
   JoinGroupInviteInput,
+  LabelChatInput,
+  LabelInfo,
   MarkMessageReadInput,
   PinMessageInput,
   PresenceState,
@@ -30,6 +33,7 @@ import type {
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
+  UpdateLabelInput,
 } from './types';
 
 /**
@@ -168,6 +172,20 @@ export interface PresenceApi {
 }
 
 /**
+ * Namespace novo (ADR-0016), inteiramente OPCIONAL — mesmo padrão de `chats?`/`presence?`.
+ * Etiquetas estilo WhatsApp Business (CRUD + associação a conversa).
+ */
+export interface LabelsApi {
+  list?(): Promise<LabelInfo[]>;
+  create?(input: CreateLabelInput): Promise<LabelInfo>;
+  /** Sempre reenvia `name` (ver `UpdateLabelInput`) — nunca um patch parcial. */
+  update?(input: UpdateLabelInput): Promise<void>;
+  delete?(labelId: string): Promise<void>;
+  addToChat?(input: LabelChatInput): Promise<void>;
+  removeFromChat?(input: LabelChatInput): Promise<void>;
+}
+
+/**
  * Contrato que todo adapter de provider implementa.
  *
  * O adapter é "burro" de propósito: apenas traduz o modelo canônico de/para o
@@ -190,5 +208,7 @@ export interface WaAdapter {
   readonly chats?: ChatsApi;
   /** Namespace OPCIONAL (ADR-0015) — mesmo critério de `chats?` acima. */
   readonly presence?: PresenceApi;
+  /** Namespace OPCIONAL (ADR-0016) — mesmo critério de `chats?` acima. */
+  readonly labels?: LabelsApi;
   parseWebhook(input: WebhookInput): CanonicalEvent[];
 }

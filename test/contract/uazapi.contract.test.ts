@@ -179,6 +179,26 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { response: 'Presence set successfuly' });
     }
 
+    // labels.list (ADR-0016): GET /labels.
+    if (method === 'GET' && pathname === '/labels') {
+      return jsonResponse(200, [
+        { id: 'uuid-1', labelid: '1', name: 'Cliente', color: 2, colorHex: '#fed428' },
+      ]);
+    }
+
+    // labels.create/update/delete (ADR-0016): POST /label/edit.
+    if (method === 'POST' && pathname === '/label/edit') {
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      return jsonResponse(200, {
+        response: body.labelid === 'new' ? 'Label created' : 'Label edited',
+      });
+    }
+
+    // labels.addToChat/removeFromChat (ADR-0016): POST /chat/labels.
+    if (method === 'POST' && pathname === '/chat/labels') {
+      return jsonResponse(200, { response: 'Labels atualizadas com sucesso' });
+    }
+
     if (method === 'POST' && pathname === '/group/create') {
       return jsonResponse(200, {
         JID: '120363000000000000@g.us',
@@ -1882,6 +1902,146 @@ describe('uazapi adapter: comportamento específico do provider', () => {
     const adapter = uazapi(buildAdapterOptions());
     expect(adapter.capabilities).not.toContain('presence.subscribe');
     expect(adapter.presence?.subscribe).toBeUndefined();
+  });
+
+  it('labels.list chama GET /labels e mapeia labelid/name/color (preferindo labelid a id)', async () => {
+    const adapter = uazapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const labels = await wa.labels.list();
+
+    expect(labels).toEqual([{ id: '1', name: 'Cliente', color: '2', raw: expect.anything() }]);
+  });
+
+  it('labels.create envia labelid:"new" em POST /label/edit e descobre o labelid criado por diff em GET /labels (antes/depois)', async () => {
+    let listCalls = 0;
+    const editCalls: Array<Record<string, unknown>> = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/labels' && (init?.method ?? 'GET').toUpperCase() === 'GET') {
+            listCalls += 1;
+            const body =
+              listCalls === 1
+                ? [{ id: 'uuid-1', labelid: '1', name: 'Cliente', color: 2 }]
+                : [
+                    { id: 'uuid-1', labelid: '1', name: 'Cliente', color: 2 },
+                    { id: 'uuid-2', labelid: '2', name: 'Cliente VIP', color: 3 },
+                  ];
+            return new Response(JSON.stringify(body), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          if (url.pathname === '/label/edit') {
+            editCalls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const label = await wa.labels.create({ name: 'Cliente VIP', color: '3' });
+
+    expect(listCalls).toBe(2);
+    expect(editCalls).toEqual([{ labelid: 'new', name: 'Cliente VIP', color: 3, delete: false }]);
+    expect(label).toEqual({
+      id: '2',
+      name: 'Cliente VIP',
+      color: '3',
+      raw: expect.anything(),
+    });
+  });
+
+  it('labels.create falha com PROVIDER_ERROR quando GET /labels não traz nenhum labelid novo após o create', async () => {
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/labels') {
+            return new Response(
+              JSON.stringify([{ id: 'uuid-1', labelid: '1', name: 'Cliente', color: 2 }]),
+              { status: 200, headers: { 'content-type': 'application/json' } },
+            );
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const failure = await wa.labels
+      .create({ name: 'Cliente VIP' })
+      .catch((error: unknown) => error);
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('labels.update envia o labelId real (não "new") para POST /label/edit', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/label/edit') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.labels.update({ labelId: '1', name: 'Cliente Ouro', color: '5' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ labelid: '1', name: 'Cliente Ouro', color: 5, delete: false }]);
+  });
+
+  it('labels.delete envia {labelid, delete: true} para POST /label/edit sem precisar buscar name/color atuais (sem round-trip, diferente do Evolution GO)', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.labels.delete('1')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ path: '/label/edit', body: { labelid: '1', delete: true } }]);
+  });
+
+  it('labels.addToChat/removeFromChat chamam POST /chat/labels com {number, add_labelid} / {number, remove_labelid}', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/labels') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.labels.addToChat({ chatId: '5511999999999', labelId: '1' });
+    await wa.labels.removeFromChat({ chatId: '5511999999999', labelId: '1' });
+
+    expect(calls).toEqual([
+      { number: '5511999999999', add_labelid: '1' },
+      { number: '5511999999999', remove_labelid: '1' },
+    ]);
   });
 
   it('declara todas as 8 operações de chats.* em capabilities', () => {

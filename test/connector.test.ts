@@ -169,6 +169,25 @@ describe('capabilities no conector', () => {
     expect(setPresenceFailure).toBeInstanceOf(UnsupportedCapabilityError);
     const subscribePresenceFailure = await reject(wa.presence.subscribe('5585999999999'));
     expect(subscribePresenceFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const labelsListFailure = await reject(wa.labels.list());
+    expect(labelsListFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const labelsCreateFailure = await reject(wa.labels.create({ name: 'Cliente' }));
+    expect(labelsCreateFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const labelsUpdateFailure = await reject(
+      wa.labels.update({ labelId: 'label-1', name: 'Cliente VIP' }),
+    );
+    expect(labelsUpdateFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const labelsDeleteFailure = await reject(wa.labels.delete('label-1'));
+    expect(labelsDeleteFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const labelsAddToChatFailure = await reject(
+      wa.labels.addToChat({ chatId: '5585999999999', labelId: 'label-1' }),
+    );
+    expect(labelsAddToChatFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const labelsRemoveFromChatFailure = await reject(
+      wa.labels.removeFromChat({ chatId: '5585999999999', labelId: 'label-1' }),
+    );
+    expect(labelsRemoveFromChatFailure).toBeInstanceOf(UnsupportedCapabilityError);
   });
 
   it('adapter que declara messages.forward sem implementar o método falha com PROVIDER_ERROR', async () => {
@@ -222,6 +241,16 @@ describe('capabilities no conector', () => {
     const wa = createConnector(adapter);
 
     const failure = await reject(wa.presence.set('online'));
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('adapter que declara labels.list mas não implementa o namespace labels inteiro falha com PROVIDER_ERROR (nunca TypeError)', async () => {
+    const adapter = new MockAdapter({ capabilities: ['labels.list', 'webhooks.parse'] });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (labels inteiro ausente, mesmo com a capability declarada) para testar o guard-rail do conector.
+    (adapter as any).labels = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.labels.list());
     expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
 
@@ -728,6 +757,80 @@ describe('validação e normalização de presence.*', () => {
     expect(adapter.getGlobalPresence()).toBe('online');
     await wa.presence.set('offline');
     expect(adapter.getGlobalPresence()).toBe('offline');
+  });
+});
+
+describe('validação e normalização de labels.*', () => {
+  it('rejeita name vazio em create/update com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () => wa.labels.create({ name: '' }),
+      () => wa.labels.update({ labelId: 'label-1', name: '' }),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+    }
+  });
+
+  it('rejeita labelId vazio em update/delete/addToChat/removeFromChat com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () => wa.labels.update({ labelId: '', name: 'Cliente' }),
+      () => wa.labels.delete(''),
+      () => wa.labels.addToChat({ chatId: '5585999999999', labelId: '' }),
+      () => wa.labels.removeFromChat({ chatId: '5585999999999', labelId: '' }),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+    }
+  });
+
+  it('rejeita chatId vazio em addToChat/removeFromChat com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () => wa.labels.addToChat({ chatId: '', labelId: 'label-1' }),
+      () => wa.labels.removeFromChat({ chatId: '', labelId: 'label-1' }),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+    }
+  });
+
+  it('normaliza chatId antes de entregar ao adapter, em addToChat/removeFromChat, mantendo labelId opaco', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const label = await wa.labels.create({ name: 'Cliente VIP', color: 'salmon' });
+
+    await wa.labels.addToChat({ chatId: '+55 (85) 99999-9999', labelId: label.id });
+    expect(adapter.getChatLabelIds('5585999999999')).toEqual([label.id]);
+
+    await wa.labels.removeFromChat({ chatId: '+55 (85) 99999-9999', labelId: label.id });
+    expect(adapter.getChatLabelIds('5585999999999')).toEqual([]);
+  });
+
+  it('create/list/update/delete refletem o CRUD completo', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const label = await wa.labels.create({ name: 'Cliente', color: '1' });
+    expect(await wa.labels.list()).toEqual([label]);
+
+    await wa.labels.update({ labelId: label.id, name: 'Cliente VIP', color: '2' });
+    expect(await wa.labels.list()).toEqual([{ ...label, name: 'Cliente VIP', color: '2' }]);
+
+    await wa.labels.delete(label.id);
+    expect(await wa.labels.list()).toEqual([]);
   });
 });
 

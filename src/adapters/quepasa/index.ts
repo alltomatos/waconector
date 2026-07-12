@@ -3,6 +3,7 @@ import type {
   ContactsApi,
   GroupsApi,
   InstanceApi,
+  LabelsApi,
   MessagesApi,
   PresenceApi,
   WaAdapter,
@@ -16,11 +17,14 @@ import { HttpClient } from '../../core/http';
 import type {
   ConnectResult,
   ContactProfilePicture,
+  CreateLabelInput,
   DeleteMessageInput,
   EditMessageInput,
   GroupInviteLink,
   InstanceState,
   InstanceStatus,
+  LabelChatInput,
+  LabelInfo,
   MarkMessageReadInput,
   MediaKind,
   MediaRef,
@@ -33,6 +37,7 @@ import type {
   SendTextInput,
   SentMessage,
   SetTypingInput,
+  UpdateLabelInput,
   WaMessage,
 } from '../../core/types';
 
@@ -149,6 +154,12 @@ const QUEPASA_CAPABILITIES: CapabilitySet = [
   'chats.markRead',
   'chats.markUnread',
   'presence.setTyping',
+  'labels.list',
+  'labels.create',
+  'labels.update',
+  'labels.delete',
+  'labels.addToChat',
+  'labels.removeFromChat',
   'webhooks.parse',
 ];
 
@@ -210,6 +221,15 @@ export function quepasa(options: QuepasaOptions): WaAdapter {
     setTyping: (input) => setTyping(http, input),
   };
 
+  const labels: LabelsApi = {
+    list: () => listLabels(http),
+    create: (input) => createLabel(http, input),
+    update: (input) => updateLabel(http, input),
+    delete: (labelId) => deleteLabel(http, labelId),
+    addToChat: (input) => setChatLabel(http, input, true),
+    removeFromChat: (input) => setChatLabel(http, input, false),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: QUEPASA_CAPABILITIES,
@@ -219,6 +239,7 @@ export function quepasa(options: QuepasaOptions): WaAdapter {
     contacts,
     chats,
     presence,
+    labels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -800,6 +821,106 @@ async function setTyping(http: HttpClient, input: SetTypingInput): Promise<void>
     path: '/chat/presence',
     body: { chatid: toQuepasaChatId(input.to), type },
   });
+}
+
+// ---------------------------------------------------------------------------
+// labels.* (ver ADR-0016)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /labels` (legacy — `ConversationLabelController`, mesma família não-JWT já confiável deste
+ * adapter; ver `api_handlers+ConversationLabelController.go` e `api/legacy/routes.go`, confirmado
+ * ao vivo via `gh api` contra o commit pinado). Resposta `ConversationLabelsResponse.labels`: array
+ * de `QpConversationLabel {id (int64), name, color, active, timestamp}`. `id` numérico é convertido
+ * para string (`LabelInfo.id`), mesmo tratamento de `mapUazapiLabel`/`mapEvolutionLabel`.
+ */
+async function listLabels(http: HttpClient): Promise<LabelInfo[]> {
+  const body = await http.request<unknown>({ method: 'GET', path: '/labels' });
+  const record = asRecord(body);
+  const items = record && Array.isArray(record.labels) ? record.labels : [];
+  return items.map((item) => mapQuepasaLabel(item));
+}
+
+/**
+ * `POST /labels` (`conversationLabelRequest{name, color, active}` — `id` NÃO é enviado nem exigido
+ * na criação, diferente de Evolution GO/uazapi/Whapi: o servidor atribui o `id` (autoincrement) e
+ * devolve o label criado completo em `response.label`, incluindo o novo id — **sem necessidade de
+ * round-trip extra**, único provider desta ADR com essa conveniência confirmada por código-fonte.
+ * `name` obrigatório (validado server-side, 400 se vazio); `color` opcional (`omitempty`).
+ */
+async function createLabel(http: HttpClient, input: CreateLabelInput): Promise<LabelInfo> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/labels',
+    body: { name: input.name, color: input.color },
+  });
+  const record = asRecord(body);
+  const label = record ? asRecord(record.label) : undefined;
+  return mapQuepasaLabel(label ?? { name: input.name, color: input.color });
+}
+
+/**
+ * `PUT /labels` (`conversationLabelRequest{id, name, color, active}`, `id` obrigatório — 400 "id is
+ * required" se ausente/zero). **Sobrescreve incondicionalmente `Name`/`Color`** (`current.Name =
+ * request.Name; current.Color = request.Color`, sem merge parcial no servidor — confirmado por
+ * código-fonte, `api_handlers+ConversationLabelController.go`) — por isso `UpdateLabelInput.name` é
+ * sempre obrigatório no contrato canônico (ADR-0016, decisão #2), mas **omitir `color` aqui ainda
+ * apagaria a cor atual do label** (servidor não valida `color` como obrigatório, apenas grava o que
+ * vier, inclusive string vazia) — caveat documentado, não resolvido por design (ver
+ * docs/providers/quepasa.md#etiquetas-labels-adr-0016).
+ */
+async function updateLabel(http: HttpClient, input: UpdateLabelInput): Promise<void> {
+  await http.request({
+    method: 'PUT',
+    path: '/labels',
+    body: { id: toQuepasaLabelId(input.labelId), name: input.name, color: input.color },
+  });
+}
+
+/**
+ * `DELETE /labels` — diferente de `messages.delete` (`DELETE /message/{messageId}`, id no PATH),
+ * este endpoint não tem `{id}` na rota: o servidor lê `id` do corpo JSON (ou de um query param
+ * `id`, fallback só usado por chamadores que não enviam corpo) — `HttpClient` permite corpo em
+ * `DELETE` sem restrição, então este adapter sempre envia `{id}` no corpo.
+ */
+async function deleteLabel(http: HttpClient, labelId: string): Promise<void> {
+  await http.request({
+    method: 'DELETE',
+    path: '/labels',
+    body: { id: toQuepasaLabelId(labelId) },
+  });
+}
+
+/**
+ * `labels.addToChat`/`removeFromChat`: `POST`/`DELETE /chat/labels` (legacy —
+ * `ConversationChatLabelController`, mesma família não-JWT). Corpo `conversationChatLabelRequest
+ * {chatid, labelid}` — `chatid` já bate 1:1 com o formato canônico (`toQuepasaChatId`, identidade,
+ * mesmo tratamento do resto do adapter); `labelid` numérico via `toQuepasaLabelId`.
+ */
+async function setChatLabel(http: HttpClient, input: LabelChatInput, add: boolean): Promise<void> {
+  await http.request({
+    method: add ? 'POST' : 'DELETE',
+    path: '/chat/labels',
+    body: { chatid: toQuepasaChatId(input.chatId), labelid: toQuepasaLabelId(input.labelId) },
+  });
+}
+
+/** `labelId` canônico (string opaca, ver ADR-0009/ADR-0016) convertido para o `int64` que o QuePasa espera. */
+function toQuepasaLabelId(labelId: string): number {
+  return Number(labelId);
+}
+
+/** Mapeia um `QpConversationLabel` (`{id, name, color, active}`) para `LabelInfo`. `id` numérico vira string. */
+function mapQuepasaLabel(body: unknown): LabelInfo {
+  const record = asRecord(body);
+  const idRaw = record?.id;
+  const id = typeof idRaw === 'number' ? String(idRaw) : '';
+  return {
+    id,
+    name: (record ? asString(record.name) : undefined) ?? '',
+    color: record ? asString(record.color) : undefined,
+    raw: body,
+  };
 }
 
 // ---------------------------------------------------------------------------

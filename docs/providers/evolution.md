@@ -244,6 +244,47 @@ equivalente encontrado em `evo-go-message.yaml`/`evo-go-chat.yaml`.
 - `isAudio` (assunção não confirmada por exemplo literal) é enviado como `true` só quando
   `state === 'recording'` — best-effort para distinguir "gravando áudio" de "digitando".
 
+## Etiquetas (`labels.*`, ADR-0016)
+
+Cobertura 6/6 — a pesquisa original (`evo-go-label.yaml`, spec estático) só confirmava 5/6 (sem
+`list`); verificação ao vivo do código-fonte real (`label_handler.go`/`label_service.go`, buscado
+via `gh api`) encontrou `GET /label/list`, que não estava no spec estático.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `labels.list` | `GET /label/list` | Achado ao vivo (ver acima). Resposta: array CRU (sem o envelope `{message, data}` do resto do provider) de registros `label_model.Label` persistidos no banco do Evolution GO a partir de eventos de app-state sync: `{id, instance_id, label_id, label_name, label_color, predefined_id}`. `label_id`/`label_name`/`label_color` mapeiam para `LabelInfo.id`/`name`/`color` — `label_color` já vem como STRING no banco. |
+| `labels.create` | `POST /label/edit` | Schema `EditLabel: {labelId, name, color: integer, deleted}` — **é o ÚNICO endpoint de escrita de label**, compartilhado por `create`/`update`/`delete`. **Handler exige `labelId` já escolhido pelo CHAMADOR** ("label id is required") — não há atribuição automática pelo servidor, diferente de um "create" tradicional. Este adapter gera um `labelId` novo via `randomUUID()` (Node `crypto`) a cada `create`. |
+| `labels.update` | `POST /label/edit` | Mesmo endpoint de `create`, com `deleted: false`. `UpdateLabelInput.name` é sempre obrigatório no contrato canônico (ADR-0016), o que já cobre a exigência de `name` não vazio do handler sem round-trip. |
+| `labels.delete` | `POST /label/edit` | Mesmo endpoint, com `deleted: true` (SOFT-delete — não existe exclusão física). O handler exige `name` não vazio em TODA chamada, inclusive delete — como o contrato canônico `delete(labelId)` não carrega `name`, este adapter busca o `name`/`color` atuais via `GET /label/list` antes de enviar o `deleted: true` (exceção deliberada à convenção de uma chamada por operação — ver caveat abaixo). |
+| `labels.addToChat` | `POST /label/chat` | Schema `ChatLabel: {jid, labelId}`. |
+| `labels.removeFromChat` | `POST /unlabel/chat` | Mesmo schema `ChatLabel` de `addToChat`. |
+
+`color` é opaco no contrato canônico (ADR-0016), mas o Evolution GO exige um `integer` no corpo de
+`/label/edit` — `toLabelColor` converte a string opaca para número (`Number(color)`, `0` como
+default quando ausente/não numérico; sem paleta documentada no spec estático).
+
+**Diferente do resto do provider, o campo de destino em `addToChat`/`removeFromChat` é `jid`, não
+`number`** — e `label_service.go` chama `utils.ParseJID(data.JID)` diretamente, sem a mesma
+normalização tolerante que `number` recebe em `messages.*`/`chats.*` (`utils.CreateJID`). Este
+adapter garante um JID totalmente qualificado antes de enviar, reaproveitando a mesma lógica de
+`toMentionJid` (adiciona `@s.whatsapp.net` só quando o chatId ainda não é JID).
+
+**Caveats documentados (não resolvidos, por design, mesmo padrão do `color`-erasure do QuePasa)**:
+
+- `labels.create` gera um `labelId` via `randomUUID()` — o app oficial WhatsApp Business
+  tradicionalmente usa ids numéricos pequenos ("1".."20") para labels; um id UUID passa na
+  validação do Evolution GO e funciona para toda operação feita por ESTE adapter (list/update/
+  delete/addToChat/removeFromChat ecoam o mesmo id), mas não há confirmação de que o app oficial
+  exibiria corretamente um label criado com um id fora desse padrão numérico — a confirmar contra
+  uma instância real com o app oficial conectado.
+- `labels.delete` faz um `GET /label/list` antes do `POST /label/edit` (2 chamadas HTTP) — não é
+  uma emulação opcional (diferente da recusa de `addToChat`/`removeFromChat` da WAHA), é uma
+  NECESSIDADE do único endpoint disponível, que exige `name` em toda chamada e não faz merge
+  parcial.
+- Não confirmado nesta pesquisa: se `GET /label/list` filtra registros com `deleted: true` do lado
+  do servidor, ou se um label apagado continua aparecendo na listagem (o repositório que persiste
+  `label_model.Label` não foi encontrado/lido nesta pesquisa).
+
 ## Grupos (núcleo)
 
 As 14 operações de `groups.*` (ver ADR-0009) são suportadas por este adapter. **Nenhuma das 4

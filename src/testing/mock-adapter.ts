@@ -3,6 +3,7 @@ import type {
   ContactsApi,
   GroupsApi,
   InstanceApi,
+  LabelsApi,
   MessagesApi,
   PresenceApi,
   WaAdapter,
@@ -18,6 +19,7 @@ import {
   type GroupParticipant,
   INSTANCE_STATES,
   type InstanceState,
+  type LabelInfo,
   MESSAGE_ACKS,
   type MessageAck,
   type PresenceState,
@@ -55,11 +57,13 @@ export class MockAdapter implements WaAdapter {
   readonly contacts: ContactsApi;
   readonly chats: ChatsApi;
   readonly presence: PresenceApi;
+  readonly labels: LabelsApi;
 
   private state: InstanceState;
   private seq = 0;
   private groupSeq = 0;
   private inviteSeq = 0;
+  private labelSeq = 0;
   private readonly groupsById = new Map<string, GroupInfo>();
   private readonly groupIdByInviteCode = new Map<string, string>();
   private readonly contactsById = new Map<string, Contact>();
@@ -74,6 +78,8 @@ export class MockAdapter implements WaAdapter {
   private globalPresence: PresenceState | undefined;
   private readonly typingStateByChatId = new Map<string, TypingState>();
   private readonly subscribedPresenceChatIds = new Set<string>();
+  private readonly labelsById = new Map<string, LabelInfo>();
+  private readonly labelIdsByChatId = new Map<string, Set<string>>();
 
   constructor(options: MockAdapterOptions = {}) {
     this.provider = options.provider ?? 'mock';
@@ -353,6 +359,49 @@ export class MockAdapter implements WaAdapter {
         this.subscribedPresenceChatIds.add(chatId);
       },
     };
+
+    this.labels = {
+      list: async () => {
+        this.assertConnected();
+        return Array.from(this.labelsById.values());
+      },
+      create: async (input) => {
+        this.assertConnected();
+        const label: LabelInfo = {
+          id: `mock-label-${++this.labelSeq}`,
+          name: input.name,
+          color: input.color,
+          raw: { mock: true, input },
+        };
+        this.labelsById.set(label.id, label);
+        return label;
+      },
+      update: async (input) => {
+        this.assertConnected();
+        const label = this.requireLabel(input.labelId);
+        this.labelsById.set(input.labelId, { ...label, name: input.name, color: input.color });
+      },
+      delete: async (labelId) => {
+        this.assertConnected();
+        this.requireLabel(labelId);
+        this.labelsById.delete(labelId);
+        for (const labelIds of this.labelIdsByChatId.values()) {
+          labelIds.delete(labelId);
+        }
+      },
+      addToChat: async ({ chatId, labelId }) => {
+        this.assertConnected();
+        this.requireLabel(labelId);
+        const labelIds = this.labelIdsByChatId.get(chatId) ?? new Set<string>();
+        labelIds.add(labelId);
+        this.labelIdsByChatId.set(chatId, labelIds);
+      },
+      removeFromChat: async ({ chatId, labelId }) => {
+        this.assertConnected();
+        this.requireLabel(labelId);
+        this.labelIdsByChatId.get(chatId)?.delete(labelId);
+      },
+    };
   }
 
   /** Consulta de estado só para testes (não faz parte do contrato `ChatsApi`). */
@@ -403,6 +452,11 @@ export class MockAdapter implements WaAdapter {
   /** Consulta de estado só para testes (não faz parte do contrato `PresenceApi`). Ver ADR-0015. */
   isSubscribedToPresence(chatId: string): boolean {
     return this.subscribedPresenceChatIds.has(chatId);
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `LabelsApi`). Ver ADR-0016. */
+  getChatLabelIds(chatId: string): string[] {
+    return Array.from(this.labelIdsByChatId.get(chatId) ?? []);
   }
 
   simulateConnected(): void {
@@ -553,6 +607,16 @@ export class MockAdapter implements WaAdapter {
       });
     }
     return group;
+  }
+
+  private requireLabel(labelId: string): LabelInfo {
+    const label = this.labelsById.get(labelId);
+    if (!label) {
+      throw new WaConnectorError('PROVIDER_ERROR', `MockAdapter: label "${labelId}" não existe.`, {
+        provider: this.provider,
+      });
+    }
+    return label;
   }
 
   private issueInviteLink(groupId: string): { link: string; raw: unknown } {

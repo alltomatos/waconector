@@ -238,6 +238,43 @@ export interface SetTypingInput {
  */
 export type PresenceState = 'online' | 'offline';
 
+/**
+ * Etiqueta normalizada. Ver ADR-0016. `color` é uma string OPACA — cada provider usa um vocabulário
+ * de cor diferente (índice numérico 0-19, nome de cor, hex, inteiro ARGB) e nenhum converge o
+ * suficiente para justificar um vocabulário canônico; o valor é repassado como o adapter recebe,
+ * documentado por provider no dossiê.
+ */
+export interface LabelInfo {
+  id: string;
+  name: string;
+  color?: string;
+  raw: unknown;
+}
+
+/** Ver ADR-0016. */
+export interface CreateLabelInput {
+  name: string;
+  color?: string;
+}
+
+/**
+ * Ver ADR-0016. Diferente de `CreateLabelInput`, `name` é sempre obrigatório aqui mesmo quando só
+ * a cor muda — pelo menos um provider pesquisado (QuePasa) sobrescreve o campo com o que vier no
+ * corpo da requisição (sem merge parcial no servidor), então enviar um `name` ausente/vazio
+ * apagaria o nome atual. Exigir `name` sempre evita esse risco em todos os adapters, não só nesse.
+ */
+export interface UpdateLabelInput {
+  labelId: string;
+  name: string;
+  color?: string;
+}
+
+/** Ver ADR-0016. Usado por `LabelsApi.addToChat`/`removeFromChat` (mesma forma para as duas direções). */
+export interface LabelChatInput {
+  chatId: string;
+  labelId: string;
+}
+
 /** Participante de um grupo, normalizado. Ver ADR-0009. */
 export interface GroupParticipant {
   /** Telefone E.164 sem `+` ou JID explícito — mesma convenção de chatId de mensagem. */

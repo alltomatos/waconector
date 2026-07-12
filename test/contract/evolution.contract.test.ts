@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createConnector } from '../../src';
+import { createConnector, isWaConnectorError } from '../../src';
 import { evolution } from '../../src/adapters/evolution';
 import ackFixture from '../../src/adapters/evolution/fixtures/webhook-ack.json';
 import connectionUpdateFixture from '../../src/adapters/evolution/fixtures/webhook-connection-update.json';
@@ -328,6 +328,27 @@ function createFetchStub(): typeof globalThis.fetch {
     }
     // presence.setTyping (ADR-0015): POST /message/presence.
     if (method === 'POST' && url.pathname === '/message/presence') {
+      return jsonResponse(200, { message: 'success' });
+    }
+    // labels.list (ADR-0016): GET /label/list — array cru, sem envelope {message, data}.
+    if (method === 'GET' && url.pathname === '/label/list') {
+      return jsonResponse(200, [
+        {
+          id: 'db-uuid-1',
+          instance_id: 'contrato-evolution',
+          label_id: '1',
+          label_name: 'Cliente',
+          label_color: '0',
+          predefined_id: '',
+        },
+      ]);
+    }
+    // labels.create/update/delete (ADR-0016): POST /label/edit.
+    if (method === 'POST' && url.pathname === '/label/edit') {
+      return jsonResponse(200, { message: 'success' });
+    }
+    // labels.addToChat/removeFromChat (ADR-0016): POST /label/chat, POST /unlabel/chat.
+    if (method === 'POST' && (url.pathname === '/label/chat' || url.pathname === '/unlabel/chat')) {
       return jsonResponse(200, { message: 'success' });
     }
 
@@ -1516,6 +1537,142 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
     expect(adapter.capabilities).not.toContain('presence.set');
     expect(adapter.capabilities).not.toContain('presence.subscribe');
     expect(adapter.presence?.set).toBeUndefined();
+  });
+
+  it('labels.list chama GET /label/list e mapeia label_id/label_name/label_color', async () => {
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: createFetchStub(),
+    });
+    const wa = createConnector(adapter);
+    const labels = await wa.labels.list();
+
+    expect(labels).toEqual([{ id: '1', name: 'Cliente', color: '0', raw: expect.anything() }]);
+  });
+
+  it('labels.create gera um labelId via randomUUID e chama POST /label/edit com {labelId, name, color, deleted: false}', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/label/edit') {
+        calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      }
+      return createFetchStub()(input, init);
+    };
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const label = await wa.labels.create({ name: 'Cliente VIP', color: '3' });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({
+      labelId: expect.any(String),
+      name: 'Cliente VIP',
+      color: 3,
+      deleted: false,
+    });
+    expect(label).toEqual({
+      id: expect.any(String),
+      name: 'Cliente VIP',
+      color: '3',
+      raw: expect.anything(),
+    });
+    expect(label.id).toBe(calls[0]?.labelId);
+  });
+
+  it('labels.update chama POST /label/edit com {labelId, name, color, deleted: false}', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/label/edit') {
+        calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      }
+      return createFetchStub()(input, init);
+    };
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.labels.update({ labelId: '1', name: 'Cliente Ouro', color: '5' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ labelId: '1', name: 'Cliente Ouro', color: 5, deleted: false }]);
+  });
+
+  it('labels.delete busca name/color atuais via GET /label/list antes de chamar POST /label/edit com deleted: true', async () => {
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      calls.push({
+        method: (init?.method ?? 'GET').toUpperCase(),
+        path: url.pathname,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      return createFetchStub()(input, init);
+    };
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await expect(wa.labels.delete('1')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([
+      { method: 'GET', path: '/label/list', body: undefined },
+      {
+        method: 'POST',
+        path: '/label/edit',
+        body: { labelId: '1', name: 'Cliente', color: 0, deleted: true },
+      },
+    ]);
+  });
+
+  it('labels.delete falha com PROVIDER_ERROR quando o labelId não aparece em GET /label/list', async () => {
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: createFetchStub(),
+    });
+    const wa = createConnector(adapter);
+
+    const failure = await wa.labels.delete('label-inexistente').catch((error: unknown) => error);
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('labels.addToChat/removeFromChat chamam POST /label/chat e POST /unlabel/chat com {jid, labelId}', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/label/chat' || url.pathname === '/unlabel/chat') {
+        calls.push({ path: url.pathname, body: JSON.parse(String(init?.body)) });
+      }
+      return createFetchStub()(input, init);
+    };
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await wa.labels.addToChat({ chatId: '5511999999999', labelId: '1' });
+    await wa.labels.removeFromChat({ chatId: '5511999999999', labelId: '1' });
+
+    expect(calls).toEqual([
+      { path: '/label/chat', body: { jid: '5511999999999@s.whatsapp.net', labelId: '1' } },
+      { path: '/unlabel/chat', body: { jid: '5511999999999@s.whatsapp.net', labelId: '1' } },
+    ]);
   });
 
   it('chats.* declara só archive/mute/pin/unpin — sem unarchive/unmute/markRead/markUnread (sem endpoint confirmado no OpenAPI oficial, ver docs/providers/evolution.md)', () => {

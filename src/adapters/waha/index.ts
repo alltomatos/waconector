@@ -4,6 +4,7 @@ import type {
   ContactsApi,
   GroupsApi,
   InstanceApi,
+  LabelsApi,
   MessagesApi,
   PresenceApi,
   WaAdapter,
@@ -29,6 +30,7 @@ import type {
   GroupInviteLink,
   GroupParticipant,
   InstanceState,
+  LabelInfo,
   MediaKind,
   MediaRef,
   MessageAck,
@@ -120,6 +122,10 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'presence.setTyping',
   'presence.set',
   'presence.subscribe',
+  'labels.list',
+  'labels.create',
+  'labels.update',
+  'labels.delete',
   'webhooks.parse',
 ];
 
@@ -768,6 +774,64 @@ export function waha(options: WahaOptions): WaAdapter {
     },
   };
 
+  /**
+   * Namespace `labels.*` (ADR-0016). Cobertura 4/6 — CRUD confirmado com confiança Alta
+   * (`openapi.json` + página dedicada), mas `addToChat`/`removeFromChat` NÃO são implementados: o
+   * único endpoint de associação (`PUT /api/{session}/labels/chats/{chatId}`) é bulk-replace
+   * ("You need to provide the full list of labels you want to set to the chat. All other labels
+   * will be removed") — emular add/remove exigiria um GET prévio para montar a lista completa
+   * antes do PUT, violando a convenção já estabelecida de "uma operação canônica = uma chamada
+   * HTTP, sem round-trip extra" (mesmo critério do `chats.markRead` da Wuzapi, ADR-0012). Ver
+   * docs/providers/waha.md#etiquetas-labels-adr-0016.
+   *
+   * **Pré-requisito documentado pelo provider, não validável por este adapter**: etiquetas só
+   * existem em contas WhatsApp Business — o WAHA não expõe "esta sessão é Business?" antes da
+   * chamada, então uma conta pessoal comum provavelmente falha com erro do provider (não deste
+   * adapter) ao chamar qualquer método de `labels.*`.
+   */
+  const labels: LabelsApi = {
+    /** `GET /api/{session}/labels` — resposta `[{id, name, color, colorHex}]`. */
+    list: async () => {
+      const body = await http.request<unknown>({
+        method: 'GET',
+        path: `/api/${encodeURIComponent(session)}/labels`,
+      });
+      const items = Array.isArray(body) ? body : [];
+      return items.map((item) => mapWahaLabel(item));
+    },
+
+    /**
+     * `POST /api/{session}/labels` (schema `LabelBody`: `name` obrigatório, `color` OU `colorHex`
+     * — a doc recomenda preferir `color`, cujo mapa `color`↔`colorHex` "pode mudar no futuro").
+     * `LabelInfo.color` é opaco (ver ADR-0016): repassado direto como `color`.
+     */
+    create: async (input) => {
+      const body = await http.request<unknown>({
+        method: 'POST',
+        path: `/api/${encodeURIComponent(session)}/labels`,
+        body: { name: input.name, color: input.color },
+      });
+      return mapWahaLabel(body, input);
+    },
+
+    /** `PUT /api/{session}/labels/{labelId}` — mesmo body de `create`. */
+    update: async (input) => {
+      await http.request({
+        method: 'PUT',
+        path: `/api/${encodeURIComponent(session)}/labels/${encodeURIComponent(input.labelId)}`,
+        body: { name: input.name, color: input.color },
+      });
+    },
+
+    /** `DELETE /api/{session}/labels/{labelId}`. */
+    delete: async (labelId) => {
+      await http.request({
+        method: 'DELETE',
+        path: `/api/${encodeURIComponent(session)}/labels/${encodeURIComponent(labelId)}`,
+      });
+    },
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WAHA_CAPABILITIES,
@@ -777,6 +841,7 @@ export function waha(options: WahaOptions): WaAdapter {
     contacts,
     chats,
     presence,
+    labels,
     parseWebhook: (input) => parseWahaWebhook(input, session, options.webhookHmacKey),
   };
 }
@@ -1157,6 +1222,35 @@ function mapContactAbout(body: unknown): ContactAbout {
     about: record ? asString(record.about) : undefined,
     raw: body,
   };
+}
+
+/**
+ * Entrada usada só quando a resposta de `POST /labels` não traz `id`/`name`/`color` (a doc não
+ * declara o schema de resposta com certeza total) — mesmo padrão de fallback de `mapGroupInfo`
+ * (`GroupInfoFallback`): cai nos valores já conhecidos da requisição em vez de inventar um dado.
+ */
+interface LabelFallback {
+  name?: string;
+  color?: string;
+}
+
+/**
+ * Mapeia um label do WAHA (`{id, name, color, colorHex}`) para `LabelInfo`. `color` é opaco (ver
+ * ADR-0016) — o WAHA pode devolver `color` como índice numérico; convertido para string sem
+ * tradução de vocabulário (mesmo critério de "não inventar mapeamento" já usado em `mapContact`).
+ */
+function mapWahaLabel(body: unknown, fallback: LabelFallback = {}): LabelInfo {
+  const record = asRecord(body);
+  const id = (record ? asString(record.id) : undefined) ?? `waha-label-${Date.now()}`;
+  const name = (record ? asString(record.name) : undefined) ?? fallback.name ?? '';
+  const colorRaw = record?.color;
+  const color =
+    typeof colorRaw === 'string'
+      ? colorRaw
+      : typeof colorRaw === 'number'
+        ? String(colorRaw)
+        : fallback.color;
+  return { id, name, color, raw: body };
 }
 
 function mapWahaStatus(status: string | undefined): InstanceState {

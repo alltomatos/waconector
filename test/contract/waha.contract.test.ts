@@ -385,6 +385,26 @@ function createFetchStub(): typeof globalThis.fetch {
       return new Response(null, { status: 201 });
     }
 
+    // labels.list (ADR-0016): GET /api/{session}/labels.
+    if (method === 'GET' && pathname === `/api/${SESSION}/labels`) {
+      return jsonResponse(200, [{ id: '1', name: 'Cliente', color: 0, colorHex: '#FF0000' }]);
+    }
+
+    // labels.create (ADR-0016): POST /api/{session}/labels.
+    if (method === 'POST' && pathname === `/api/${SESSION}/labels`) {
+      return jsonResponse(201, { id: '42', name: 'Contrato: Cliente VIP', color: '1' });
+    }
+
+    // labels.update (ADR-0016): PUT /api/{session}/labels/{labelId}.
+    if (method === 'PUT' && pathname.startsWith(`/api/${SESSION}/labels/`)) {
+      return new Response(null, { status: 200 });
+    }
+
+    // labels.delete (ADR-0016): DELETE /api/{session}/labels/{labelId}.
+    if (method === 'DELETE' && pathname.startsWith(`/api/${SESSION}/labels/`)) {
+      return new Response(null, { status: 200 });
+    }
+
     throw new Error(`fetchStub: rota não configurada — ${method} ${pathname}`);
   };
 }
@@ -1617,6 +1637,111 @@ describe('WAHA adapter: comportamento específico do provider', () => {
     expect(calls[0]?.method).toBe('POST');
     expect(calls[0]?.path).toBe(`/api/${SESSION}/presence/${CHAT_ID_ENCODED}/subscribe`);
     expect(calls[0]?.body).toBeUndefined();
+  });
+
+  it('labels.list chama GET /api/{session}/labels e mapeia {id, name, color}', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const labels = await wa.labels.list();
+
+    expect(labels).toEqual([{ id: '1', name: 'Cliente', color: '0', raw: expect.anything() }]);
+  });
+
+  it('labels.create chama POST /api/{session}/labels com {name, color}', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const label = await wa.labels.create({ name: 'Contrato: Cliente VIP', color: '1' });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/labels`);
+    expect(calls[0]?.body).toEqual({ name: 'Contrato: Cliente VIP', color: '1' });
+    expect(label).toEqual({
+      id: '42',
+      name: 'Contrato: Cliente VIP',
+      color: '1',
+      raw: expect.anything(),
+    });
+  });
+
+  it('labels.update chama PUT /api/{session}/labels/{labelId} com {name, color}', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.labels.update({ labelId: '42', name: 'Cliente VIP', color: '2' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('PUT');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/labels/42`);
+    expect(calls[0]?.body).toEqual({ name: 'Cliente VIP', color: '2' });
+  });
+
+  it('labels.delete chama DELETE /api/{session}/labels/{labelId} e resolve void', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.labels.delete('42')).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('DELETE');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/labels/42`);
+  });
+
+  it('não declara "labels.addToChat"/"labels.removeFromChat" (endpoint nativo é bulk-replace, não add/remove) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = waha(buildAdapterOptions());
+    for (const capability of ['labels.addToChat', 'labels.removeFromChat'] as const) {
+      expect(adapter.capabilities).not.toContain(capability);
+    }
+    expect(adapter.labels?.addToChat).toBeUndefined();
+    expect(adapter.labels?.removeFromChat).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const calls = [
+      () => wa.labels.addToChat({ chatId: '5585999999999', labelId: '1' }),
+      () => wa.labels.removeFromChat({ chatId: '5585999999999', labelId: '1' }),
+    ];
+    for (const call of calls) {
+      const failure = await call().catch((error: unknown) => error);
+      expect(isWaConnectorError(failure)).toBe(true);
+      if (isWaConnectorError(failure)) {
+        expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+      }
+    }
   });
 
   it('parseWebhook normaliza "message.ack" do dossiê para MessageAckEvent', () => {

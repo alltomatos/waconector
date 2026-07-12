@@ -167,6 +167,37 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { success: true });
     }
 
+    // labels.list (ADR-0016, rota legacy): GET /labels.
+    if (method === 'GET' && pathname === '/labels') {
+      return jsonResponse(200, {
+        success: true,
+        labels: [{ id: 1, name: 'Cliente', color: 'blue', active: true }],
+      });
+    }
+
+    // labels.create (ADR-0016, rota legacy): POST /labels.
+    if (method === 'POST' && pathname === '/labels') {
+      return jsonResponse(200, {
+        success: true,
+        label: { id: 2, name: 'Cliente VIP', color: 'gold', active: true },
+      });
+    }
+
+    // labels.update (ADR-0016, rota legacy): PUT /labels.
+    if (method === 'PUT' && pathname === '/labels') {
+      return jsonResponse(200, { success: true });
+    }
+
+    // labels.delete (ADR-0016, rota legacy): DELETE /labels.
+    if (method === 'DELETE' && pathname === '/labels') {
+      return jsonResponse(200, { success: true });
+    }
+
+    // labels.addToChat/removeFromChat (ADR-0016, rota legacy): POST/DELETE /chat/labels.
+    if ((method === 'POST' || method === 'DELETE') && pathname === '/chat/labels') {
+      return jsonResponse(200, { success: true });
+    }
+
     throw new Error(`fetchStub (quepasa): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -827,6 +858,108 @@ describe('quepasa adapter: comportamento específico do provider', () => {
     expect(adapter.capabilities).not.toContain('presence.set');
     expect(adapter.capabilities).not.toContain('presence.subscribe');
     expect(adapter.presence?.set).toBeUndefined();
+  });
+
+  it('labels.list chama GET /labels (rota legacy) e mapeia id numérico para string', async () => {
+    const adapter = quepasa(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const labels = await wa.labels.list();
+
+    expect(labels).toEqual([{ id: '1', name: 'Cliente', color: 'blue', raw: expect.anything() }]);
+  });
+
+  it('labels.create chama POST /labels com {name, color} (sem "id" — o servidor atribui e devolve o label criado)', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/labels' && (init?.method ?? 'GET').toUpperCase() === 'POST') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const label = await wa.labels.create({ name: 'Cliente VIP', color: 'gold' });
+
+    expect(calls).toEqual([{ name: 'Cliente VIP', color: 'gold' }]);
+    expect(label).toEqual({ id: '2', name: 'Cliente VIP', color: 'gold', raw: expect.anything() });
+  });
+
+  it('labels.update chama PUT /labels com {id, name, color} (id numérico convertido)', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/labels' && (init?.method ?? 'GET').toUpperCase() === 'PUT') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.labels.update({ labelId: '1', name: 'Cliente Ouro', color: 'red' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ id: 1, name: 'Cliente Ouro', color: 'red' }]);
+  });
+
+  it('labels.delete chama DELETE /labels com {id} no corpo', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/labels') {
+            calls.push({
+              method: (init?.method ?? 'GET').toUpperCase(),
+              path: url.pathname,
+              body: init?.body ? JSON.parse(String(init.body)) : undefined,
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.labels.delete('1')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ method: 'DELETE', path: '/labels', body: { id: 1 } }]);
+  });
+
+  it('labels.addToChat/removeFromChat chamam POST/DELETE /chat/labels com {chatid, labelid}', async () => {
+    const calls: Array<{ method: string; body: unknown }> = [];
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/labels') {
+            calls.push({
+              method: (init?.method ?? 'GET').toUpperCase(),
+              body: JSON.parse(String(init?.body)),
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.labels.addToChat({ chatId: RECIPIENT, labelId: '1' });
+    await wa.labels.removeFromChat({ chatId: RECIPIENT, labelId: '1' });
+
+    expect(calls).toEqual([
+      { method: 'POST', body: { chatid: RECIPIENT, labelid: 1 } },
+      { method: 'DELETE', body: { chatid: RECIPIENT, labelid: 1 } },
+    ]);
   });
 
   it('parseWebhook normaliza mensagem de texto recebida (fromme:false) para message.received', () => {

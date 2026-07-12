@@ -58,6 +58,12 @@ export const CAPABILITIES = [
   'presence.setTyping',
   'presence.set',
   'presence.subscribe',
+  'labels.list',
+  'labels.create',
+  'labels.update',
+  'labels.delete',
+  'labels.addToChat',
+  'labels.removeFromChat',
   'webhooks.parse',
 ] as const;
 

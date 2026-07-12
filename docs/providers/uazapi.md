@@ -459,6 +459,34 @@ confirmado na pesquisa.
 | `presence.setTyping` | `POST /message/presence` | Request: `{number, presence: "composing"\|"recording"\|"paused", delay?}` — `TypingState` mapeia 1:1 com o enum do provider, sem tradução. `delay` (ms, máx. 300000) não é exposto pelo contrato canônico — omitido; o servidor reenvia o indicador a cada 10s até seu próprio limite de 5 minutos, e cancela automaticamente ao enviar uma mensagem real para o mesmo chat. Operação assíncrona, gerenciada em background pelo servidor. |
 | `presence.set` | `POST /instance/presence` | Request: `{presence: "available"\|"unavailable"}` — presença GLOBAL da conta, distinta da presença por-chat acima. `PresenceState` mapeia `online` → `available`, `offline` → `unavailable`. **Efeito colateral documentado**: quando a API é o único dispositivo ativo e a presença é `unavailable`, confirmações de entrega/leitura (ticks cinzas/azuis) não são enviadas nem recebidas; o servidor também pode reverter para `available` "em algumas situações internas da API", não controlável por este adapter — a doc recomenda ajustar a privacidade de "visto por último" no WhatsApp se isso for indesejado. |
 
+## Etiquetas (`labels.*`, ADR-0016)
+
+Cobertura 6/6 — confiança Alta para o schema (`Label`/`EditLabel`/`ChatLabel` tipados no OpenAPI
+bundled), confiança Média só para a listagem em si (a doc avisa que a resposta 200 é "sem schema
+tipado" numa versão anterior, e o erro 500 documentado — `"Failed to fetch labels from database"` —
+sugere que a lista serve de um cache local, populado por `POST /labels/refresh`, não usado por este
+adapter).
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `labels.list` | `GET /labels` | Schema `Label`: `{id (uuid interno), name, color (0-19), colorHex, labelid (id de fato do WhatsApp), owner, created, updated}`. **`LabelInfo.id` mapeia para `labelid`, não `id`** — `labelid` é o valor esperado de volta por `/label/edit`/`/chat/labels`, o UUID `id` é só a chave interna do banco do provider. |
+| `labels.create` | `POST /label/edit` | Único endpoint de escrita (criar/editar/deletar, discriminado por convenção de valor). Para criar, envia-se o literal `labelid: "new"` — o backend "gera o próximo labelid numérico disponível" (não necessariamente o maior número; reaproveita ids liberados por labels deletados). **A resposta não devolve esse id novo** (só a string enum `"Label created"`/`"Label edited"`) — a doc recomenda consultar `GET /labels` depois. Este adapter faz exatamente isso, por DIFF entre uma listagem antes e uma depois da criação (o `labelid` presente só na segunda é o criado) — 3 chamadas HTTP no total (list, create, list), necessárias porque não há forma de inferir com segurança qual é o id novo sem comparar as duas listagens (o id pode ser um número reaproveitado, não o maior). |
+| `labels.update` | `POST /label/edit` | Mesmo endpoint, com o `labelId` REAL do chamador (não o literal `"new"`). |
+| `labels.delete` | `POST /label/edit` | Mesmo endpoint, com `delete: true`. **Diferente do Evolution GO**: o exemplo oficial de deleção mostra `name: ""` explicitamente, e só `labelid` é `required` no schema — este adapter NÃO precisa buscar `name`/`color` atuais antes de deletar (sem round-trip extra). |
+| `labels.addToChat` | `POST /chat/labels` | Um dos 3 modos mutuamente exclusivos do schema (`labelids`/`add_labelid`/`remove_labelid`, "Use apenas um dos três parâmetros por requisição") — este adapter sempre usa `add_labelid` (nunca o modo bulk-replace `labelids`). Body: `{number, add_labelid}`. |
+| `labels.removeFromChat` | `POST /chat/labels` | Mesmo endpoint, modo `remove_labelid`. Body: `{number, remove_labelid}`. |
+
+`color` é opaco no contrato canônico (ADR-0016), mas o provider exige um inteiro 0-19 — convertido
+via `Number(color)`, com `0` como default quando ausente/não numérico (sem paleta documentada para
+esse caso; a paleta REAL de 20 cores fixas `color → colorHex` existe no schema `Label` mas não é
+usada por este adapter, já que `color` é repassado como opaco).
+
+**Não confirmado nesta pesquisa** (a validar contra uma instância real): se o diff antes/depois de
+`labels.create` pode identificar erroneamente um `labelid` criado por outro processo concorrente no
+mesmo intervalo (condição de corrida inerente a uma API sem transação/callback síncrono) — o adapter
+lança `PROVIDER_ERROR` se NENHUM id novo aparecer, mas não tem como detectar "id novo errado" se dois
+processos criarem labels ao mesmo tempo.
+
 ## Chats (gestão de estado da conversa)
 
 Namespace `chats.*` introduzido pelo ADR-0012 — distinto de `contacts.*` (sobre a pessoa/JID) e de
