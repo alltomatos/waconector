@@ -227,6 +227,40 @@ Estado: **done**
       [PR #31](https://github.com/alltomatos/waconector/pull/31), publicado no npm confirmado via
       `npm view waconector version`.
 
+## Epic 6 — pós-v1.0: fechar gaps de capabilities nos adapters
+
+Estado: **in_progress**
+
+Depois do v1.0, auditoria de gaps rodada nos 8 adapters (workflow paralelo, 1 agente de pesquisa
+por provider + síntese consolidada) — comparou cada célula "—" da matriz de capabilities contra a
+documentação/código-fonte real de cada provider (não só os dossiês), e também procurou
+capabilities que nenhum dos 8 adapters modela hoje. Resultado: **5 adapters já estavam
+essencialmente completos** (WAHA/Evolution GO/Wuzapi 28-29/30, uazapi/Z-API 28/30 — únicas células
+"—" restantes são limitações reais confirmadas do próprio provider ou o obstáculo estrutural de
+sempre em `instance.pairingCode`). Todo o trabalho de "gap rápido" concentrado em 3 adapters
+(Whapi 6/30, QuePasa 7/30, WPPConnect 24/30) — usuário escolheu fechar os três em sequência
+(Whapi → WPPConnect → QuePasa). Auditoria também rankeou candidatas a capabilities novas (fora do
+enum atual): `messages.edit`/`messages.delete` (8/8 providers, payload uniforme) são as mais fortes
+candidatas ao próximo ADR, seguidas de `chats.*` (archive/mute/pin/markUnread, também 8/8).
+
+- [x] **Whapi**: `messages.sendReaction` + as 14 operações de `groups.*` + as 8 de `contacts.*`
+      (22 capabilities), todas com endpoint confirmado contra o OpenAPI oficial v1.8.7 (sem
+      deriva de spec). Leva o adapter de 6/30 para **29/30** (só `instance.pairingCode` fora, pelo
+      obstáculo estrutural de sempre). Decisões de mapeamento não óbvias: `updateSubject`/
+      `updateDescription` usam o MESMO endpoint `PUT /groups/{id}` (cada operação envia só o campo
+      correspondente, para não sobrescrever o outro); `revokeInviteLink` encadeia DELETE+GET (o
+      DELETE não devolve o novo código, diferente de outros adapters do pacote) — exceção
+      documentada à regra de "uma chamada por operação"; `checkExists` usa `HEAD` e intercepta
+      404 como resultado de domínio válido (único método do adapter que faz isso).
+- [ ] WPPConnect (5 capabilities: `groups.list` + `contacts.list/get/getProfilePicture/getAbout` —
+      achado da auditoria: gap veio de profundidade de pesquisa do dossiê original, que parou no
+      controller do server em vez de descer à lib `@wppconnect-team/wppconnect` tipada; não é
+      limitação real do provider).
+- [ ] QuePasa (até 20 capabilities condicionais — a auditoria encontrou indício, lendo código-fonte,
+      de que as rotas v5 de `groups.*`/`contacts.*` antes tidas como bloqueadas por JWT aceitam o
+      mesmo token por instância já usado; **não testado contra instância real**, validar antes de
+      implementar em lote).
+
 ---
 
 Atualize este arquivo ao concluir cada milestone; o detalhe de *por quê* de cada fase do produto

@@ -18,7 +18,7 @@ Nenhuma linha aqui é escrita à mão.
 - **uazapi**: 28/30
 - **zapi**: 28/30
 - **wuzapi**: 29/30
-- **whapi**: 6/30
+- **whapi**: 29/30
 - **quepasa**: 7/30
 - **wppconnect**: 24/30
 
@@ -39,39 +39,39 @@ Nenhuma linha aqui é escrita à mão.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `messages.sendText` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `messages.sendMedia` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `messages.sendReaction` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
+| `messages.sendReaction` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 
 ### `groups.*`
 
 | Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `groups.create` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `groups.getInfo` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `groups.list` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — |
-| `groups.addParticipants` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `groups.removeParticipants` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `groups.promoteParticipants` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `groups.demoteParticipants` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `groups.updateSubject` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `groups.updateDescription` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `groups.updatePicture` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `groups.getInviteLink` | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
-| `groups.revokeInviteLink` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `groups.joinViaInviteLink` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `groups.leaveGroup` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
+| `groups.create` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `groups.getInfo` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `groups.list` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
+| `groups.addParticipants` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `groups.removeParticipants` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `groups.promoteParticipants` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `groups.demoteParticipants` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `groups.updateSubject` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `groups.updateDescription` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `groups.updatePicture` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `groups.getInviteLink` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `groups.revokeInviteLink` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `groups.joinViaInviteLink` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `groups.leaveGroup` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 
 ### `contacts.*`
 
 | Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `contacts.list` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — |
-| `contacts.get` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | — |
-| `contacts.checkExists` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `contacts.getProfilePicture` | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | — |
-| `contacts.getAbout` | ✅ | ✅ | — | ✅ | ✅ | — | — | — |
-| `contacts.block` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `contacts.unblock` | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| `contacts.listBlocked` | — | ✅ | ✅ | — | ✅ | — | — | ✅ |
+| `contacts.list` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
+| `contacts.get` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
+| `contacts.checkExists` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `contacts.getProfilePicture` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `contacts.getAbout` | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
+| `contacts.block` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `contacts.unblock` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `contacts.listBlocked` | — | ✅ | ✅ | — | ✅ | ✅ | — | ✅ |
 
 ### `webhooks.*`
 
