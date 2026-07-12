@@ -13,14 +13,14 @@ Nenhuma linha aqui é escrita à mão.
 
 ## Resumo por provider
 
-- **waha**: 28/30
-- **evolution**: 29/30
-- **uazapi**: 28/30
-- **zapi**: 28/30
-- **wuzapi**: 29/30
-- **whapi**: 29/30
-- **quepasa**: 7/30
-- **wppconnect**: 29/30
+- **waha**: 34/40
+- **evolution**: 35/40
+- **uazapi**: 38/40
+- **zapi**: 38/40
+- **wuzapi**: 33/40
+- **whapi**: 39/40
+- **quepasa**: 13/40
+- **wppconnect**: 39/40
 
 ## Detalhe por namespace
 
@@ -40,6 +40,8 @@ Nenhuma linha aqui é escrita à mão.
 | `messages.sendText` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `messages.sendMedia` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `messages.sendReaction` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `messages.edit` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `messages.delete` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ### `groups.*`
 
@@ -72,6 +74,19 @@ Nenhuma linha aqui é escrita à mão.
 | `contacts.block` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | `contacts.unblock` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | `contacts.listBlocked` | — | ✅ | ✅ | — | ✅ | ✅ | — | ✅ |
+
+### `chats.*`
+
+| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `chats.archive` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `chats.unarchive` | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `chats.mute` | — | ✅ | ✅ | ✅ | — | ✅ | — | ✅ |
+| `chats.unmute` | — | — | ✅ | ✅ | — | ✅ | — | ✅ |
+| `chats.pin` | — | ✅ | ✅ | ✅ | — | ✅ | — | ✅ |
+| `chats.unpin` | — | ✅ | ✅ | ✅ | — | ✅ | — | ✅ |
+| `chats.markRead` | ✅ | — | ✅ | ✅ | — | ✅ | ✅ | ✅ |
+| `chats.markUnread` | ✅ | — | ✅ | ✅ | — | ✅ | ✅ | ✅ |
 
 ### `webhooks.*`
 

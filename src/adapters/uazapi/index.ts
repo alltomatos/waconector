@@ -1,4 +1,5 @@
 import type {
+  ChatsApi,
   ContactsApi,
   GroupsApi,
   InstanceApi,
@@ -17,6 +18,8 @@ import type {
   Contact,
   ContactProfilePicture,
   CreateGroupInput,
+  DeleteMessageInput,
+  EditMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -81,6 +84,16 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'messages.edit',
+  'messages.delete',
+  'chats.archive',
+  'chats.unarchive',
+  'chats.mute',
+  'chats.unmute',
+  'chats.pin',
+  'chats.unpin',
+  'chats.markRead',
+  'chats.markUnread',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -128,6 +141,19 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     sendText: (input) => sendText(http, input),
     sendMedia: (input) => sendMedia(http, input),
     sendReaction: (input) => sendReaction(http, input),
+    edit: (input) => editMessage(http, input),
+    delete: (input) => deleteMessage(http, input),
+  };
+
+  const chats: ChatsApi = {
+    archive: (chatId) => archiveChat(http, chatId),
+    unarchive: (chatId) => unarchiveChat(http, chatId),
+    mute: (chatId) => muteChat(http, chatId),
+    unmute: (chatId) => unmuteChat(http, chatId),
+    pin: (chatId) => pinChat(http, chatId),
+    unpin: (chatId) => unpinChat(http, chatId),
+    markRead: (chatId) => markChatRead(http, chatId),
+    markUnread: (chatId) => markChatUnread(http, chatId),
   };
 
   const groups: GroupsApi = {
@@ -167,6 +193,7 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     messages,
     groups,
     contacts,
+    chats,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -386,6 +413,44 @@ function mapSentMessage(body: unknown, requestedNumber: string): SentMessage {
   const chatId = (record ? asString(record.chatid) : undefined) ?? requestedNumber;
   const timestamp = record ? asNumber(record.messageTimestamp) : undefined;
   return { id, chatId, timestamp, raw: body };
+}
+
+/**
+ * `POST /message/edit`: body `{ id, text }`, ambos obrigatórios — **sem** `number`/`to`: o `id` já
+ * identifica a mensagem (e seu chat/dono) sozinho, então `input.to` não é enviado no request (só é
+ * usado como fallback de `chatId` no mapeamento da resposta, mesmo padrão de `mapSentMessage`).
+ * Resposta 200 documentada segue o schema `Message` completo (`id` no formato `owner:messageid`,
+ * `messageid`, `content`, `messageTimestamp`, `messageType: "text"`, `status: "Pending"`, `owner`) —
+ * reaproveita `mapSentMessage` (mesmo shape genérico dos demais endpoints de `/message/*` já usado
+ * por `sendReaction`), sem campo `chatid` explícito, daí o fallback para `input.to`.
+ *
+ * **Limitações documentadas pelo próprio endpoint** (não impostas pelo adapter): só é possível
+ * editar mensagens enviadas pela própria instância; "a mensagem deve estar dentro do prazo
+ * permitido pelo WhatsApp para edição" — a doc não especifica o valor exato desse prazo (o
+ * WhatsApp real aplica ~15min no app oficial, mas isso não está no spec da uazapi, então não é
+ * validado localmente por este adapter). Gera um **novo ID** para a mensagem editada — refletido
+ * no `id` devolvido por `mapSentMessage`, que pode diferir de `input.messageId`. Ver
+ * docs/providers/uazapi.md#edição-e-exclusão-de-mensagem.
+ */
+async function editMessage(http: HttpClient, input: EditMessageInput): Promise<SentMessage> {
+  const body = { id: input.messageId, text: input.text };
+  const response = await http.request<unknown>({ method: 'POST', path: '/message/edit', body });
+  return mapSentMessage(response, toUazapiNumber(input.to));
+}
+
+/**
+ * `POST /message/delete`: body `{ id }`, único campo, obrigatório — igual a `editMessage`, **sem**
+ * `number`/`to` (`input.to` não é enviado no request; existe em `DeleteMessageInput` só para
+ * simetria com o restante de `messages.*` e por eventual uso futuro). A doc descreve o endpoint
+ * como "apaga uma mensagem **para todos** os participantes da conversa" — é sempre revogação
+ * ("delete for everyone"), nunca um soft-delete local (compatível com a decisão de
+ * `DeleteMessageInput` do ADR-0012, sem campo de escopo). Resposta 200 (`{ timestamp, id }`) é
+ * ignorada: o contrato exige apenas `Promise<void>`. Sem janela de tempo documentada para o limite
+ * de exclusão (diferente de `sendReaction`, que documenta um limite de 7 dias). Ver
+ * docs/providers/uazapi.md#edição-e-exclusão-de-mensagem.
+ */
+async function deleteMessage(http: HttpClient, input: DeleteMessageInput): Promise<void> {
+  await http.request({ method: 'POST', path: '/message/delete', body: { id: input.messageId } });
 }
 
 // ---------------------------------------------------------------------------
@@ -767,6 +832,98 @@ async function listBlockedContacts(http: HttpClient): Promise<string[]> {
   const blockList = record?.blockList;
   if (!Array.isArray(blockList)) return [];
   return blockList.map(asString).filter((id): id is string => id !== undefined);
+}
+
+// ---------------------------------------------------------------------------
+// chats.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /chat/archive`: body `{ number, archive: boolean }`, ambos obrigatórios — mesmo padrão de
+ * "um endpoint, dois verbos canônicos" já usado por `contacts.block`/`unblock`
+ * (`setContactBlocked`). `number` recebe o chatId canônico via `toUazapiNumber` (identidade) — a
+ * doc documenta o campo como aceitando telefone E.164 OU ID de grupo, mesmo campo polimórfico já
+ * usado por `messages.*`/`contacts.*`. Resposta (`{ response: "Chat updated successfully" }`) é
+ * ignorada: o contrato exige apenas `Promise<void>`. Nuance documentada: "não afeta as mensagens ou
+ * o conteúdo do chat" — puramente cosmético/organizacional. Ver
+ * docs/providers/uazapi.md#chats-gestão-de-estado-da-conversa.
+ */
+async function setChatArchived(http: HttpClient, chatId: string, archive: boolean): Promise<void> {
+  const number = toUazapiNumber(chatId);
+  await http.request({ method: 'POST', path: '/chat/archive', body: { number, archive } });
+}
+
+async function archiveChat(http: HttpClient, chatId: string): Promise<void> {
+  await setChatArchived(http, chatId, true);
+}
+
+async function unarchiveChat(http: HttpClient, chatId: string): Promise<void> {
+  await setChatArchived(http, chatId, false);
+}
+
+/**
+ * `POST /chat/mute`: body `{ number, muteEndTime }`, ambos obrigatórios — `muteEndTime` é um ENUM
+ * fechado de 4 valores (`0 | 8 | 168 | -1`), não um timestamp Unix arbitrário: `0` remove o
+ * silenciamento, `8`/`168` são horas (8h/1 semana), `-1` é permanente. `ChatsApi.mute`/`unmute` do
+ * contrato canônico não recebem duração (ver ADR-0012 — nenhum formato de duração converge entre
+ * providers) — mapeamento de decisão do adapter, não um default do provider: `mute(chatId)` sempre
+ * envia `muteEndTime: -1` (permanente); `unmute(chatId)` sempre envia `muteEndTime: 0` (remove).
+ * Consumidores que precisem de um silenciamento por horas/semana só têm essa granularidade via
+ * `raw`/chamada direta ao provider, fora do contrato canônico. Ver
+ * docs/providers/uazapi.md#chats-gestão-de-estado-da-conversa.
+ */
+async function setChatMuted(http: HttpClient, chatId: string, muted: boolean): Promise<void> {
+  const number = toUazapiNumber(chatId);
+  const muteEndTime = muted ? -1 : 0;
+  await http.request({ method: 'POST', path: '/chat/mute', body: { number, muteEndTime } });
+}
+
+async function muteChat(http: HttpClient, chatId: string): Promise<void> {
+  await setChatMuted(http, chatId, true);
+}
+
+async function unmuteChat(http: HttpClient, chatId: string): Promise<void> {
+  await setChatMuted(http, chatId, false);
+}
+
+/**
+ * `POST /chat/pin`: body `{ number, pin: boolean }`, ambos obrigatórios. Resposta
+ * (`{ response: "Chat pinned" }`) é ignorada: o contrato exige apenas `Promise<void>`. Nuance:
+ * distinto de fixar uma MENSAGEM dentro do chat (`messages.pin`, fora de escopo desta fase — ver
+ * ADR-0012) — este fixa a CONVERSA inteira no topo da lista (mesmo recurso de "conversas fixadas"
+ * do app oficial). Ver docs/providers/uazapi.md#chats-gestão-de-estado-da-conversa.
+ */
+async function setChatPinned(http: HttpClient, chatId: string, pin: boolean): Promise<void> {
+  const number = toUazapiNumber(chatId);
+  await http.request({ method: 'POST', path: '/chat/pin', body: { number, pin } });
+}
+
+async function pinChat(http: HttpClient, chatId: string): Promise<void> {
+  await setChatPinned(http, chatId, true);
+}
+
+async function unpinChat(http: HttpClient, chatId: string): Promise<void> {
+  await setChatPinned(http, chatId, false);
+}
+
+/**
+ * `POST /chat/read`: body `{ number, read: boolean }`, ambos obrigatórios — `read: false` marca
+ * como **não lido** (reintroduz o indicador visual de pendência, não é um simples "desfazer
+ * lido"). Distinto de `messages.markRead` (mensagem-a-mensagem por id, não implementado nesta fase
+ * — ver ADR-0012): este marca o chat INTEIRO de uma vez, sem precisar dos IDs das mensagens.
+ * Ver docs/providers/uazapi.md#chats-gestão-de-estado-da-conversa.
+ */
+async function setChatRead(http: HttpClient, chatId: string, read: boolean): Promise<void> {
+  const number = toUazapiNumber(chatId);
+  await http.request({ method: 'POST', path: '/chat/read', body: { number, read } });
+}
+
+async function markChatRead(http: HttpClient, chatId: string): Promise<void> {
+  await setChatRead(http, chatId, true);
+}
+
+async function markChatUnread(http: HttpClient, chatId: string): Promise<void> {
+  await setChatRead(http, chatId, false);
 }
 
 // ---------------------------------------------------------------------------

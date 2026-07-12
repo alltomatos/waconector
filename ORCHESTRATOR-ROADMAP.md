@@ -290,6 +290,53 @@ candidatas ao próximo ADR, seguidas de `chats.*` (archive/mute/pin/markUnread, 
       uma instância Docker real (ex. `docker pull codeleaks/quepasa:latest`, publicamente disponível)
       exercitada de ponta a ponta contra tráfego real.
 
+## Epic 7 — capabilities novas: `messages.edit`/`messages.delete` + namespace `chats.*`
+
+Estado: **done**
+
+Primeira iniciativa pós-v1.0 que **expande** o enum de 30 capabilities (não só fecha gaps dentro
+dele, como a Epic 6) — aprovada pelo usuário após a síntese da Epic 6 apontar `messages.edit`/
+`messages.delete` e `chats.*` (archive/mute/pin/markRead, todos com cobertura 8/8 ou próxima) como
+as candidatas mais fortes ao próximo ADR.
+
+- [x] **Pesquisa + desenho de contrato**: workflow com 8 agentes de pesquisa (1 por provider,
+      lotes de 5+3 para respeitar o limite de 5 agents concorrentes) + 1 agente de desenho,
+      produzindo o `ADR-0012` (`docs/adr/0012-capabilities-messages-edit-delete-chats.md`).
+      Decisão central: `messages.edit`/`delete` opcionais em `MessagesApi` (mesmo padrão de
+      `sendReaction`, ADR-0008); novo namespace `ChatsApi` com **`WaAdapter.chats?` OPCIONAL** —
+      deliberadamente diferente do precedente de `groups`/`contacts` (ADR-0009/0010, campos
+      obrigatórios), para manter a mudança 100% aditiva e evitar acionar o gate pós-v1.0 de
+      "issue de discussão prévia + changeset major" do `CONTRIBUTING.md` sem necessidade técnica.
+      10 capabilities novas no enum (40 no total): `messages.edit`, `messages.delete`,
+      `chats.archive/unarchive/mute/unmute/pin/unpin/markRead/markUnread`.
+- [x] **Implementação no core**: `src/core/types.ts` (`EditMessageInput`/`DeleteMessageInput`),
+      `src/core/adapter.ts` (`ChatsApi`, `MessagesApi.edit?`/`delete?`, `WaAdapter.chats?`),
+      `src/core/capabilities.ts` (10 entradas novas), `src/core/connector.ts`
+      (`ConnectorChatsApi`/`callChatsMethod`, `callMessagesMethod` generalizado a partir do guard-
+      rail antes inline de `sendReaction`), `src/testing/mock-adapter.ts` (implementação de
+      referência em memória) — feito diretamente (não via agent), com testes unitários novos em
+      `test/connector.test.ts`/`test/mock-adapter.test.ts`.
+- [x] **Implementação nos 8 adapters**: workflow com 8 agentes (lotes de 5+3), cada um usando seu
+      próprio relatório de pesquisa dedicado. Cobertura final por provider: uazapi/whapi/wppconnect
+      fecharam as 10 capabilities completas (40/40 do total do adapter — só `instance.pairingCode`
+      fora); waha/evolution/zapi fecharam um subconjunto por falta de endpoint inverso confirmado
+      (`unarchive`/`unmute` ausentes no Evolution GO; `mute`/`pin` ausentes no WAHA — só
+      `Channels`/mensagem, não conversa); wuzapi fechou só `edit`/`delete`/`archive`/`unarchive` (4,
+      sem `mute`/`pin`/`markRead` confirmados em código); QuePasa fechou 6 (`edit`/`delete`/
+      `archive`/`unarchive`/`markRead`/`markUnread`) usando rotas **legacy** (mesma família de
+      `/scan`/`/command` já confiável, distinta da v5 canonical recusada na Epic 6 — sem contradição
+      com aquela decisão).
+- [x] **Verificação adversarial** (lotes de 5+3): achou e corrigiu 1 issue **blocker** real (Z-API
+      não tinha implementado `chats.markRead`/`markUnread` apesar de endpoint confirmado em
+      `developer.z-api.io/chats/read-chat` — mesmo `/modify-chat` já usado pelos outros 6 verbos;
+      corrigido, zapi foi de 36/40 para 38/40) e 7 issues **minor** cosméticos (status HTTP de
+      stub, texto de resposta de stub, comentário com afirmação matemática incorreta sobre limite
+      de 32 bits, descrição de shape de resposta desatualizada, alegação sem fonte primária,
+      duplicação de código) — todos corrigidos diretamente.
+- [x] **QA gate completo** rodado do zero após cada rodada de mudança (lint/typecheck/test/
+      coverage/build/smoke/docs:capabilities) — 670 testes passando, cobertura acima dos
+      thresholds. `docs/capabilities.md` regenerado (40 capabilities × 8 providers).
+
 ---
 
 Atualize este arquivo ao concluir cada milestone; o detalhe de *por quê* de cada fase do produto

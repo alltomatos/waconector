@@ -1,4 +1,5 @@
 import type {
+  ChatsApi,
   ContactsApi,
   GroupsApi,
   InstanceApi,
@@ -18,6 +19,8 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  DeleteMessageInput,
+  EditMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -75,6 +78,10 @@ const DEFAULT_BASE_URL = 'https://gate.whapi.cloud';
  * exceto `instance.pairingCode`: `InstanceApi.connect()` não recebe telefone como parâmetro, e o
  * pairing code do Whapi (`GET /users/login/{PhoneNumber}`) exige o telefone no path — mesmo
  * obstáculo estrutural já documentado nos adapters Z-API/uazapi/Wuzapi.
+ *
+ * `messages.edit`/`messages.delete` e as 8 operações de `chats.*` (ADR-0012) foram confirmadas
+ * numa auditoria de gaps dedicada — ver docs/providers/whapi.md, seções "Edição e exclusão de
+ * mensagem" e "Conversas (chats.*)", para o endpoint/confiança de cada uma.
  */
 const WHAPI_CAPABILITIES: CapabilitySet = [
   'instance.connect',
@@ -83,6 +90,8 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'messages.edit',
+  'messages.delete',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -105,6 +114,14 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'contacts.block',
   'contacts.unblock',
   'contacts.listBlocked',
+  'chats.archive',
+  'chats.unarchive',
+  'chats.mute',
+  'chats.unmute',
+  'chats.pin',
+  'chats.unpin',
+  'chats.markRead',
+  'chats.markUnread',
   'webhooks.parse',
 ];
 
@@ -130,6 +147,8 @@ export function whapi(options: WhapiOptions): WaAdapter {
     sendText: (input) => sendText(http, input),
     sendMedia: (input) => sendMedia(http, input),
     sendReaction: (input) => sendReaction(http, input),
+    edit: (input) => editMessage(http, input),
+    delete: (input) => deleteMessage(http, input),
   };
 
   const groups: GroupsApi = {
@@ -160,6 +179,17 @@ export function whapi(options: WhapiOptions): WaAdapter {
     listBlocked: () => listBlockedContacts(http),
   };
 
+  const chats: ChatsApi = {
+    archive: (chatId) => archiveChat(http, chatId),
+    unarchive: (chatId) => unarchiveChat(http, chatId),
+    mute: (chatId) => muteChat(http, chatId),
+    unmute: (chatId) => unmuteChat(http, chatId),
+    pin: (chatId) => pinChat(http, chatId),
+    unpin: (chatId) => unpinChat(http, chatId),
+    markRead: (chatId) => markChatRead(http, chatId),
+    markUnread: (chatId) => markChatUnread(http, chatId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WHAPI_CAPABILITIES,
@@ -167,6 +197,7 @@ export function whapi(options: WhapiOptions): WaAdapter {
     messages,
     groups,
     contacts,
+    chats,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -412,6 +443,55 @@ async function sendReaction(http: HttpClient, input: SendReactionInput): Promise
       ? await http.request<unknown>({ method: 'DELETE', path })
       : await http.request<unknown>({ method: 'PUT', path, body: { emoji: input.emoji } });
   return { id: input.messageId, chatId: to, raw: response };
+}
+
+/**
+ * `messages.edit` (ADR-0012) **não** é um endpoint dedicado — é o mesmo `POST /messages/text`
+ * (`operationId: sendMessageText`, `openapi.yaml:609-676`) usado por `sendText`, reenviado com o
+ * campo `edit` (schema `Sender.edit`, `openapi.yaml:12584-12587`: *"Message ID of the message to
+ * be edited"*) preenchido com `input.messageId`. Este campo faz parte do schema base `Sender`
+ * (`openapi.yaml:12565-12587`), herdado por `SenderText` (`openapi.yaml:8494-8516`,
+ * `allOf: [Sender, MessagePropsText]`) — não é citado em nenhum outro lugar da doc renderizada em
+ * prosa, só no OpenAPI oficial; por isso este achado não está na pesquisa de gaps original
+ * (dedicada à seção "ações sobre mensagem já enviada", que cobre `delete`/`forward`/`markAsRead`/
+ * etc. mas não revisitou o schema de ENVIO). Confiança **alta** mesmo assim: é um campo real,
+ * tipado e com descrição inequívoca, no MESMO endpoint já usado por este adapter — não uma
+ * inferência de nome de rota. Resposta reaproveita `mapSentMessage` (mesmo schema de resposta de
+ * `sendText`, já que é o mesmo endpoint).
+ */
+async function editMessage(http: HttpClient, input: EditMessageInput): Promise<SentMessage> {
+  const to = toWhapiChatId(input.to);
+  const body: Record<string, unknown> = { to, body: input.text, edit: input.messageId };
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: '/messages/text',
+    body,
+  });
+  return mapSentMessage(response, to);
+}
+
+/**
+ * `DELETE /messages/{MessageID}` (`operationId: deleteMessage`, `openapi.yaml:2419-2453`). Sem
+ * corpo nem query — só o `messageId` no path (`input.to` não é enviado; existe em
+ * `DeleteMessageInput` só por simetria com o restante de `messages.*`).
+ *
+ * **Confiança média, não alta** (nuance que a pesquisa de gaps aponta explicitamente): a descrição
+ * literal do endpoint diz *"you will be able to delete a message that you sent as well as a
+ * message that was sent by a contact"* — no protocolo WhatsApp real, apagar a mensagem de OUTRA
+ * pessoa "para todos" não é possível, só localmente. Isso é indício de que este endpoint pode ser
+ * "delete for me" (local), não "revoke for everyone" — mas **não há campo explícito**
+ * (`for_everyone`/`revoke`) no request para confirmar nenhuma das duas leituras; é inferência da
+ * descrição, não citação literal de um flag. `DeleteMessageInput` do contrato canônico (ADR-0012)
+ * não expõe escopo — a semântica assumida por todo o pacote é sempre revogação, na ausência de um
+ * campo que permita escolher; esta nota existe para não perder essa ambiguidade específica do
+ * Whapi caso uma instância real revele o comportamento oposto. Resposta `Success`, ignorada
+ * (contrato exige só `Promise<void>`).
+ */
+async function deleteMessage(http: HttpClient, input: DeleteMessageInput): Promise<void> {
+  await http.request({
+    method: 'DELETE',
+    path: `/messages/${encodeURIComponent(input.messageId)}`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -784,6 +864,112 @@ async function unblockContact(http: HttpClient, chatId: string): Promise<void> {
 async function listBlockedContacts(http: HttpClient): Promise<string[]> {
   const response = await http.request<unknown>({ method: 'GET', path: '/blacklist' });
   return asStringArray(response);
+}
+
+// ---------------------------------------------------------------------------
+// chats.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `chatId` de `chats.*` não é opaco (ADR-0012, mesmo tratamento de `contacts.*`) — já chega
+ * normalizado pelo conector. `ChatID` no OpenAPI Whapi é o MESMO schema usado por `GroupID`/
+ * `ContactID` (JID completo com sufixo `@s.whatsapp.net`/`@g.us`/etc.) — `toWhapiChatId` é a mesma
+ * função identidade reaproveitada de `messages.*`.
+ */
+function chatPath(chatId: string): string {
+  return `/chats/${encodeURIComponent(toWhapiChatId(chatId))}`;
+}
+
+/**
+ * `chats.archive`/`chats.unarchive` via `POST /chats/{ChatID}` (`operationId: archiveChat`,
+ * `openapi.yaml:2833-2870`), corpo `ArchiveChatRequest {archive: boolean}`
+ * (`openapi.yaml:8968-8975`) — toggle único no MESMO endpoint, confirmado no OpenAPI oficial.
+ * Resposta `Success`, ignorada (contrato exige só `Promise<void>`).
+ */
+async function setChatArchived(http: HttpClient, chatId: string, archive: boolean): Promise<void> {
+  await http.request({ method: 'POST', path: chatPath(chatId), body: { archive } });
+}
+
+async function archiveChat(http: HttpClient, chatId: string): Promise<void> {
+  await setChatArchived(http, chatId, true);
+}
+
+async function unarchiveChat(http: HttpClient, chatId: string): Promise<void> {
+  await setChatArchived(http, chatId, false);
+}
+
+/**
+ * `PATCH /chats/{ChatID}` (`operationId: patchChat`, `openapi.yaml:2871-2910`), corpo
+ * `PatchChatRequest` (`openapi.yaml:8976-9002`) — **um único endpoint compartilhado** por
+ * `pin`/`unpin`, `mute`/`unmute` e `markRead`/`markUnread` (mais `ephemeral`, fora do escopo desta
+ * fase). Cada operação canônica envia SÓ o campo que lhe corresponde (nunca os outros, nem como
+ * `undefined` explícito) — mesmo padrão de `updateGroupSubject`/`updateGroupDescription` (que
+ * também compartilham um único `PUT /groups/{GroupID}`), para não sobrescrever silenciosamente um
+ * ajuste que não foi pedido.
+ */
+async function patchChat(
+  http: HttpClient,
+  chatId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  await http.request({ method: 'PATCH', path: chatPath(chatId), body });
+}
+
+/**
+ * `chats.pin`/`chats.unpin` via `PatchChatRequest.pin` (boolean, `openapi.yaml:8980-8983`) — fixa/
+ * desafixa a CONVERSA inteira no topo da lista, sem prazo (diferente de `messages.pin`, que fixa
+ * uma MENSAGEM com uma janela de tempo — `day`/`week`/`month` — e está fora do escopo desta fase,
+ * ver ADR-0012).
+ */
+async function pinChat(http: HttpClient, chatId: string): Promise<void> {
+  await patchChat(http, chatId, { pin: true });
+}
+
+async function unpinChat(http: HttpClient, chatId: string): Promise<void> {
+  await patchChat(http, chatId, { pin: false });
+}
+
+/**
+ * `chats.markRead`/`chats.markUnread` via `PatchChatRequest.mark_unread` (boolean,
+ * `openapi.yaml:8989-8992`) — marca a CONVERSA inteira como lida/não lida de uma vez, sem precisar
+ * dos ids das mensagens (diferente de `messages.markAsRead`, que atua numa mensagem específica via
+ * `PUT /messages/{MessageID}` e está fora do escopo desta fase, ver ADR-0012). `markRead` envia
+ * `mark_unread: false`; `markUnread` envia `mark_unread: true` — mapeamento invertido do nome do
+ * campo, deliberado (o provider modela o booleano como "está não-lido?", não "está lido?").
+ */
+async function markChatRead(http: HttpClient, chatId: string): Promise<void> {
+  await patchChat(http, chatId, { mark_unread: false });
+}
+
+async function markChatUnread(http: HttpClient, chatId: string): Promise<void> {
+  await patchChat(http, chatId, { mark_unread: true });
+}
+
+/**
+ * Sentinela de "silenciar por muito tempo" usada por `muteChat` — 1º de janeiro de 2099 (UTC), em
+ * ms. `ChatsApi.mute`/`unmute` do contrato canônico não recebem duração (ADR-0012: nenhum formato
+ * de duração converge entre os providers pesquisados), mas `PatchChatRequest.mute_until`
+ * (`openapi.yaml:8984-8988`) do Whapi É um timestamp Unix em ms — "Use 0 to unmute the chat", sem
+ * nenhum valor sentinela documentado para "permanente". Esta constante é uma DECISÃO deste
+ * adapter (mesmo espírito do `muteEndTime: -1` do adapter uazapi, que usa o enum nativo do
+ * provider para o equivalente), não um default do provider — escolhida por ser uma data distante o
+ * bastante para ser, na prática, indistinguível de "para sempre", mas ainda um `integer` de 64 bits
+ * válido dentro da faixa seguramente representável por um `number` do JavaScript (`Number.
+ * MAX_SAFE_INTEGER`). **Nota**: este valor NÃO cabe num inteiro de 32 bits (nem em ms, nem
+ * convertido para segundos) — se o backend do Whapi armazenar `mute_until` como um inteiro de 32
+ * bits em algum ponto (não confirmado), esta sentinela poderia dar overflow lá; não há evidência
+ * disso na doc, mas fica registrado para quem for revisar. Consumidores que precisem de uma
+ * duração específica (ex.: "8 horas") só têm essa granularidade via chamada direta ao provider,
+ * fora do contrato canônico.
+ */
+const WHAPI_MUTE_FOREVER_MS = Date.UTC(2099, 0, 1);
+
+async function muteChat(http: HttpClient, chatId: string): Promise<void> {
+  await patchChat(http, chatId, { mute_until: WHAPI_MUTE_FOREVER_MS });
+}
+
+async function unmuteChat(http: HttpClient, chatId: string): Promise<void> {
+  await patchChat(http, chatId, { mute_until: 0 });
 }
 
 // ---------------------------------------------------------------------------

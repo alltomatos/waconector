@@ -321,6 +321,30 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'POST' && pathname === '/chat/send/edit') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Sent', Timestamp: 1751000003, Id: 'contrato-msg-editado' },
+      });
+    }
+
+    if (method === 'POST' && pathname === '/chat/delete') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Deleted', Timestamp: 1751000004, Id: 'contrato-msg-apagada' },
+      });
+    }
+
+    if (method === 'POST' && pathname === '/chat/archive') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { success: true, message: 'Chat archived' },
+      });
+    }
+
     throw new Error(`fetchStub (wuzapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -753,6 +777,114 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
     });
 
     expect(capturedBody?.Body).toBe('remove');
+  });
+
+  it('messages.edit envia { Phone, Body, Id } para POST /chat/send/edit e mapeia a resposta (Id ecoado, sem novo id)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/send/edit') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const edited = await wa.messages.edit({
+      to: '5511999999999',
+      messageId: 'contrato-msg-editado',
+      text: 'texto editado',
+    });
+
+    expect(capturedBody).toEqual({
+      Phone: '5511999999999',
+      Body: 'texto editado',
+      Id: 'contrato-msg-editado',
+    });
+    expect(edited.id).toBe('contrato-msg-editado');
+    expect(edited.chatId).toBe('5511999999999');
+    expect(edited.timestamp).toBe(1751000003 * 1000);
+    expect(edited).toHaveProperty('raw');
+  });
+
+  it('messages.delete envia { Phone, Id } para POST /chat/delete (sempre revogação/"apagar para todos") e ignora a resposta', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/delete') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.messages.delete({
+      to: '5511999999999',
+      messageId: 'contrato-msg-apagada',
+    });
+
+    expect(capturedBody).toEqual({ Phone: '5511999999999', Id: 'contrato-msg-apagada' });
+    expect(result).toBeUndefined();
+  });
+
+  it('chats.archive envia { jid, archive: true } (tags minúsculas) para POST /chat/archive, completando o sufixo @s.whatsapp.net quando o chatId vem em dígitos crus', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/archive') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.chats?.archive?.('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ jid: '5511999999999@s.whatsapp.net', archive: true });
+  });
+
+  it('chats.unarchive usa o MESMO endpoint POST /chat/archive com archive: false, repassando um JID explícito intacto', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/archive') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.chats?.unarchive?.('5511999999999@s.whatsapp.net')).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ jid: '5511999999999@s.whatsapp.net', archive: false });
+  });
+
+  it('não declara chats.mute/unmute/pin/unpin/markRead/markUnread (sem endpoint equivalente confirmado no código-fonte para o contrato canônico)', () => {
+    const adapter = wuzapi(buildAdapterOptions());
+
+    expect(adapter.capabilities).not.toContain('chats.mute');
+    expect(adapter.capabilities).not.toContain('chats.unmute');
+    expect(adapter.capabilities).not.toContain('chats.pin');
+    expect(adapter.capabilities).not.toContain('chats.unpin');
+    expect(adapter.capabilities).not.toContain('chats.markRead');
+    expect(adapter.capabilities).not.toContain('chats.markUnread');
+    expect(adapter.chats?.mute).toBeUndefined();
+    expect(adapter.chats?.pin).toBeUndefined();
+    expect(adapter.chats?.markRead).toBeUndefined();
   });
 
   it('parseWebhook normaliza evento "Message" (modo json) para message.received', () => {

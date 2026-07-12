@@ -113,6 +113,52 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, envelope({ message: 'Reaction sended' }));
     }
 
+    if (method === 'POST' && suffix === '/edit-message') {
+      // Resposta BARE (não array) — este endpoint não passa pelo middleware statusConnection
+      // (ver docs/providers/wppconnect.md).
+      return jsonResponse(
+        200,
+        envelope({
+          id: 'true_5511999999999@c.us_3EB0FAKECONTRATOTXT',
+          body: 'contrato: texto editado',
+          type: 'chat',
+          t: 1751000020,
+          timestamp: 1751000020,
+          chatId: '5511999999999@c.us',
+          fromMe: true,
+        }),
+      );
+    }
+
+    if (method === 'POST' && suffix === '/delete-message') {
+      return jsonResponse(200, envelope({ message: 'Message deleted' }));
+    }
+
+    if (method === 'POST' && suffix === '/archive-chat') {
+      return jsonResponse(200, envelope({ wid: '5511999999999@c.us', archive: true }));
+    }
+
+    if (method === 'POST' && suffix === '/pin-chat') {
+      return jsonResponse(200, envelope({ message: 'Chat fixed' }));
+    }
+
+    if (method === 'POST' && suffix === '/send-mute') {
+      return jsonResponse(200, envelope({ type: 'sendMute', time: 87600, timeType: 'hours' }));
+    }
+
+    if (method === 'POST' && suffix === '/mark-unseen') {
+      return jsonResponse(200, envelope({ message: 'unseen checked' }));
+    }
+
+    if (method === 'POST' && suffix === '/send-seen') {
+      // Terceira exceção de envelope confirmada no dossiê: "S" maiúsculo, payload dois níveis
+      // abaixo (response.data) — não afeta o adapter (resposta ignorada, contrato retorna void).
+      return jsonResponse(201, {
+        status: 'Success',
+        response: { message: 'ok', contact: '5511999999999', session: SESSION, data: null },
+      });
+    }
+
     if (method === 'POST' && suffix === '/create-group') {
       // Shape real do controller: {message, group, groupInfo: [{name, id, participants}]} — id/
       // name ficam ANINHADOS em groupInfo[0], não diretamente em response (ver dossiê).
@@ -1219,6 +1265,255 @@ describe('wppconnect adapter: comportamento específico do provider', () => {
     const blocked = await wa.contacts.listBlocked();
 
     expect(blocked).toEqual(['5511988887777']);
+  });
+
+  it('messages.edit envia { id, newText } para POST /edit-message (sem phone/isGroup) e mapeia a resposta BARE (sem array)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/edit-message`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const edited = await wa.messages.edit({
+      to: '5511999999999',
+      messageId: 'true_5511999999999@c.us_3EB0FAKECONTRATOTXT',
+      text: 'contrato: texto editado',
+    });
+
+    expect(capturedBody).toEqual({
+      id: 'true_5511999999999@c.us_3EB0FAKECONTRATOTXT',
+      newText: 'contrato: texto editado',
+    });
+    expect(capturedBody?.phone).toBeUndefined();
+    expect(edited.id).toBe('true_5511999999999@c.us_3EB0FAKECONTRATOTXT');
+    expect(edited.chatId).toBe('5511999999999@c.us');
+    expect(edited.timestamp).toBe(1751000020 * 1000);
+  });
+
+  it('messages.delete envia { phone, isGroup, messageId, onlyLocal: false } para POST /delete-message (revogação sempre para todos)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/delete-message`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.delete({
+        to: '5511999999999',
+        messageId: 'true_5511999999999@c.us_3EB0FAKECONTRATOTXT',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({
+      phone: '5511999999999',
+      isGroup: false,
+      messageId: 'true_5511999999999@c.us_3EB0FAKECONTRATOTXT',
+      onlyLocal: false,
+    });
+  });
+
+  it('chats.archive envia { phone, isGroup, value: true } para POST /archive-chat', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/archive-chat`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.archive('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ phone: '5511999999999', isGroup: false, value: true });
+  });
+
+  it('chats.unarchive envia { phone, isGroup, value: false } no MESMO endpoint /archive-chat (toggle)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/archive-chat`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.unarchive('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ phone: '5511999999999', isGroup: false, value: false });
+  });
+
+  it('chats.pin envia state como STRING "true" (não booleano) para POST /pin-chat — workaround do bug confirmado (state === \'true\')', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/pin-chat`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.pin('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBody?.state).toBe('true');
+    expect(typeof capturedBody?.state).toBe('string');
+  });
+
+  it('chats.unpin envia state como STRING "false" (não booleano) para POST /pin-chat', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/pin-chat`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.unpin('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBody?.state).toBe('false');
+    expect(typeof capturedBody?.state).toBe('string');
+  });
+
+  it('chats.mute envia { phone, isGroup, time, type: "hours" } para POST /send-mute (duração escolhida pelo adapter, sem "year" bugado)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-mute`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.mute('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({
+      phone: '5511999999999',
+      isGroup: false,
+      time: 24 * 365 * 10,
+      type: 'hours',
+    });
+  });
+
+  it('chats.unmute OMITE time/type de propósito (cai no branch de remoção confirmado no dossiê)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-mute`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.unmute('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ phone: '5511999999999', isGroup: false });
+    expect(capturedBody?.time).toBeUndefined();
+    expect(capturedBody?.type).toBeUndefined();
+  });
+
+  it('chats.markUnread envia { phone, isGroup } para POST /mark-unseen', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/mark-unseen`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.markUnread('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ phone: '5511999999999', isGroup: false });
+  });
+
+  it('chats.markRead envia { phone, isGroup } para POST /send-seen e ignora a resposta mesmo com o envelope de "S" maiúsculo', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/send-seen`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.markRead('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ phone: '5511999999999', isGroup: false });
+  });
+
+  it('chats.archive/pin/mute usam o chatId de grupo extraindo a parte local do JID (isGroup:true, evitando sufixo duplicado)', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (
+            url.pathname === `${API_PREFIX}/archive-chat` ||
+            url.pathname === `${API_PREFIX}/pin-chat` ||
+            url.pathname === `${API_PREFIX}/send-mute`
+          ) {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const groupChatId = '120363000000000000@g.us';
+    await wa.chats.archive(groupChatId);
+    await wa.chats.pin(groupChatId);
+    await wa.chats.mute(groupChatId);
+
+    for (const body of capturedBodies) {
+      expect(body.phone).toBe('120363000000000000');
+      expect(body.isGroup).toBe(true);
+    }
   });
 
   it('parseWebhook normaliza "onmessage" (texto) para message.received', () => {

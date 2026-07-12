@@ -1,4 +1,5 @@
 import type {
+  ChatsApi,
   ContactsApi,
   GroupsApi,
   InstanceApi,
@@ -14,6 +15,8 @@ import { HttpClient } from '../../core/http';
 import type {
   ConnectResult,
   ContactProfilePicture,
+  DeleteMessageInput,
+  EditMessageInput,
   GroupInviteLink,
   InstanceState,
   InstanceStatus,
@@ -102,14 +105,32 @@ const PROVIDER = 'quepasa';
  *   instância consegue obter um JWT (e portanto se esta API v5 é alcançável a partir do modelo deste
  *   contrato) NÃO foi verificado. Ver
  *   docs/providers/quepasa.md#capabilities-confirmadas-mas-não-implementadas-nesta-fase.
+ * - `messages.edit`/`messages.delete` e `chats.archive`/`chats.unarchive`/`chats.markRead`/
+ *   `chats.markUnread` (ADR-0012): declaradas nesta fase — TODAS vivem na família de rotas
+ *   **legacy** (`legacy.RegisterAPIControllers`, aliases `""`/`/current`/`/v4`, a MESMA família de
+ *   `/scan` e `/command` já usada por este adapter), registrada num grupo de rotas separado do v5
+ *   "canonical" e que **nunca** passa por `jwtauth.Verifier`/`AuthenticatedAPIHandler` — ao
+ *   contrário de `groups.*`/`contacts.*`/`sendReaction` acima, nenhum gate de JWT bloqueia estas.
+ *   `chats.mute`/`chats.unmute`/`chats.pin`/`chats.unpin` NÃO são declaradas: a pesquisa dedicada
+ *   desta rodada não encontrou nenhum endpoint equivalente no código-fonte (busca exaustiva pelas
+ *   rotas legacy e v5) — só um efeito colateral documentado de `chats.archive` ("archiving also
+ *   unpins the chat automatically"), não um endpoint dedicado de pin/unpin. Ver
+ *   docs/providers/quepasa.md#edição-e-exclusão-de-mensagem e
+ *   docs/providers/quepasa.md#conversas-chats.
  */
 const QUEPASA_CAPABILITIES: CapabilitySet = [
   'instance.status',
   'instance.logout',
   'messages.sendText',
   'messages.sendMedia',
+  'messages.edit',
+  'messages.delete',
   'groups.getInviteLink',
   'contacts.getProfilePicture',
+  'chats.archive',
+  'chats.unarchive',
+  'chats.markRead',
+  'chats.markUnread',
   'webhooks.parse',
 ];
 
@@ -138,6 +159,8 @@ export function quepasa(options: QuepasaOptions): WaAdapter {
   const messages: MessagesApi = {
     sendText: (input) => sendText(http, options.token, input),
     sendMedia: (input) => sendMedia(http, options.token, input),
+    edit: (input) => editMessage(http, input),
+    delete: (input) => deleteMessage(http, input),
   };
 
   // Só o único endpoint de grupo confirmado pela pesquisa (ver QUEPASA_CAPABILITIES acima).
@@ -150,6 +173,15 @@ export function quepasa(options: QuepasaOptions): WaAdapter {
     getProfilePicture: (chatId) => getContactProfilePicture(http, options.token, chatId),
   };
 
+  // Ver ADR-0012 e QUEPASA_CAPABILITIES acima: `mute`/`unmute`/`pin`/`unpin` ficam de fora —
+  // nenhum endpoint equivalente confirmado pela pesquisa dedicada desta rodada.
+  const chats: ChatsApi = {
+    archive: (chatId) => setChatArchived(http, chatId, true),
+    unarchive: (chatId) => setChatArchived(http, chatId, false),
+    markRead: (chatId) => setChatRead(http, chatId, true),
+    markUnread: (chatId) => setChatRead(http, chatId, false),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: QUEPASA_CAPABILITIES,
@@ -157,6 +189,7 @@ export function quepasa(options: QuepasaOptions): WaAdapter {
     messages,
     groups,
     contacts,
+    chats,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -394,11 +427,82 @@ async function sendMedia(
  * `requestedChatId`/id sintético quando o campo aninhado `message` não vem (nunca lança).
  */
 function mapSendResponse(body: unknown, requestedChatId: string): SentMessage {
+  return extractMessageEnvelope(body, `quepasa-${Date.now()}`, requestedChatId);
+}
+
+/**
+ * Extrai `{id, chatId}` do envelope `{message: {id, chatId}}` comum a `mapSendResponse`/
+ * `mapEditResponse` — cada chamador decide o fallback (id sintético novo para envio, o próprio
+ * `messageId`/`chatId` requisitado para edição, que não gera mensagem nova). Nunca lança.
+ */
+function extractMessageEnvelope(
+  body: unknown,
+  fallbackId: string,
+  fallbackChatId: string,
+): SentMessage {
   const record = asRecord(body);
   const message = record ? asRecord(record.message) : undefined;
-  const id = (message ? asString(message.id) : undefined) ?? `quepasa-${Date.now()}`;
-  const chatId = (message ? asString(message.chatId) : undefined) ?? requestedChatId;
+  const id = (message ? asString(message.id) : undefined) ?? fallbackId;
+  const chatId = (message ? asString(message.chatId) : undefined) ?? fallbackChatId;
   return { id, chatId, timestamp: undefined, raw: body };
+}
+
+/**
+ * `PUT /edit` (legacy — mesma família de rotas de `/scan`/`/command`, aliases `""`/`/current`/
+ * `/v4`; ver ADR-0012 e a nota em `QUEPASA_CAPABILITIES`). Corpo confirmado por struct
+ * (`edit_message_request.go`, `EditMessageRequest{MessageId, Content}`):
+ * `{"messageId": "...", "content": "..."}` — `content` é o NOVO texto (`EditMessageInput.text`).
+ *
+ * Internamente (`src/models/server_messaging.go` → `whatsmeow_connection.go`) monta um
+ * `waE2E.Message{Conversation: &newContent}` e chama `BuildEdit(jid, msg.GetId(), textMessage)` do
+ * whatsmeow — é uma edição REAL do protocolo (mesma família de `BuildRevoke`, ver `deleteMessage`
+ * abaixo), não um "editar só localmente". **Sem validação de janela de tempo no código**: nem o
+ * handler nem `Edit()` checam nenhum prazo antes de despachar a edição — um eventual limite de
+ * ~15min do WhatsApp real, se existir, só se manifestaria como comportamento silencioso do lado do
+ * destinatário (a chamada HTTP "sucede" de qualquer forma), nunca validado client-side.
+ *
+ * **Resposta confirmada**: `QpResponse` padrão (`{"success": true, "status": "message edited
+ * successfully"}`) — SEM um campo `message` aninhado com id/chatId (diferente de `sendtext`/
+ * `sendurl`/`sendencoded`). `mapEditResponse` ainda checa defensivamente por esse campo (mesmo
+ * formato de `mapSendResponse`), mas o fallback aqui é o PRÓPRIO `messageId`/`chatId` requisitados
+ * — não um id sintético novo (editar não gera uma mensagem nova).
+ */
+async function editMessage(http: HttpClient, input: EditMessageInput): Promise<SentMessage> {
+  const chatId = toQuepasaChatId(input.to);
+  const response = await http.request<unknown>({
+    method: 'PUT',
+    path: '/edit',
+    body: { messageId: input.messageId, content: input.text },
+  });
+  return mapEditResponse(response, chatId, input.messageId);
+}
+
+/** Ver `editMessage` acima — mesmo formato defensivo de `mapSendResponse`, fallback em `messageId`/`requestedChatId`. */
+function mapEditResponse(body: unknown, requestedChatId: string, messageId: string): SentMessage {
+  return extractMessageEnvelope(body, messageId, requestedChatId);
+}
+
+/**
+ * `DELETE /message/{messageid}` (legacy — mesma família de aliases de `editMessage` acima). Corpo
+ * vazio; o id vai no path (`RevokeController`, `api_handlers+MessageController.go`).
+ *
+ * Internamente (`whatsmeow_connection.go`) chama `BuildRevoke(jid, participantJid, msg.GetId())` do
+ * whatsmeow — o protocolo PADRÃO de "delete for everyone": dispara um frame real de revogação para
+ * o chat, não é um "apagar só localmente". **Nuance confirmada por código**
+ * (`server_messaging.go`): mensagens de sistema (`SystemMessageType`) NÃO podem ser revogadas —
+ * `Revoke`/`RevokeByPrefix` retornam erro explícito `"system messages cannot be revoked"` antes de
+ * sequer chamar o whatsmeow (se o provider propagar isso como erro HTTP não-2xx, o `HttpClient`
+ * deste adapter já traduz para `WaConnectorError` normalmente). Também não há validação de janela
+ * de tempo — mesma ressalva de `editMessage`.
+ *
+ * **Resposta confirmada**: `QpResponse` (`{"success": true, "status": "revoked with success"}`) —
+ * inteiramente ignorada, contrato retorna `Promise<void>`.
+ */
+async function deleteMessage(http: HttpClient, input: DeleteMessageInput): Promise<void> {
+  await http.request({
+    method: 'DELETE',
+    path: `/message/${encodeURIComponent(input.messageId)}`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +561,73 @@ async function getContactProfilePicture(
   const record = asRecord(response);
   const info = record ? asRecord(record.info) : undefined;
   return { url: info ? asString(info.url) : undefined, raw: response };
+}
+
+// ---------------------------------------------------------------------------
+// chats.* (ver ADR-0012; só as 4 operações confirmadas pela pesquisa dedicada desta rodada)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /chat/archive` (legacy — mesma família de aliases de `editMessage`/`deleteMessage`).
+ * Corpo confirmado por struct (`api_handlers+ChatArchiveController.go`, `ChatArchiveRequest{ChatId,
+ * Archive}`): `{"chatid": "...", "archive": true|false}` — **atenção de nomenclatura**: tag JSON
+ * minúscula `chatid` (sem "I" maiúsculo), diferente de `chatId` usado por `sendtext`/`sendurl`/
+ * `sendencoded` neste MESMO provider. `archive` é um booleano: o mesmo endpoint cobre as duas
+ * direções (`chats.archive` com `true`, `chats.unarchive` com `false`) — mesmo padrão de endpoint
+ * único reaproveitado por parâmetro já usado por outros adapters deste pacote (ex.: Wuzapi).
+ *
+ * **Nuance documentada no próprio comentário do Swagger do handler**: arquivar um chat fixado
+ * (pinned) o desafixa automaticamente como efeito colateral — não existe endpoint dedicado de
+ * pin/unpin no código (por isso `chats.pin`/`chats.unpin` não são declaradas nesta fase).
+ *
+ * Mesma base técnica de `chats.markRead`/`chats.markUnread` abaixo (App State Protocol via
+ * `whatsmeow.ArchiveChat`) — portanto sujeita ao MESMO bug conhecido de conflito 409/"mismatching
+ * LTHash" (`tulir/whatsmeow#858`) documentado na seção de `chats.markRead` abaixo; o QuePasa não
+ * faz retry automático, repassa o erro diretamente.
+ *
+ * **Resposta confirmada**: `{"success": true, "status": "chat ...@s.whatsapp.net archived
+ * successfully"}` (ou `"unarchived successfully"`) — inteiramente ignorada, contrato retorna
+ * `Promise<void>` para as duas operações.
+ */
+async function setChatArchived(http: HttpClient, chatId: string, archive: boolean): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/chat/archive',
+    body: { chatid: toQuepasaChatId(chatId), archive },
+  });
+}
+
+/**
+ * `POST /chat/markread` / `POST /chat/markunread` (legacy — mesma família de aliases). Corpo
+ * confirmado por **documentação de primeira mão do mantenedor** (`docs/CHAT_MANAGEMENT.md`, citada
+ * literalmente, não reconstruída): `{"chatid": "5511999999999"}` — mesma tag minúscula `chatid` de
+ * `chats.archive` acima (não `chatId`).
+ *
+ * **Nível de CHAT, não de mensagem**: distinto de um eventual `messages.markRead` futuro (marcar
+ * mensagens específicas por id, protocolo de receipt) — este endpoint marca a badge de não-lida do
+ * chat INTEIRO via **App State Protocol** (`appstate.BuildMarkChatAsRead`, mesmo mecanismo de
+ * sincronização multi-dispositivo usado por `chats.archive` acima). Handler
+ * (`api_handlers+ChatReadController.go`) valida `chatid`, formata via `whatsapp.FormatEndpoint`
+ * (mesma normalização usada por `sendtext`) e checa `server.GetStatus() == Ready` antes de chamar
+ * `MarkChatAsRead`/`MarkChatAsUnread` (senão `503`).
+ *
+ * **Nuance crítica, documentada pelo próprio mantenedor (não é suposição deste adapter)**:
+ * `docs/CHAT_MANAGEMENT.md` documenta um **bug conhecido do whatsmeow (upstream,
+ * `tulir/whatsmeow#858`, "mismatching LTHash")** que causa erros `409 conflict` intermitentes nesta
+ * família de operação (App State). O QuePasa **não faz retry automático** — repassa o erro
+ * diretamente ("Current Implementation Strategy: return errors directly to the user without
+ * automatic retry"). Um consumidor deste adapter que precisar tolerar esse conflito precisaria
+ * implementar sua própria lógica de retry.
+ *
+ * **Resposta confirmada**: `{"success": true, "message": "chat ...@s.whatsapp.net marked as
+ * read"}` — inteiramente ignorada, contrato retorna `Promise<void>` para as duas operações.
+ */
+async function setChatRead(http: HttpClient, chatId: string, read: boolean): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: read ? '/chat/markread' : '/chat/markunread',
+    body: { chatid: toQuepasaChatId(chatId) },
+  });
 }
 
 // ---------------------------------------------------------------------------

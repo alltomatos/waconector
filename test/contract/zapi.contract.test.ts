@@ -242,6 +242,19 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { value: true });
     }
 
+    // messages.edit (retrofit ADR-0012) reaproveita o MESMO endpoint/stub de sendText acima
+    // (`POST /send-text`, com `editMessageId` extra no corpo) — sem rota nova aqui.
+
+    // messages.delete (retrofit ADR-0012): único DELETE da API, params em query string, 204 vazio.
+    if (method === 'DELETE' && pathname === `${PREFIX}/messages`) {
+      return new Response(null, { status: 204 });
+    }
+
+    // chats.* (retrofit ADR-0012): as 8 ações dividem o mesmo endpoint POST /modify-chat.
+    if (method === 'POST' && pathname === `${PREFIX}/modify-chat`) {
+      return jsonResponse(200, { value: true });
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1507,6 +1520,100 @@ describe('zapi adapter: comportamento específico do provider', () => {
     expect(requestedPath).toBe(`${PREFIX}/contacts/modify-blocked`);
     expect(capturedBody?.phone).toBe('5511999999999');
     expect(capturedBody?.action).toBe('unblock');
+    expect(result).toBeUndefined();
+  });
+
+  it('messages.edit reaproveita POST /send-text com {phone, message, editMessageId} e mapeia a resposta como SentMessage', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    let requestedPath: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/send-text`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const edited = await wa.messages.edit({
+      to: '5511999999999',
+      messageId: '3EB0ORIGINAL',
+      text: 'texto editado',
+    });
+
+    expect(requestedPath).toBe(`${PREFIX}/send-text`);
+    expect(capturedBody?.phone).toBe('5511999999999');
+    expect(capturedBody?.message).toBe('texto editado');
+    expect(capturedBody?.editMessageId).toBe('3EB0ORIGINAL');
+    expect(edited.id).toBe('3EB0FAKE0000000000TEXT');
+    expect(edited.chatId).toBe('5511999999999');
+  });
+
+  it('messages.delete chama DELETE .../messages com {messageId, phone, owner:true} em query string (sem corpo)', async () => {
+    let requestedUrl: URL | undefined;
+    let requestedMethod: string | undefined;
+    let requestedBody: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/messages`) {
+            requestedUrl = url;
+            requestedMethod = (init?.method ?? 'GET').toUpperCase();
+            requestedBody = init?.body === undefined ? undefined : String(init.body);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.messages.delete({
+      to: '5511999999999',
+      messageId: '3EB0ORIGINAL',
+    });
+
+    expect(requestedMethod).toBe('DELETE');
+    expect(requestedUrl?.searchParams.get('messageId')).toBe('3EB0ORIGINAL');
+    expect(requestedUrl?.searchParams.get('phone')).toBe('5511999999999');
+    expect(requestedUrl?.searchParams.get('owner')).toBe('true');
+    expect(requestedBody).toBeUndefined();
+    expect(result).toBeUndefined();
+  });
+
+  it.each([
+    ['archive', 'archive'],
+    ['unarchive', 'unarchive'],
+    ['mute', 'mute'],
+    ['unmute', 'unmute'],
+    ['pin', 'pin'],
+    ['unpin', 'unpin'],
+    ['markRead', 'read'],
+    ['markUnread', 'unread'],
+  ] as const)('chats.%s chama POST /modify-chat com {phone, action:"%s"}', async (method, action) => {
+    let capturedBody: Record<string, unknown> | undefined;
+    let requestedPath: string | undefined;
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/modify-chat`) {
+            requestedPath = url.pathname;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.chats[method]('5511999999999');
+
+    expect(requestedPath).toBe(`${PREFIX}/modify-chat`);
+    expect(capturedBody?.phone).toBe('5511999999999');
+    expect(capturedBody?.action).toBe(action);
     expect(result).toBeUndefined();
   });
 

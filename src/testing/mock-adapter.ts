@@ -1,4 +1,5 @@
 import type {
+  ChatsApi,
   ContactsApi,
   GroupsApi,
   InstanceApi,
@@ -49,6 +50,7 @@ export class MockAdapter implements WaAdapter {
   readonly messages: MessagesApi;
   readonly groups: GroupsApi;
   readonly contacts: ContactsApi;
+  readonly chats: ChatsApi;
 
   private state: InstanceState;
   private seq = 0;
@@ -58,6 +60,10 @@ export class MockAdapter implements WaAdapter {
   private readonly groupIdByInviteCode = new Map<string, string>();
   private readonly contactsById = new Map<string, Contact>();
   private readonly blockedIds = new Set<string>();
+  private readonly archivedChatIds = new Set<string>();
+  private readonly mutedChatIds = new Set<string>();
+  private readonly pinnedChatIds = new Set<string>();
+  private readonly unreadChatIds = new Set<string>();
 
   constructor(options: MockAdapterOptions = {}) {
     this.provider = options.provider ?? 'mock';
@@ -79,6 +85,19 @@ export class MockAdapter implements WaAdapter {
       sendText: async (input) => this.deliver(input),
       sendMedia: async (input) => this.deliver(input),
       sendReaction: async (input) => this.deliver(input),
+      edit: async (input) => {
+        this.assertConnected();
+        return {
+          id: input.messageId,
+          chatId: input.to,
+          timestamp: Date.now(),
+          raw: { mock: true, input },
+        };
+      },
+      delete: async (input) => {
+        this.assertConnected();
+        void input;
+      },
     };
 
     this.groups = {
@@ -218,6 +237,61 @@ export class MockAdapter implements WaAdapter {
         return Array.from(this.blockedIds);
       },
     };
+
+    this.chats = {
+      archive: async (chatId) => {
+        this.assertConnected();
+        this.archivedChatIds.add(chatId);
+      },
+      unarchive: async (chatId) => {
+        this.assertConnected();
+        this.archivedChatIds.delete(chatId);
+      },
+      mute: async (chatId) => {
+        this.assertConnected();
+        this.mutedChatIds.add(chatId);
+      },
+      unmute: async (chatId) => {
+        this.assertConnected();
+        this.mutedChatIds.delete(chatId);
+      },
+      pin: async (chatId) => {
+        this.assertConnected();
+        this.pinnedChatIds.add(chatId);
+      },
+      unpin: async (chatId) => {
+        this.assertConnected();
+        this.pinnedChatIds.delete(chatId);
+      },
+      markRead: async (chatId) => {
+        this.assertConnected();
+        this.unreadChatIds.delete(chatId);
+      },
+      markUnread: async (chatId) => {
+        this.assertConnected();
+        this.unreadChatIds.add(chatId);
+      },
+    };
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `ChatsApi`). */
+  isChatArchived(chatId: string): boolean {
+    return this.archivedChatIds.has(chatId);
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `ChatsApi`). */
+  isChatMuted(chatId: string): boolean {
+    return this.mutedChatIds.has(chatId);
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `ChatsApi`). */
+  isChatPinned(chatId: string): boolean {
+    return this.pinnedChatIds.has(chatId);
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `ChatsApi`). */
+  isChatUnread(chatId: string): boolean {
+    return this.unreadChatIds.has(chatId);
   }
 
   simulateConnected(): void {

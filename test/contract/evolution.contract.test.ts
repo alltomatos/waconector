@@ -88,6 +88,15 @@ function createFetchStub(): typeof globalThis.fetch {
         },
       });
     }
+    if (method === 'POST' && url.pathname === '/message/edit') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: { messageId: '3EB0FAKE0000000000EDIT', timestamp: '2026-07-12T10:00:00-03:00' },
+      });
+    }
+    if (method === 'POST' && url.pathname === '/message/delete') {
+      return jsonResponse(200, { message: 'success' });
+    }
     if (method === 'DELETE' && url.pathname === '/instance/logout') {
       return jsonResponse(200, { message: 'success' });
     }
@@ -258,6 +267,18 @@ function createFetchStub(): typeof globalThis.fetch {
           JIDs: ['5511999999999@s.whatsapp.net', '5511988887777@s.whatsapp.net'],
         },
       });
+    }
+    if (method === 'POST' && url.pathname === '/chat/archive') {
+      return jsonResponse(200, { message: 'success' });
+    }
+    if (method === 'POST' && url.pathname === '/chat/mute') {
+      return jsonResponse(200, { message: 'success' });
+    }
+    if (method === 'POST' && url.pathname === '/chat/pin') {
+      return jsonResponse(200, { message: 'success' });
+    }
+    if (method === 'POST' && url.pathname === '/chat/unpin') {
+      return jsonResponse(200, { message: 'success' });
     }
 
     throw new Error(`fetchStub (evolution): rota não configurada ${method} ${url.pathname}`);
@@ -1121,6 +1142,187 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
     const blocked = await wa.contacts.listBlocked();
 
     expect(blocked).toEqual(['5511999999999@s.whatsapp.net', '5511988887777@s.whatsapp.net']);
+  });
+
+  it('messages.edit envia POST /message/edit com {chat, message, messageId} e normaliza SentMessage', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/message/edit') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const edited = await wa.messages.edit({
+      to: '5511999999999',
+      messageId: '3EB0FAKE0000000000TEXT',
+      text: 'texto editado',
+    });
+
+    // campo do novo texto é "message" (não "text"/"caption") — desvio de nomenclatura confirmado
+    // no OpenAPI oficial (schema EditMessage).
+    expect(capturedBody).toEqual({
+      chat: '5511999999999',
+      message: 'texto editado',
+      messageId: '3EB0FAKE0000000000TEXT',
+    });
+    expect(edited.id).toBe('3EB0FAKE0000000000EDIT');
+    expect(edited.chatId).toBe('5511999999999');
+    expect(edited).toHaveProperty('raw');
+  });
+
+  it('messages.delete envia POST /message/delete com {chat, messageId} (sempre revogação/"apagar para todos")', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/message/delete') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.messages.delete({
+      to: '5511999999999',
+      messageId: '3EB0FAKE0000000000TEXT',
+    });
+
+    expect(capturedBody).toEqual({
+      chat: '5511999999999',
+      messageId: '3EB0FAKE0000000000TEXT',
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it('chats.archive envia POST /chat/archive com {number}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/chat/archive') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.chats.archive('5511999999999');
+
+    expect(capturedBody).toEqual({ number: '5511999999999' });
+    expect(result).toBeUndefined();
+  });
+
+  it('chats.mute envia POST /chat/mute com {number}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/chat/mute') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.chats.mute('5511999999999');
+
+    expect(capturedBody).toEqual({ number: '5511999999999' });
+    expect(result).toBeUndefined();
+  });
+
+  it('chats.pin envia POST /chat/pin com {number}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/chat/pin') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.chats.pin('5511999999999');
+
+    expect(capturedBody).toEqual({ number: '5511999999999' });
+    expect(result).toBeUndefined();
+  });
+
+  it('chats.unpin envia POST /chat/unpin com {number}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/chat/unpin') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const result = await wa.chats.unpin('5511999999999');
+
+    expect(capturedBody).toEqual({ number: '5511999999999' });
+    expect(result).toBeUndefined();
+  });
+
+  it('chats.* declara só archive/mute/pin/unpin — sem unarchive/unmute/markRead/markUnread (sem endpoint confirmado no OpenAPI oficial, ver docs/providers/evolution.md)', () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+
+    expect(adapter.capabilities).toEqual(
+      expect.arrayContaining(['chats.archive', 'chats.mute', 'chats.pin', 'chats.unpin']),
+    );
+    expect(adapter.capabilities).not.toEqual(
+      expect.arrayContaining([
+        'chats.unarchive',
+        'chats.unmute',
+        'chats.markRead',
+        'chats.markUnread',
+      ]),
+    );
+
+    expect(typeof adapter.chats?.archive).toBe('function');
+    expect(typeof adapter.chats?.mute).toBe('function');
+    expect(typeof adapter.chats?.pin).toBe('function');
+    expect(typeof adapter.chats?.unpin).toBe('function');
+    expect(adapter.chats?.unarchive).toBeUndefined();
+    expect(adapter.chats?.unmute).toBeUndefined();
+    expect(adapter.chats?.markRead).toBeUndefined();
+    expect(adapter.chats?.markUnread).toBeUndefined();
   });
 
   it('parseWebhook normaliza evento "Message" de imagem e popula media.url a partir da chave "URL" (maiúscula)', () => {

@@ -7,6 +7,8 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  DeleteMessageInput,
+  EditMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipantsInput,
@@ -56,6 +58,10 @@ export interface MessagesApi {
    * `messages.sendReaction` (nem todo provider expõe reação programática). Ver ADR-0008.
    */
   sendReaction?(input: SendReactionInput): Promise<SentMessage>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.edit`. Ver ADR-0012. */
+  edit?(input: EditMessageInput): Promise<SentMessage>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.delete`. Ver ADR-0012. */
+  delete?(input: DeleteMessageInput): Promise<void>;
 }
 
 /**
@@ -98,6 +104,29 @@ export interface ContactsApi {
 }
 
 /**
+ * Namespace de gestão de ESTADO da conversa (arquivar, silenciar, fixar, marcar como lida) — ver
+ * ADR-0012. Distinto de `messages.*` (ação sobre UMA mensagem) e de `groups.*`/`contacts.*`
+ * (metadados/participantes/perfil). Todo método é opcional, mesmo padrão de `GroupsApi`/
+ * `ContactsApi` (ADR-0009/0010).
+ *
+ * `chatId` NÃO é opaco (diferente de `GroupInfo.id`) — é o mesmo chatId canônico de
+ * `messages.*`/`contacts.*`, normalizado pelo conector via `normalizeChatId`.
+ */
+export interface ChatsApi {
+  archive?(chatId: string): Promise<void>;
+  unarchive?(chatId: string): Promise<void>;
+  /** Silenciar notificações da conversa. Duração fica fora do contrato canônico nesta fase — ver ADR-0012. */
+  mute?(chatId: string): Promise<void>;
+  unmute?(chatId: string): Promise<void>;
+  /** Fixa a CONVERSA no topo da lista — distinto de fixar uma mensagem dentro do chat (fora de escopo, ver ADR-0012). */
+  pin?(chatId: string): Promise<void>;
+  unpin?(chatId: string): Promise<void>;
+  /** Marca a conversa INTEIRA como lida — distinto de marcar uma mensagem por id (fora de escopo, ver ADR-0012). */
+  markRead?(chatId: string): Promise<void>;
+  markUnread?(chatId: string): Promise<void>;
+}
+
+/**
  * Contrato que todo adapter de provider implementa.
  *
  * O adapter é "burro" de propósito: apenas traduz o modelo canônico de/para o
@@ -111,5 +140,12 @@ export interface WaAdapter {
   readonly messages: MessagesApi;
   readonly groups: GroupsApi;
   readonly contacts: ContactsApi;
+  /**
+   * Namespace OPCIONAL — diferente de `groups`/`contacts` (ADR-0009/0010, campo obrigatório mesmo
+   * com todo método interno opcional). Ver ADR-0012 para a justificativa da divergência: mudança
+   * aditiva (evita o gate de breaking change pós-v1.0 do CONTRIBUTING.md) + cobertura por provider
+   * real demais irregular para justificar um campo mandatório.
+   */
+  readonly chats?: ChatsApi;
   parseWebhook(input: WebhookInput): CanonicalEvent[];
 }

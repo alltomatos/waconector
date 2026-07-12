@@ -92,6 +92,54 @@ describe('capabilities no conector', () => {
     expect(unblockFailure).toBeInstanceOf(UnsupportedCapabilityError);
     const listBlockedFailure = await reject(wa.contacts.listBlocked());
     expect(listBlockedFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const editFailure = await reject(
+      wa.messages.edit({ to: '5585999999999', messageId: 'm1', text: 'novo texto' }),
+    );
+    expect(editFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const deleteFailure = await reject(
+      wa.messages.delete({ to: '5585999999999', messageId: 'm1' }),
+    );
+    expect(deleteFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const archiveFailure = await reject(wa.chats.archive('5585999999999'));
+    expect(archiveFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const unarchiveFailure = await reject(wa.chats.unarchive('5585999999999'));
+    expect(unarchiveFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const muteFailure = await reject(wa.chats.mute('5585999999999'));
+    expect(muteFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const unmuteFailure = await reject(wa.chats.unmute('5585999999999'));
+    expect(unmuteFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const pinFailure = await reject(wa.chats.pin('5585999999999'));
+    expect(pinFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const unpinFailure = await reject(wa.chats.unpin('5585999999999'));
+    expect(unpinFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const markReadFailure = await reject(wa.chats.markRead('5585999999999'));
+    expect(markReadFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const markUnreadFailure = await reject(wa.chats.markUnread('5585999999999'));
+    expect(markUnreadFailure).toBeInstanceOf(UnsupportedCapabilityError);
+  });
+
+  it('adapter que declara messages.edit sem implementar o método falha com PROVIDER_ERROR', async () => {
+    const adapter = new MockAdapter({ capabilities: ['messages.edit', 'webhooks.parse'] });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (capability declarada sem método) para testar o guard-rail do conector.
+    (adapter.messages as any).edit = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(
+      wa.messages.edit({ to: '5585999999999', messageId: 'm1', text: 'novo texto' }),
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('adapter que declara chats.archive mas não implementa o namespace chats inteiro falha com PROVIDER_ERROR (nunca TypeError)', async () => {
+    const adapter = new MockAdapter({ capabilities: ['chats.archive', 'webhooks.parse'] });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (chats inteiro ausente, mesmo com a capability declarada) para testar o guard-rail do conector.
+    (adapter as any).chats = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.chats.archive('5585999999999'));
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
 
   it('adapter que declara messages.sendReaction sem implementar o método falha com PROVIDER_ERROR (bug do adapter, não entrada inválida)', async () => {
@@ -329,6 +377,85 @@ describe('validação e normalização de contacts.*', () => {
 
     await wa.contacts.unblock('+55 (85) 99999-9999');
     expect(await wa.contacts.listBlocked()).toEqual([]);
+  });
+});
+
+describe('validação e normalização de messages.edit/delete', () => {
+  it('rejeita messageId vazio em messages.edit/delete com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const editFailure = await reject(
+      wa.messages.edit({ to: '5585999999999', messageId: '', text: 'novo texto' }),
+    );
+    expect(isWaConnectorError(editFailure) && editFailure.code === 'INVALID_INPUT').toBe(true);
+
+    const deleteFailure = await reject(wa.messages.delete({ to: '5585999999999', messageId: '' }));
+    expect(isWaConnectorError(deleteFailure) && deleteFailure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('rejeita text vazio em messages.edit com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(
+      wa.messages.edit({ to: '5585999999999', messageId: 'm1', text: '' }),
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('normaliza o destinatário antes de entregar ao adapter, em messages.edit e messages.delete', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const edited = await wa.messages.edit({
+      to: '+55 (85) 99999-9999',
+      messageId: 'm1',
+      text: 'novo texto',
+    });
+    expect(edited.chatId).toBe('5585999999999');
+    expect(edited.id).toBe('m1');
+
+    await expect(
+      wa.messages.delete({ to: '+55 (85) 99999-9999', messageId: 'm1' }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('validação e normalização de chats.*', () => {
+  it('rejeita chatId vazio nos 8 métodos de chats.* com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () => wa.chats.archive(''),
+      () => wa.chats.unarchive(''),
+      () => wa.chats.mute(''),
+      () => wa.chats.unmute(''),
+      () => wa.chats.pin(''),
+      () => wa.chats.unpin(''),
+      () => wa.chats.markRead(''),
+      () => wa.chats.markUnread(''),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+    }
+  });
+
+  it('normaliza chatId (telefone vira só-dígitos) antes de entregar ao adapter — mesmo tratamento de contacts.*', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    await wa.chats.archive('+55 (85) 99999-9999');
+    expect(adapter.isChatArchived('5585999999999')).toBe(true);
+
+    await wa.chats.unarchive('+55 (85) 99999-9999');
+    expect(adapter.isChatArchived('5585999999999')).toBe(false);
   });
 });
 

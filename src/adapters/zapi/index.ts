@@ -1,4 +1,5 @@
 import type {
+  ChatsApi,
   ContactsApi,
   GroupsApi,
   InstanceApi,
@@ -18,6 +19,8 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  DeleteMessageInput,
+  EditMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -89,6 +92,8 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'messages.edit',
+  'messages.delete',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -110,6 +115,14 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'contacts.getAbout',
   'contacts.block',
   'contacts.unblock',
+  'chats.archive',
+  'chats.unarchive',
+  'chats.mute',
+  'chats.unmute',
+  'chats.pin',
+  'chats.unpin',
+  'chats.markRead',
+  'chats.markUnread',
   'webhooks.parse',
 ];
 
@@ -147,6 +160,8 @@ export function zapi(options: ZapiOptions): WaAdapter {
     sendText: (input) => sendText(http, prefix, input),
     sendMedia: (input) => sendMedia(http, prefix, input),
     sendReaction: (input) => sendReaction(http, prefix, input),
+    edit: (input) => editMessage(http, prefix, input),
+    delete: (input) => deleteMessage(http, prefix, input),
   };
 
   const groups: GroupsApi = {
@@ -182,6 +197,23 @@ export function zapi(options: ZapiOptions): WaAdapter {
     // diferente da lista de contatos efetivamente bloqueados. Ver docs/providers/zapi.md#contatos.
   };
 
+  const chats: ChatsApi = {
+    archive: (chatId) => modifyChat(http, prefix, chatId, 'archive'),
+    unarchive: (chatId) => modifyChat(http, prefix, chatId, 'unarchive'),
+    mute: (chatId) => modifyChat(http, prefix, chatId, 'mute'),
+    unmute: (chatId) => modifyChat(http, prefix, chatId, 'unmute'),
+    pin: (chatId) => modifyChat(http, prefix, chatId, 'pin'),
+    unpin: (chatId) => modifyChat(http, prefix, chatId, 'unpin'),
+    // `markRead`/`markUnread`: mesmo endpoint `/modify-chat`, ação `read`/`unread` — confirmado na
+    // doc oficial (`developer.z-api.io/chats/read-chat`, "Ler chats": "responsável por realizar a
+    // ação de ler um chat como um todo, ou também marcar um chat como não lido"), mesmo shape
+    // `{ phone, action }` -> `{ value: true }` dos outros 6 verbos deste endpoint. Achado corrigido
+    // na verificação adversarial de 2026-07-12 (o relatório de pesquisa original não tinha
+    // encontrado esta página, que fica no mesmo diretório `docs/chats/` já citado acima).
+    markRead: (chatId) => modifyChat(http, prefix, chatId, 'read'),
+    markUnread: (chatId) => modifyChat(http, prefix, chatId, 'unread'),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: ZAPI_CAPABILITIES,
@@ -189,6 +221,7 @@ export function zapi(options: ZapiOptions): WaAdapter {
     messages,
     groups,
     contacts,
+    chats,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -480,6 +513,67 @@ async function sendReaction(
     body,
   });
   return mapSentMessage(response, phone);
+}
+
+/**
+ * `messages.edit` — MESMO endpoint de `messages.sendText` (`POST /send-text`), com o campo opcional
+ * `editMessageId` no corpo (candidata confiança Alta no relatório de pesquisa dedicada de
+ * capabilities novas, 2026-07-12 — já citado en passant no dossiê original como campo "não exposto
+ * pelo contrato atual", ver docs/providers/zapi.md#operações-core). Body: `{ phone, message,
+ * editMessageId }` — reaproveita 100% o mecanismo/resposta de `sendText` (`mapSentMessage`, mesmo
+ * shape `{ zaapId, messageId, id }`).
+ *
+ * **Pré-requisito documentado explicitamente pela Z-API**: "É necessário configurar o webhook antes
+ * de editar" — sem um webhook de recebimento configurado na instância, a doc afirma que a edição
+ * não é aplicada. O adapter não valida isso (não há como checar de dentro de uma chamada HTTP
+ * isolada); se a instância não tiver webhook configurado, a chamada provavelmente é aceita (200) mas
+ * sem efeito real no WhatsApp — **não confirmado contra uma instância real** nesta pesquisa. Também
+ * não confirmado se a Z-API preserva o `messageId` original (comportamento do WhatsApp oficial) ou
+ * gera um novo, nem se há janela de tempo para editar. Ver docs/providers/zapi.md#edição-e-exclusão-
+ * de-mensagem.
+ */
+async function editMessage(
+  http: HttpClient,
+  prefix: string,
+  input: EditMessageInput,
+): Promise<SentMessage> {
+  const phone = toZapiPhone(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: `${prefix}/send-text`,
+    body: { phone, message: input.text, editMessageId: input.messageId },
+  });
+  return mapSentMessage(response, phone);
+}
+
+/**
+ * `messages.delete` — `DELETE /messages` (confiança Média no relatório de pesquisa dedicada,
+ * 2026-07-12: único endpoint `DELETE` de toda a superfície Z-API pesquisada, com os parâmetros em
+ * QUERY STRING em vez de corpo — incomum para um verbo que permite body). Query: `{ messageId,
+ * phone, owner }`. Resposta `204` sem corpo — contrato retorna `void`.
+ *
+ * **Decisão de mapeamento não óbvia**: `owner` (booleano) indica se a mensagem original foi enviada
+ * PELA própria instância (`true`) ou recebida (`false`) — a doc não expõe esse dado como algo
+ * derivável de `DeleteMessageInput` (que só carrega `to`/`messageId`, sem indicar quem enviou a
+ * mensagem original — ver ADR-0012, que também não modela escopo/`onlyLocal` no contrato canônico).
+ * Este adapter sempre envia `owner: true`: a semântica assumida por `messages.delete` no contrato é
+ * "sempre revogação" (apagar para todos, ADR-0012), e no protocolo real do WhatsApp só é possível
+ * revogar/apagar-para-todos uma mensagem que a própria conta enviou (apagar uma mensagem recebida só
+ * teria efeito "local", fora do que este contrato modela). **Não validado contra uma instância
+ * real**: a doc não esclarece se `owner` de fato controla o escopo da exclusão ou se é só metadado —
+ * se uma chamada real mostrar comportamento diferente para mensagens com `fromMe: false`, revisitar.
+ */
+async function deleteMessage(
+  http: HttpClient,
+  prefix: string,
+  input: DeleteMessageInput,
+): Promise<void> {
+  const phone = toZapiPhone(input.to);
+  await http.request({
+    method: 'DELETE',
+    path: `${prefix}/messages`,
+    query: { messageId: input.messageId, phone, owner: true },
+  });
 }
 
 /**
@@ -974,6 +1068,42 @@ async function blockContact(http: HttpClient, prefix: string, chatId: string): P
 
 async function unblockContact(http: HttpClient, prefix: string, chatId: string): Promise<void> {
   await setContactBlocked(http, prefix, chatId, 'unblock');
+}
+
+// ---------------------------------------------------------------------------
+// chats.* (ver ADR-0012)
+// ---------------------------------------------------------------------------
+//
+// Oito operações de "modificar conversa" dividem o MESMO endpoint (`POST /modify-chat`),
+// discriminadas só pelo campo `action` — candidatas confiança Média-Alta no relatório de pesquisa
+// dedicada de capabilities novas (2026-07-12), mesmo padrão "um endpoint, N verbos" já usado por
+// `contacts.block`/`unblock` acima. `chatId` NÃO é opaco (diferente de `groupId`, ver seção
+// groups.* acima) — mesmo chatId canônico de `messages.*`/`contacts.*`, por isso reaproveita
+// `toZapiPhone` (ADR-0012, ponto 4). Resposta confirmada `{ value: true }` em todos os 8 casos —
+// ignorada, contrato exige apenas `Promise<void>`.
+
+type ZapiChatAction =
+  | 'archive'
+  | 'unarchive'
+  | 'mute'
+  | 'unmute'
+  | 'pin'
+  | 'unpin'
+  | 'read'
+  | 'unread';
+
+async function modifyChat(
+  http: HttpClient,
+  prefix: string,
+  chatId: string,
+  action: ZapiChatAction,
+): Promise<void> {
+  const phone = toZapiPhone(chatId);
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/modify-chat`,
+    body: { phone, action },
+  });
 }
 
 // ---------------------------------------------------------------------------

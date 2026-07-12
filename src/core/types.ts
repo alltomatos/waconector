@@ -115,6 +115,30 @@ export interface SendReactionInput {
   emoji: string;
 }
 
+/** Ver ADR-0012. */
+export interface EditMessageInput {
+  to: string;
+  /** ID da mensagem original a ser editada. */
+  messageId: string;
+  /**
+   * Novo texto da mensagem. Alguns providers também aceitam editar a legenda de uma mídia já
+   * enviada — não confirmado de forma uniforme entre providers, então o contrato canônico só
+   * assume texto; cada adapter documenta no próprio dossiê se aceita mais que isso.
+   */
+  text: string;
+}
+
+/**
+ * Ver ADR-0012. Semântica é sempre revogação ("apagar para todos") — nenhum campo de escopo
+ * (`onlyLocal`/`forEveryone`) nesta fase: só um provider pesquisado confirma essa distinção em
+ * código, os demais não têm alternativa "local" confirmada.
+ */
+export interface DeleteMessageInput {
+  to: string;
+  /** ID da mensagem a ser apagada. */
+  messageId: string;
+}
+
 /** Participante de um grupo, normalizado. Ver ADR-0009. */
 export interface GroupParticipant {
   /** Telefone E.164 sem `+` ou JID explícito — mesma convenção de chatId de mensagem. */

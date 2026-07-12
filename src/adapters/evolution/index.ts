@@ -1,4 +1,5 @@
 import type {
+  ChatsApi,
   ContactsApi,
   GroupsApi,
   InstanceApi,
@@ -24,6 +25,8 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  DeleteMessageInput,
+  EditMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -85,6 +88,8 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'messages.edit',
+  'messages.delete',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -107,6 +112,10 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'contacts.block',
   'contacts.unblock',
   'contacts.listBlocked',
+  'chats.archive',
+  'chats.mute',
+  'chats.pin',
+  'chats.unpin',
   'webhooks.parse',
 ];
 
@@ -132,6 +141,8 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     sendText: (input) => sendText(http, input),
     sendMedia: (input) => sendMedia(http, input),
     sendReaction: (input) => sendReaction(http, input),
+    edit: (input) => editMessage(http, input),
+    delete: (input) => deleteMessage(http, input),
   };
 
   const groups: GroupsApi = {
@@ -162,6 +173,24 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     listBlocked: () => listBlockedContacts(http),
   };
 
+  /**
+   * `chats.unarchive`/`chats.mute`/`chats.markRead`/`chats.markUnread` deliberadamente ausentes:
+   * a pesquisa dedicada (`evo-go-chat.yaml`) confirma `POST /chat/archive`/`/chat/mute` mas NÃO
+   * encontra `/chat/unarchive` nem `/chat/unmute` no OpenAPI oficial do provider — declarar essas
+   * duas capabilities seria mentir sobre um suporte não confirmado (mesmo critério já usado para
+   * `contacts.block`/`unblock` — aqui só metade do par existe). `chats.markRead`/`markUnread`
+   * (nível de CHAT, ver ADR-0012) também não têm endpoint confirmado: o único endpoint de
+   * "marcar como lida" encontrado (`POST /message/markread`) opera por lista de `messageId`, é o
+   * `messages.markRead` fora de escopo desta ADR — ver docs/providers/evolution.md, seção
+   * "Conversas (chats.*)".
+   */
+  const chats: ChatsApi = {
+    archive: (chatId) => archiveChat(http, chatId),
+    mute: (chatId) => muteChat(http, chatId),
+    pin: (chatId) => pinChat(http, chatId),
+    unpin: (chatId) => unpinChat(http, chatId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: EVOLUTION_CAPABILITIES,
@@ -169,6 +198,7 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     messages,
     groups,
     contacts,
+    chats,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -373,6 +403,57 @@ async function sendReaction(http: HttpClient, input: SendReactionInput): Promise
     body,
   });
   return toSentMessage(input.to, response);
+}
+
+/**
+ * `POST /message/edit` (confirmado via OpenAPI oficial `evo-go-message.yaml`, schema `EditMessage`
+ * — confiança Alta, ver relatório de pesquisa dedicada de capabilities novas, 2026-07-12). Corpo:
+ * `{chat, message, messageId}` — **atenção de nomenclatura**: o novo texto vai no campo `message`,
+ * não `text`(diferente de `/send/text`) nem `caption`. Resposta:
+ * `{"message":"success","data":{"messageId":"...","timestamp":"..."}}` — um envelope **próprio**,
+ * diferente do `{data:{Info:{...}}}` usado por `/send/text`/`/send/media`/`/message/react` (ver
+ * `toSentMessage`), por isso este adapter usa um mapeamento dedicado em vez de reaproveitar aquela
+ * função. Sem janela de tempo documentada para editar (o spec não valida um prazo — um eventual
+ * limite de ~15min do WhatsApp real, se existir, só se manifestaria como erro HTTP em runtime). Ver
+ * docs/providers/evolution.md, seção "Edição e exclusão de mensagem".
+ */
+async function editMessage(http: HttpClient, input: EditMessageInput): Promise<SentMessage> {
+  const response = await http.request<EvolutionEnvelope>({
+    method: 'POST',
+    path: '/message/edit',
+    body: {
+      chat: toProviderNumber(input.to),
+      message: input.text,
+      messageId: input.messageId,
+    },
+  });
+
+  const data = asRecord(response.data);
+  return {
+    id: asString(data?.messageId) ?? input.messageId,
+    chatId: input.to,
+    timestamp: toEpochMs(data?.timestamp),
+    raw: response,
+  };
+}
+
+/**
+ * `POST /message/delete` (confirmado via OpenAPI oficial `evo-go-message.yaml`, schema `Message:
+ * {chat, messageId}` — confiança Alta). A própria descrição do endpoint no spec é literalmente
+ * "Delete a message for everyone" — ou seja, **sempre** revogação para todos os participantes,
+ * nunca um "apagar só localmente" (coerente com `DeleteMessageInput` do contrato canônico, que não
+ * carrega nenhum campo de escopo — ver ADR-0012). Resposta `{"message":"success"}`, sem `data`; a
+ * operação canônica retorna `Promise<void>`, então basta disparar a chamada.
+ */
+async function deleteMessage(http: HttpClient, input: DeleteMessageInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/message/delete',
+    body: {
+      chat: toProviderNumber(input.to),
+      messageId: input.messageId,
+    },
+  });
 }
 
 function toSentMessage(to: string, response: EvolutionEnvelope): SentMessage {
@@ -876,6 +957,58 @@ async function listBlockedContacts(http: HttpClient): Promise<string[]> {
 
   const data = asRecord(response.data);
   return asStringArray(data?.JIDs);
+}
+
+// ---------------------------------------------------------------------------
+// chats.* (ver ADR-0012)
+// ---------------------------------------------------------------------------
+
+/**
+ * Os 4 endpoints de `evo-go-chat.yaml` compartilham o mesmo schema `ChatBody: {number: string}` —
+ * mesmo formato do campo `number` de `/send/text`/`/message/react` (dígitos crus ou JID completo),
+ * então cada operação de `chats.*` é só um `POST` fino com esse corpo comum. Confirmado via OpenAPI
+ * oficial (confiança Alta), pesquisa dedicada de 2026-07-12 — ver docs/providers/evolution.md,
+ * seção "Conversas (chats.*)".
+ */
+function chatBody(chatId: string): Record<string, unknown> {
+  return { number: toProviderNumber(chatId) };
+}
+
+/**
+ * `chats.archive` via `POST /chat/archive`. Resposta `{"message":"success"}`. **Não existe**
+ * `/chat/unarchive` no OpenAPI oficial do provider — por isso este adapter declara só
+ * `chats.archive`, nunca `chats.unarchive` (ver comentário em cima de `ChatsApi` na fábrica
+ * `evolution()`).
+ */
+async function archiveChat(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({ method: 'POST', path: '/chat/archive', body: chatBody(chatId) });
+}
+
+/**
+ * `chats.mute` via `POST /chat/mute`. Corpo `{number}` — **sem nenhum campo de duração** (nem
+ * `duration`/`until`/`hours`), diferente de outros providers do waconector que suportam mute
+ * "por 8h/1 semana/sempre" — aqui o schema só identifica o chat, sugerindo mute permanente/
+ * indefinido. Sem formato de duração convergente entre providers, o contrato canônico
+ * (`ChatsApi.mute`) também não recebe esse parâmetro (ver ADR-0012), então isso não é uma limitação
+ * própria deste adapter. **Não existe** `/chat/unmute` no OpenAPI oficial — mesma ausência de
+ * `archive`/`unarchive`, por isso `chats.unmute` também não é declarado.
+ */
+async function muteChat(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({ method: 'POST', path: '/chat/mute', body: chatBody(chatId) });
+}
+
+/** `chats.pin` via `POST /chat/pin`. Corpo `{number}`. Resposta `{"message":"success"}`. */
+async function pinChat(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({ method: 'POST', path: '/chat/pin', body: chatBody(chatId) });
+}
+
+/**
+ * `chats.unpin` via `POST /chat/unpin`. Corpo `{number}`. **Diferente** de `archive`/`mute`, o par
+ * pin/unpin está COMPLETO no OpenAPI oficial (os dois endpoints existem), então este é o único par
+ * simétrico de `chats.*` implementado por este adapter.
+ */
+async function unpinChat(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({ method: 'POST', path: '/chat/unpin', body: chatBody(chatId) });
 }
 
 // ---------------------------------------------------------------------------

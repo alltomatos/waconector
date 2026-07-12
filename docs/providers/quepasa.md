@@ -37,13 +37,18 @@
 - Hospedagem: self-hosted (Docker/docker-compose). Sem SaaS gerenciado conhecido.
 
 > **Escopo desta fase**: `instance.status`, `instance.logout` (soft-stop, ver seção dedicada),
-> `messages.sendText`, `messages.sendMedia`, `groups.getInviteLink`, `contacts.getProfilePicture`,
-> `webhooks.parse`. **`instance.connect` e `instance.pairingCode` deliberadamente NÃO
-> implementadas** (limitação técnica real, não apenas de escopo — ver
-> "`instance.connect` — achado crítico" abaixo). `messages.sendReaction` e o restante de
-> `groups.*`/`contacts.*` TÊM endpoints confirmados numa API v5 mais recente, mas atrás de um
+> `messages.sendText`, `messages.sendMedia`, `messages.edit`, `messages.delete`,
+> `groups.getInviteLink`, `contacts.getProfilePicture`, `chats.archive`, `chats.unarchive`,
+> `chats.markRead`, `chats.markUnread`, `webhooks.parse`. **`instance.connect` e
+> `instance.pairingCode` deliberadamente NÃO implementadas** (limitação técnica real, não apenas de
+> escopo — ver "`instance.connect` — achado crítico" abaixo). `messages.sendReaction` e o restante
+> de `groups.*`/`contacts.*` TÊM endpoints confirmados numa API v5 mais recente, mas atrás de um
 > modelo de autenticação (JWT de usuário) incompatível com o token por instância usado por este
-> adapter — ver "Capabilities confirmadas mas não implementadas nesta fase" ao final.
+> adapter — ver "Capabilities confirmadas mas não implementadas nesta fase" ao final. `messages.edit`/
+> `messages.delete`/`chats.*` (ADR-0012) usam a família de rotas **legacy** (mesma de `/scan`/
+> `/command`), que nunca passa por esse gate de JWT — ver seção dedicada logo abaixo de
+> "Modelo de instância/sessão". `chats.mute`/`chats.unmute`/`chats.pin`/`chats.unpin` NÃO foram
+> declaradas (nenhum endpoint equivalente encontrado).
 
 ## Autenticação
 
@@ -242,6 +247,201 @@ func (conn *WhatsmeowConnection) Delete() (err error) {
 sessão ativa de fato — um efeito real, só que num grau mais fraco do que "logout" normalmente
 implica. `logoutInstance()` chama `GET /command?action=stop`.
 
+## Capabilities implementadas nesta fase (ADR-0012: edição/exclusão de mensagem + `chats.*`)
+
+`messages.edit`, `messages.delete`, `chats.archive`, `chats.unarchive`, `chats.markRead`,
+`chats.markUnread`.
+
+**Achado estrutural que muda o cálculo de risco em relação ao restante deste dossiê**: TODAS as
+seis operações acima vivem na família de rotas **legacy** (`legacy.RegisterAPIControllers`, aliases
+`""`/`/current`/`/v4` — a MESMA família de `/scan` e `/command`, já usada por este adapter). Essa
+família é registrada num `r.Group(...)` **separado** do grupo v5 "canonical" (`src/api/api.go`,
+função `Configure`) e **nunca passa** por `jwtauth.Verifier`/`AuthenticatedAPIHandler`. Ou seja, ao
+contrário de `groups.*`/`contacts.*`/`messages.sendReaction` (já documentados acima como bloqueados
+por JWT), tudo abaixo usa **exatamente o mesmo mecanismo de auth que este adapter já implementa**
+(`X-QUEPASA-TOKEN`, resolvido só por `GetServer(r)` → token → registro em `servers`) — nenhum campo
+novo em `QuepasaOptions` foi necessário.
+
+Fonte: pesquisa dedicada feita contra o mesmo mirror já usado no restante deste dossiê
+(`deivisonrpg/quepasa`, commit `17c3b10bac751346ca4d6c3514839ea60e8d73ce`, 2026-07-07T17:56:12Z),
+via leitura direta de código-fonte (`gh api`/`gh search code`) — o repositório oficial
+(`nocodeleaks/quepasa`) segue bloqueado por DMCA (ver topo deste dossiê). Todas as citações abaixo
+são trechos literais de arquivos reais desse snapshot, não reconstruções.
+
+## Edição e exclusão de mensagem
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.edit` | `PUT /edit` | Corpo `{messageId, content}`. Ver subseção dedicada abaixo. |
+| `messages.delete` | `DELETE /message/{messageid}` | Sem corpo — id vai no path. Ver subseção dedicada abaixo. |
+
+### `messages.edit` — `PUT /edit`
+
+Rota confirmada em `legacy/routes.go`: `r.Put(endpoint+"/edit", ...EditMessageController)`. Corpo
+confirmado por struct (`edit_message_request.go`, citado por completo):
+
+```go
+type EditMessageRequest struct {
+	MessageId string `json:"messageId"` // Required: Message ID to edit
+	Content   string `json:"content"`   // New content for the message
+}
+```
+
+O handler (`api_handlers+MessageController.go`) decodifica o body, valida `content`/`messageId`
+não-vazios, resolve o server pelo token e chama `server.Edit(request.MessageId, request.Content)`.
+
+**Implementação real** (`src/models/server_messaging.go` → `src/whatsmeow/whatsmeow_connection.go`,
+linhas 287-312), citada por completo:
+
+```go
+func (source *WhatsmeowConnection) Edit(msg whatsapp.IWhatsappMessage, newContent string) error {
+	...
+	textMessage := &waE2E.Message{Conversation: &newContent}
+	editMessage := source.Client.BuildEdit(jid, msg.GetId(), textMessage)
+	_, err = source.Client.SendMessage(context.Background(), jid, editMessage)
+	...
+}
+```
+
+`BuildEdit` é o protocolo REAL de edição do whatsmeow (mesma família de `BuildRevoke`, ver
+`messages.delete` abaixo) — não é um "editar só localmente".
+
+**Resposta**: envelope `QpResponse` padrão (`{"success": true, "status": "message edited
+successfully"}`) — SEM um campo `message` aninhado com id/chatId (diferente das respostas de
+`sendtext`/`sendurl`/`sendencoded`). Este adapter mapeia para `SentMessage` com fallback no próprio
+`messageId`/`chatId` requisitados (não um id sintético novo — editar não gera uma mensagem nova).
+
+**Nuance importante (confiança média)**: nem o handler nem `Edit()` verificam nenhuma janela de
+tempo antes de mandar a edição — o WhatsApp real limita edição a ~15 minutos após o envio
+(comportamento conhecido do protocolo, aplicado do lado do WhatsApp/destinatário, não deste
+código). Uma edição fora da janela provavelmente não lança erro aqui (a chamada HTTP "sucede"), mas
+o destinatário real pode simplesmente ignorá-la — não verificado contra tráfego real.
+
+### `messages.delete` (revoke) — `DELETE /message/{messageid}`
+
+Rota confirmada nos aliases legacy: `DELETE /message/{messageid}` e `DELETE /message` (id via
+query/header como fallback). Também há uma variante "por prefixo" (`RevokeByPrefix`, ativada pelo
+parâmetro `messageidasprefix`, default `true` — `GetMessageIdAsPrefix`), não usada por este adapter
+(a chamada de id exato já cobre o contrato canônico).
+
+O handler (`api_handlers+MessageController.go`, `RevokeController`) resolve `messageid`
+(path/query/header, com fallback de compatibilidade `?id=` da v3) e chama `server.Revoke(messageid)`
+ou `server.RevokeByPrefix(messageid)`.
+
+**Implementação real** — confirma que é "apagar para todos" de verdade, não local
+(`whatsmeow_connection.go:261-284`):
+
+```go
+func (source *WhatsmeowConnection) Revoke(msg whatsapp.IWhatsappMessage) error {
+	...
+	newMessage := source.Client.BuildRevoke(jid, participantJid, msg.GetId())
+	_, err = source.Client.SendMessage(context.Background(), jid, newMessage)
+	...
+}
+```
+
+`BuildRevoke` é o protocolo padrão do whatsmeow para "delete for everyone" — dispara um frame real
+de revogação para o chat, não é um "apagar só localmente".
+
+**Nuance confirmada por código** (`server_messaging.go`): mensagens de sistema
+(`SystemMessageType`) **não podem** ser revogadas — `Revoke`/`RevokeByPrefix` retornam erro
+explícito `"system messages cannot be revoked"` antes de sequer chamar o whatsmeow. Se o provider
+propagar isso como um HTTP não-2xx, o `HttpClient` deste adapter já traduz para `WaConnectorError`
+normalmente (nenhum tratamento especial foi adicionado neste adapter para esse caso).
+
+**Resposta**: `QpResponse` (`{"success": true, "status": "revoked with success"}`) — inteiramente
+ignorada, contrato retorna `Promise<void>`.
+
+**Confiança**: Alta para o mecanismo (delete-for-everyone real, restrição de mensagens de sistema).
+Nenhuma janela de tempo é validada neste código — o WhatsApp real também limita revogação a uma
+janela (historicamente ampliada, hoje generosa), não verificado contra tráfego real qual o
+comportamento em caso de mensagem muito antiga.
+
+## Conversas (`chats.*`)
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `chats.archive` | `POST /chat/archive` (`archive: true`) | Ver subseção dedicada abaixo. |
+| `chats.unarchive` | `POST /chat/archive` (`archive: false`) | MESMO endpoint de `chats.archive`. |
+| `chats.markRead` | `POST /chat/markread` | Ver subseção dedicada abaixo. |
+| `chats.markUnread` | `POST /chat/markunread` | MESMO corpo de `chats.markRead`, endpoint irmão. |
+
+`chats.mute`/`chats.unmute`/`chats.pin`/`chats.unpin` **não** foram declaradas — a pesquisa dedicada
+desta rodada não encontrou nenhum endpoint equivalente no código-fonte (legacy nem v5). O único
+achado relacionado a "pin" é um efeito colateral documentado de `chats.archive` (ver abaixo), não um
+endpoint dedicado.
+
+### `chats.archive`/`chats.unarchive` — `POST /chat/archive`, endpoint único com parâmetro booleano
+
+Corpo confirmado por struct (`api_handlers+ChatArchiveController.go`, citada):
+
+```go
+type ChatArchiveRequest struct {
+	ChatId  string `json:"chatid"`
+	Archive bool   `json:"archive"` // true = arquivar, false = desarquivar
+}
+```
+
+**Atenção de nomenclatura**: a tag JSON é `chatid` (minúsculo, sem "I" maiúsculo) — diferente de
+`chatId` usado por `sendtext`/`sendurl`/`sendencoded` neste MESMO provider. `archive` é um
+booleano: o mesmo endpoint cobre as duas direções (`true` = `chats.archive`, `false` =
+`chats.unarchive`).
+
+**Nuance documentada no próprio comentário do Swagger do handler**: *"Archiving also unpins the
+chat automatically"* — arquivar um chat fixado (pinned) o desafixa automaticamente como efeito
+colateral, sem endpoint dedicado para isso (por isso `chats.pin`/`chats.unpin` não são declaradas
+nesta fase — não há um endpoint próprio a mapear).
+
+Mesma base técnica de `chats.markRead`/`chats.markUnread` abaixo (App State Protocol via
+`whatsmeow.ArchiveChat`), portanto **sujeita ao mesmo bug conhecido de conflito 409/LTHash**
+documentado na próxima subseção.
+
+**Resposta**: `{"success": true, "status": "chat ...@s.whatsapp.net archived successfully"}` (ou
+`"unarchived successfully"`) — inteiramente ignorada, contrato retorna `Promise<void>` para as duas
+operações.
+
+**Confiança**: Alta.
+
+### `chats.markRead`/`chats.markUnread` — `POST /chat/markread` / `POST /chat/markunread`
+
+**Payload confirmado por documentação de primeira mão do mantenedor** (`docs/CHAT_MANAGEMENT.md`,
+citada literalmente — não reconstruída):
+
+Request:
+```json
+{"chatid": "5511999999999"}
+```
+Resposta de sucesso:
+```json
+{"success": true, "message": "chat 5511999999999@s.whatsapp.net marked as read"}
+```
+
+Mesma tag minúscula `chatid` de `chats.archive` acima (não `chatId`).
+
+O handler (`api_handlers+ChatReadController.go`) valida `chatid`, formata via
+`whatsapp.FormatEndpoint` (mesma função de normalização de chatId já usada por `sendtext`), checa
+`server.GetStatus() == Ready` (senão `503`), e chama `whatsmeow.MarkChatAsRead(conn, chatId)` /
+`MarkChatAsUnread`.
+
+**Nível de CHAT, não de mensagem**: distinto de um eventual `messages.markRead` futuro (marcar
+mensagens específicas por id — protocolo de receipt padrão, mecanismo genuinamente diferente). Este
+endpoint marca a badge de não-lida do chat INTEIRO.
+
+**Nuance crítica, documentada pelo próprio mantenedor (não é uma suposição deste dossiê)**: essa
+operação usa o **App State Protocol** do WhatsApp (`appstate.BuildMarkChatAsRead`), o mesmo
+mecanismo de sincronização multi-dispositivo — e o `docs/CHAT_MANAGEMENT.md` documenta um **bug
+conhecido do whatsmeow (upstream, `tulir/whatsmeow#858`, "mismatching LTHash")** que causa erros
+`409 conflict` intermitentes nessa família de operação. Resposta de erro típica citada no doc:
+```json
+{"success": false, "status": "server returned error updating app state: conflict"}
+```
+O QuePasa **não faz retry automático** — repassa o erro diretamente ("Current Implementation
+Strategy: return errors directly to the user without automatic retry"). Um cliente deste adapter
+precisaria implementar sua própria lógica de retry se quisesse tolerar esse conflito.
+
+**Confiança**: Alta para o endpoint/payload (fonte primária do mantenedor). O bug de conflito é
+documentado como real e aberto (não resolvido no snapshot pesquisado).
+
 ## Operações core
 
 | Operação canônica | Endpoint | Observações |
@@ -251,7 +451,11 @@ implica. `logoutInstance()` chama `GET /command?action=stop`.
 | `instance.logout` | `GET /command?action=stop` | Soft-stop — ver seção dedicada acima. |
 | `messages.sendText` | `POST /v3/bot/{token}/sendtext` | Body `{chatId, text}`. `to` aceita telefone com `+`, dígitos E.164 puros, JID completo ou o formato legado de grupo `numero-timestamp` — chatId canônico do waconector já bate 1:1 sem transformação. |
 | `messages.sendMedia` | `POST /v3/bot/{token}/sendurl` (`media.url`) ou `POST /v3/bot/{token}/sendencoded` (`media.base64`) | Sem endpoint por tipo — servidor auto-detecta pelo mimetype. Ver seção dedicada abaixo. |
+| `messages.edit` | `PUT /edit` | Rota legacy (não `/v3/bot/{token}/...`). Body `{messageId, content}`. Ver "Edição e exclusão de mensagem" acima. |
+| `messages.delete` | `DELETE /message/{messageid}` | Rota legacy. Sempre revoke ("apagar para todos"). Ver "Edição e exclusão de mensagem" acima. |
 | `groups.getInviteLink` | `GET /v3/bot/{token}/invite/{chatid}` | Único endpoint de grupo confirmado. |
+| `chats.archive`/`chats.unarchive` | `POST /chat/archive` | Rota legacy. Body `{chatid, archive}` (tag minúscula). Ver "Conversas (`chats.*`)" acima. |
+| `chats.markRead`/`chats.markUnread` | `POST /chat/markread` / `POST /chat/markunread` | Rota legacy. Body `{chatid}`. Ver "Conversas (`chats.*`)" acima. |
 | `contacts.getProfilePicture` | `GET /v3/bot/{token}/picinfo/{chatid}` | Único endpoint de contato confirmado. |
 
 ### Formato do destinatário (`chatId`)
@@ -858,3 +1062,5 @@ do HEAD da branch a cada push.
 | `content` (base64) em `/sendencoded` | Assumido como base64 puro, sem prefixo de data URI — não confirmado por nenhuma requisição de exemplo capturada. |
 | Todas as fixtures deste adapter | RECONSTRUÍDAS a partir de definições de struct Go confirmadas — nenhum payload de webhook real (tráfego capturado) foi encontrado na pesquisa, diferente de outros dossiês deste pacote que têm exemplos literais. |
 | Comportamento contra uma instância Docker real | Nenhuma instância foi de fato exercitada nesta pesquisa (só leitura de código-fonte) — shape exato de erros HTTP, rate-limit/retry, e se alguma das lacunas acima foi preenchida em versões mais novas do `nocodeleaks/quepasa` não são verificáveis enquanto o repo oficial estiver bloqueado. |
+| `chats.archive`/`chats.markRead`/`chats.markUnread` sob conflito 409/LTHash | Bug upstream confirmado por documentação de primeira mão do mantenedor (`docs/CHAT_MANAGEMENT.md`, `tulir/whatsmeow#858`), não por tráfego real capturado nesta pesquisa — o shape exato do erro e a frequência real do conflito contra uma instância viva não foram exercitados. |
+| Janela de tempo de `messages.edit`/`messages.delete` | Nem o handler nem a implementação (`Edit`/`Revoke`) validam um prazo — o comportamento exato do WhatsApp real para edição/revogação fora da janela (~15min para edição; janela mais ampla para revogação) não foi verificado contra tráfego real. |

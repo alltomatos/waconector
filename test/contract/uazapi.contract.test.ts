@@ -89,6 +89,41 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'POST' && pathname === '/message/edit') {
+      return jsonResponse(200, {
+        id: '5511999999999:3EB0FAKE0000000000EDIT',
+        messageid: '3EB0FAKE0000000000EDIT',
+        content: 'texto editado',
+        messageTimestamp: 1751000004000,
+        messageType: 'text',
+        status: 'Pending',
+        owner: '5511999999999',
+      });
+    }
+
+    if (method === 'POST' && pathname === '/message/delete') {
+      return jsonResponse(200, {
+        timestamp: '2026-07-12T10:00:00.000Z',
+        id: '3EB0FAKE0000000000ORIGINAL',
+      });
+    }
+
+    if (method === 'POST' && pathname === '/chat/archive') {
+      return jsonResponse(200, { response: 'Chat updated successfully' });
+    }
+
+    if (method === 'POST' && pathname === '/chat/mute') {
+      return jsonResponse(200, { response: 'Chat mute settings updated successfully' });
+    }
+
+    if (method === 'POST' && pathname === '/chat/pin') {
+      return jsonResponse(200, { response: 'Chat pinned' });
+    }
+
+    if (method === 'POST' && pathname === '/chat/read') {
+      return jsonResponse(200, { response: 'Chat updated successfully' });
+    }
+
     if (method === 'POST' && pathname === '/group/create') {
       return jsonResponse(200, {
         JID: '120363000000000000@g.us',
@@ -1431,5 +1466,183 @@ describe('uazapi adapter: comportamento específico do provider', () => {
     expect(adapter.capabilities).toContain('contacts.block');
     expect(adapter.capabilities).toContain('contacts.unblock');
     expect(adapter.capabilities).toContain('contacts.listBlocked');
+  });
+
+  it('messages.edit envia { id, text } (sem "number"/"to") para POST /message/edit e mapeia a resposta', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/message/edit') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.edit({
+      to: '5511999999999',
+      messageId: '3EB0FAKE0000000000ORIGINAL',
+      text: 'texto editado',
+    });
+
+    expect(capturedBody).toEqual({ id: '3EB0FAKE0000000000ORIGINAL', text: 'texto editado' });
+    expect(capturedBody?.number).toBeUndefined();
+    expect(sent.id).toBe('3EB0FAKE0000000000EDIT');
+    expect(sent).toHaveProperty('raw');
+  });
+
+  it('messages.edit cai para o "to" requisitado quando a resposta não traz "chatid"', async () => {
+    const adapter = uazapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.edit({
+      to: '5511999999999',
+      messageId: '3EB0FAKE0000000000ORIGINAL',
+      text: 'texto editado',
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+  });
+
+  it('messages.delete envia { id } (só o messageId) para POST /message/delete', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/message/delete') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.messages.delete({ to: '5511999999999', messageId: '3EB0FAKE0000000000ORIGINAL' }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ id: '3EB0FAKE0000000000ORIGINAL' });
+  });
+
+  it('declara messages.edit/messages.delete em capabilities', () => {
+    const adapter = uazapi(buildAdapterOptions());
+    expect(adapter.capabilities).toContain('messages.edit');
+    expect(adapter.capabilities).toContain('messages.delete');
+  });
+
+  it('chats.archive/chats.unarchive enviam { number, archive } para POST /chat/archive', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/archive') {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.chats.archive('5511999999999')).resolves.toBeUndefined();
+    await expect(wa.chats.unarchive('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBodies).toEqual([
+      { number: '5511999999999', archive: true },
+      { number: '5511999999999', archive: false },
+    ]);
+  });
+
+  it('chats.mute envia muteEndTime: -1 (permanente) e chats.unmute envia muteEndTime: 0 para POST /chat/mute', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/mute') {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.chats.mute('5511999999999')).resolves.toBeUndefined();
+    await expect(wa.chats.unmute('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBodies).toEqual([
+      { number: '5511999999999', muteEndTime: -1 },
+      { number: '5511999999999', muteEndTime: 0 },
+    ]);
+  });
+
+  it('chats.pin/chats.unpin enviam { number, pin } para POST /chat/pin', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/pin') {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.chats.pin('5511999999999')).resolves.toBeUndefined();
+    await expect(wa.chats.unpin('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBodies).toEqual([
+      { number: '5511999999999', pin: true },
+      { number: '5511999999999', pin: false },
+    ]);
+  });
+
+  it('chats.markRead/chats.markUnread enviam { number, read } para POST /chat/read', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/read') {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.chats.markRead('5511999999999')).resolves.toBeUndefined();
+    await expect(wa.chats.markUnread('5511999999999')).resolves.toBeUndefined();
+
+    expect(capturedBodies).toEqual([
+      { number: '5511999999999', read: true },
+      { number: '5511999999999', read: false },
+    ]);
+  });
+
+  it('declara todas as 8 operações de chats.* em capabilities', () => {
+    const adapter = uazapi(buildAdapterOptions());
+    expect(adapter.capabilities).toEqual(
+      expect.arrayContaining([
+        'chats.archive',
+        'chats.unarchive',
+        'chats.mute',
+        'chats.unmute',
+        'chats.pin',
+        'chats.unpin',
+        'chats.markRead',
+        'chats.markUnread',
+      ]),
+    );
   });
 });

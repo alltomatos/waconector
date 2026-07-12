@@ -18,6 +18,11 @@ const SESSION = 'default';
 const GROUP_ID = '120363043140393908@g.us';
 /** `encodeURIComponent(GROUP_ID)` — usado para casar o pathname exato batido pelo adapter. */
 const GROUP_ID_ENCODED = '120363043140393908%40g.us';
+/**
+ * `encodeURIComponent('5585999999999@c.us')` — chatId codificado usado nos testes de
+ * `messages.edit`/`messages.delete` e `chats.*` (retrofit ADR-0012).
+ */
+const CHAT_ID_ENCODED = '5585999999999%40c.us';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -251,6 +256,49 @@ function createFetchStub(): typeof globalThis.fetch {
       // updateSubject/updateDescription/updatePicture: contrato devolve Promise<void>; a doc não
       // declara schema para subject/description, e picture devolve Result { success } (ignorado).
       return jsonResponse(200, { success: true });
+    }
+
+    // messages.edit (retrofit ADR-0012): PUT /api/{session}/chats/{chatId}/messages/{messageId}.
+    // Resposta 200 sem schema de conteúdo declarado — stub genérico basta.
+    if (
+      method === 'PUT' &&
+      pathname.startsWith(`/api/${SESSION}/chats/`) &&
+      pathname.includes('/messages/')
+    ) {
+      return jsonResponse(200, {});
+    }
+
+    // messages.delete (retrofit ADR-0012): DELETE /api/{session}/chats/{chatId}/messages/{messageId}.
+    // Sem schema de resposta relevante — contrato retorna void.
+    if (
+      method === 'DELETE' &&
+      pathname.startsWith(`/api/${SESSION}/chats/`) &&
+      pathname.includes('/messages/')
+    ) {
+      return new Response(null, { status: 200 });
+    }
+
+    // chats.markRead (retrofit ADR-0012): POST /api/{session}/chats/{chatId}/messages/read.
+    // Checado ANTES do catch-all de archive/unarchive/unread abaixo (mesmo path base).
+    if (
+      method === 'POST' &&
+      pathname === `/api/${SESSION}/chats/${CHAT_ID_ENCODED}/messages/read`
+    ) {
+      return jsonResponse(201, { ids: ['false_5585999999999@c.us_MOCKREAD00000000000001'] });
+    }
+
+    if (method === 'POST' && pathname === `/api/${SESSION}/chats/${CHAT_ID_ENCODED}/archive`) {
+      // chats.archive: resposta 201 com objeto genérico — ignorada, contrato retorna void.
+      return jsonResponse(201, { archived: true });
+    }
+
+    if (method === 'POST' && pathname === `/api/${SESSION}/chats/${CHAT_ID_ENCODED}/unarchive`) {
+      return jsonResponse(201, { archived: false });
+    }
+
+    if (method === 'POST' && pathname === `/api/${SESSION}/chats/${CHAT_ID_ENCODED}/unread`) {
+      // chats.markUnread: sem schema de resposta declarado — contrato retorna void.
+      return new Response(null, { status: 200 });
     }
 
     throw new Error(`fetchStub: rota não configurada — ${method} ${pathname}`);
@@ -1017,6 +1065,175 @@ describe('WAHA adapter: comportamento específico do provider', () => {
     expect(isWaConnectorError(failure)).toBe(true);
     if (isWaConnectorError(failure)) {
       expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+    }
+  });
+
+  it('messages.edit chama PUT /api/{session}/chats/{chatId}/messages/{messageId} com { text }', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.edit({
+      to: '5585999999999',
+      messageId: 'true_5585999999999@c.us_MOCKEDIT000000000000001',
+      text: 'texto editado',
+    });
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.method).toBe('PUT');
+    expect(call?.path).toBe(
+      `/api/${SESSION}/chats/${CHAT_ID_ENCODED}/messages/true_5585999999999%40c.us_MOCKEDIT000000000000001`,
+    );
+    expect(call?.body).toEqual({ text: 'texto editado' });
+    // Resposta stub genérica (sem schema) -> mapSentMessage cai no fallback (chatId de input.to).
+    expect(sent.chatId).toBe('5585999999999@c.us');
+    expect(sent).toHaveProperty('raw');
+  });
+
+  it('messages.delete chama DELETE /api/{session}/chats/{chatId}/messages/{messageId} e resolve void', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.delete({
+        to: '5585999999999',
+        messageId: 'true_5585999999999@c.us_MOCKDELETE00000000000001',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('DELETE');
+    expect(calls[0]?.path).toBe(
+      `/api/${SESSION}/chats/${CHAT_ID_ENCODED}/messages/true_5585999999999%40c.us_MOCKDELETE00000000000001`,
+    );
+  });
+
+  it('chats.archive chama POST /api/{session}/chats/{chatId}/archive e resolve void', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.archive('5585999999999')).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/chats/${CHAT_ID_ENCODED}/archive`);
+  });
+
+  it('chats.unarchive chama POST /api/{session}/chats/{chatId}/unarchive e resolve void', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.unarchive('5585999999999')).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/chats/${CHAT_ID_ENCODED}/unarchive`);
+  });
+
+  it('chats.markRead chama POST /api/{session}/chats/{chatId}/messages/read (sem query params, usa os defaults do provider) e resolve void', async () => {
+    const calls: Array<{ method: string; path: string; query: URLSearchParams }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            query: url.searchParams,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.markRead('5585999999999')).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/chats/${CHAT_ID_ENCODED}/messages/read`);
+    // Contrato canônico (ChatsApi.markRead) não expõe "count"/"days" -> nenhuma query enviada,
+    // o provider aplica os próprios defaults documentados (7 dias, 30 DM / 100 grupo).
+    expect([...(calls[0]?.query.keys() ?? [])]).toHaveLength(0);
+  });
+
+  it('chats.markUnread chama POST /api/{session}/chats/{chatId}/unread e resolve void', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.markUnread('5585999999999')).resolves.toBeUndefined();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/chats/${CHAT_ID_ENCODED}/unread`);
+  });
+
+  it('não declara "chats.mute"/"chats.unmute"/"chats.pin"/"chats.unpin" (sem endpoint de conversa confirmado na pesquisa) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = waha(buildAdapterOptions());
+    for (const capability of ['chats.mute', 'chats.unmute', 'chats.pin', 'chats.unpin'] as const) {
+      expect(adapter.capabilities).not.toContain(capability);
+    }
+    expect(adapter.chats?.mute).toBeUndefined();
+    expect(adapter.chats?.unmute).toBeUndefined();
+    expect(adapter.chats?.pin).toBeUndefined();
+    expect(adapter.chats?.unpin).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const calls = [
+      () => wa.chats.mute('5585999999999'),
+      () => wa.chats.unmute('5585999999999'),
+      () => wa.chats.pin('5585999999999'),
+      () => wa.chats.unpin('5585999999999'),
+    ];
+    for (const call of calls) {
+      const failure = await call().catch((error: unknown) => error);
+      expect(isWaConnectorError(failure)).toBe(true);
+      if (isWaConnectorError(failure)) {
+        expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+      }
     }
   });
 

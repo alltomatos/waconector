@@ -65,7 +65,9 @@ Termo do provider: **"instância"** (`Instance`). Campos documentados do objeto 
 ## Capabilities implementadas nesta fase (F2)
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
-`messages.sendMedia`, `messages.sendReaction`, `webhooks.parse`.
+`messages.sendMedia`, `messages.sendReaction`, `messages.edit`, `messages.delete`,
+`chats.archive`, `chats.unarchive`, `chats.mute`, `chats.unmute`, `chats.pin`, `chats.unpin`,
+`chats.markRead`, `chats.markUnread`, `webhooks.parse`.
 
 `instance.pairingCode` **não** foi declarada: embora o provider suporte pareamento por código
 (`POST /instance/connect` com `phone`), `InstanceApi.connect()` não recebe telefone como parâmetro
@@ -116,6 +118,26 @@ de mudança, mesmo padrão do adapter Evolution GO).
 
 `mentions`, ao contrário de `number`, precisa ser uma string de dígitos separados por vírgula (não
 aceita JID) — o adapter extrai os dígitos de qualquer entrada em formato JID antes de juntar.
+
+## Edição e exclusão de mensagem
+
+Capabilities `messages.edit`/`messages.delete` (ADR-0012). Fonte: pesquisa dedicada de 2026-07-12
+sobre o mesmo OpenAPI bundled já citado no topo deste dossiê (`info.version` **2.1.1**, idêntica à
+já registrada — sem deriva de spec desde a última auditoria), com confiança **Alta** para os dois
+endpoints (schema request/response completo e literal no OpenAPI, com exemplos de erro por status).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.edit` | `POST /message/edit` | Body `{ id, text }`, ambos obrigatórios — **sem** `number`/`to`: o `id` já identifica a mensagem (e implicitamente seu chat/dono) sozinho, então `EditMessageInput.to` **não é enviado no request**, só usado como fallback de `chatId` no mapeamento da resposta (mesmo padrão de `mapSentMessage`/`chatId ?? requestedNumber` já usado por `sendText`/`sendReaction`). Resposta 200 documentada no schema `Message` completo (`id` no formato `owner:messageid`, `messageid`, `content`, `messageTimestamp`, `messageType: "text"`, `status: "Pending"`, `owner`) — reaproveita `mapSentMessage`, sem campo `chatid` explícito. **Limitações documentadas pelo próprio endpoint** (não impostas pelo adapter): só é possível editar mensagens enviadas pela própria instância; "a mensagem deve estar dentro do prazo permitido pelo WhatsApp para edição" — a doc não especifica o valor exato desse prazo (o WhatsApp real aplica ~15min no app oficial, mas isso está fora do spec da uazapi, não validado localmente). Gera um **novo ID** para a mensagem editada, refletido no `id` devolvido (pode diferir de `input.messageId`). |
+| `messages.delete` | `POST /message/delete` | Body `{ id }`, único campo obrigatório — igual a `edit`, sem `number`/`to` no request (`DeleteMessageInput.to` existe só por simetria com o restante de `messages.*`, não é enviado). A doc descreve o endpoint como "apaga uma mensagem **para todos** os participantes da conversa" — é sempre revogação ("delete for everyone"); não expõe parâmetro de "apagar só para mim" (compatível com a decisão do ADR-0012 de não ter campo de escopo em `DeleteMessageInput`). Funciona em mensagens "enviadas pelo usuário ou recebidas" segundo a doc (aparentemente sem a limitação usual do WhatsApp de só poder revogar as próprias mensagens — não confirmado empiricamente). Resposta 200 (`{ timestamp, id }`) é ignorada: o contrato exige apenas `Promise<void>`. Sem janela de tempo documentada para o limite de exclusão. |
+
+`input.messageId` é repassado como `id` sem nenhuma transformação em ambos os endpoints — a doc
+menciona que o campo aceita tanto o formato completo (`owner:messageid`) quanto só o `messageid`
+curto (usado nesse caso "concatenado com o owner para busca"), então qualquer um dos dois formatos
+que o consumidor tenha guardado de um `SentMessage.id` anterior funciona sem conversão adicional.
+
+**Nenhuma das 2 operações foi exercitada contra uma instância uazapi real** — mesma ressalva já
+registrada para as demais seções deste dossiê.
 
 ## Grupos (núcleo)
 
@@ -399,6 +421,30 @@ levantamento comparativo entre os 5 adapters (uazapi é o único, dos 5, sem ess
 registrada para as demais seções deste dossiê (`instance.*`, `groups.*`). Os shapes de resposta
 acima seguem os schemas documentados no OpenAPI bundled, mas sem confirmação empírica contra
 tráfego real.
+
+## Chats (gestão de estado da conversa)
+
+Namespace `chats.*` introduzido pelo ADR-0012 — distinto de `contacts.*` (sobre a pessoa/JID) e de
+`messages.*` (sobre uma mensagem específica): estas 8 operações atuam sobre o **estado da
+conversa** como um todo (arquivar, silenciar, fixar, marcar como lida). Fonte: mesma pesquisa
+dedicada de 2026-07-12 citada na seção "Edição e exclusão de mensagem" acima, confiança **Alta**
+para as 4 rotas (8 capabilities, 2 verbos por rota).
+
+`chatId` de `chats.*` **não é opaco** (mesmo tratamento de `contacts.*`, ver ADR-0010/ADR-0012,
+diferente do `groupId` opaco de `groups.*`) — é o mesmo chatId canônico já usado por
+`messages.*`/`contacts.*`, repassado sem transformação via `toUazapiNumber` (identidade).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `chats.archive` / `chats.unarchive` | `POST /chat/archive` | **Mesmo endpoint para as duas operações**, discriminado pelo campo `archive: boolean` (mesmo padrão de "um endpoint, vários verbos canônicos" já usado por `contacts.block`/`unblock`). Body `{ number, archive }`. Resposta (`{ response: "Chat updated successfully" }`) ignorada: o contrato exige `Promise<void>`. Nuance documentada: "não afeta as mensagens ou o conteúdo do chat" — puramente cosmético/organizacional. |
+| `chats.mute` / `chats.unmute` | `POST /chat/mute` | Body `{ number, muteEndTime }` — `muteEndTime` é um **enum fechado de 4 valores** (`0 \| 8 \| 168 \| -1`), não um timestamp Unix arbitrário: `0` remove o silenciamento, `8`/`168` são horas (8h/1 semana), `-1` é permanente. **Mapeamento de decisão do adapter, não um default do provider**: como `ChatsApi.mute`/`unmute` do contrato canônico não recebem duração (ADR-0012 — nenhum formato de duração converge entre os providers pesquisados), `mute(chatId)` sempre envia `muteEndTime: -1` (permanente) e `unmute(chatId)` sempre envia `muteEndTime: 0` (remove). Consumidores que precisem de granularidade por horas/semana não têm essa opção via contrato canônico nesta fase. |
+| `chats.pin` / `chats.unpin` | `POST /chat/pin` | Body `{ number, pin: boolean }`. Resposta (`{ response: "Chat pinned" }`) ignorada. Nuance: distinto de fixar uma MENSAGEM dentro do chat (`messages.pin`, fora de escopo desta fase — ver ADR-0012) — este fixa a CONVERSA inteira no topo da lista. O OpenAPI da uazapi não documenta nenhum limite de conversas fixadas simultâneas (o limite de 3 do app oficial do WhatsApp é conhecimento externo, não confirmado nesta API — não assumir que a uazapi replica essa trava). |
+| `chats.markRead` / `chats.markUnread` | `POST /chat/read` | Body `{ number, read: boolean }` — `read: false` marca como **não lido** (reintroduz o indicador visual de pendência, não é um simples "desfazer lido"). Distinto de um eventual `messages.markRead` por id de mensagem (não implementado nesta fase, fora de escopo do ADR-0012) — este marca o chat INTEIRO de uma vez, sem precisar dos IDs das mensagens. |
+
+**Nenhuma das 8 operações foi exercitada contra uma instância uazapi real** — mesma ressalva já
+registrada para as demais seções deste dossiê. Os shapes de resposta acima seguem os schemas
+documentados no OpenAPI bundled (`info.version` 2.1.1, mesma versão já auditada), sem confirmação
+empírica contra tráfego real.
 
 ## Limites e particularidades
 
