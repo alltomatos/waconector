@@ -81,6 +81,9 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 | `messages.edit` | `POST /message/edit` | Ver seção "Edição e exclusão de mensagem" abaixo. |
 | `messages.delete` | `POST /message/delete` | Ver seção "Edição e exclusão de mensagem" abaixo. |
 | `messages.markRead` | `POST /message/markread` | ADR-0013, nível de MENSAGEM. Ver seção "Edição e exclusão de mensagem" abaixo. |
+| `messages.sendLocation` | `POST /send/location` | ADR-0014. Ver seção "Conteúdo estruturado" abaixo. |
+| `messages.sendContactCard` | `POST /send/contact` | ADR-0014. Ver seção "Conteúdo estruturado" abaixo. |
+| `messages.sendPoll` | `POST /send/poll` | ADR-0014. Ver seção "Conteúdo estruturado" abaixo. |
 | `groups.create` | `POST /group/create` | Ver seção "Grupos (núcleo)" abaixo. |
 | `groups.getInfo` | `POST /group/info` | Ver seção "Grupos (núcleo)" abaixo. |
 | `groups.list` | `GET /group/list` | Ver seção "Grupos (núcleo)" abaixo. |
@@ -195,6 +198,36 @@ endpoint para nenhuma das 4 — diferente de `messages.markRead`, que tem confir
 schema, `forward`/`star`/`pin`/`unpin` simplesmente não aparecem em nenhum dos dois specs.
 Tratado como limitação real do provider (busca exaustiva nos dois arquivos OpenAPI relevantes),
 não gap de pesquisa.
+
+## Conteúdo estruturado (`messages.sendLocation`/`sendContactCard`/`sendPoll`, ADR-0014)
+
+Cobertura 3/3 — fonte `send-message.yaml`, confiança Alta para as 3.
+
+### `messages.sendLocation` — `POST /send/location`
+
+- Schema `SendLocation`: `{address, delay, id, latitude, longitude, mentionAll, mentionedJid,
+  name, number, quoted}`. `SendLocationInput.name`/`.address` mapeiam direto para os campos
+  homônimos (ambos opcionais no schema); os demais campos (`delay`/`mentionAll`/`mentionedJid`/
+  `quoted`) não têm de onde vir no contrato canônico e não são enviados.
+- Resposta real do provider confirma `Type: LocationMessage`,
+  `Message.locationMessage: {degreesLatitude, degreesLongitude, name, address}`.
+
+### `messages.sendContactCard` — `POST /send/contact`
+
+- Schema `SendContact` + `VCard`: `{number, vcard: {fullName, organization, phone}, ...}`. O
+  provider **não** recebe um vCard bruto — só 3 campos soltos e monta o
+  `BEGIN:VCARD...END:VCARD` completo no servidor (confirmado no exemplo de resposta: `FN=fullName`,
+  `ORG=organization;`, `TEL;type=CELL;type=VOICE;waid=phone:phone`).
+  `SendContactCardInput` não tem campo de organização — omitido (o schema não o declara
+  obrigatório). Suporta um único telefone por contato, sem múltiplos números/campos extra de vCard.
+
+### `messages.sendPoll` — `POST /send/poll`
+
+- Schema `SendPoll`: `{number, question, options, maxAnswer, ...}`. `maxAnswer` controla quantas
+  opções o respondente pode marcar (`0` = escolha única, no whatsmeow `selectableOptionsCount`);
+  `SendPollInput.allowMultipleAnswers` mapeia para `maxAnswer: options.length` (qualquer número de
+  opções) quando `true`, `0` quando `false`/ausente. Resposta confirma `Type:
+  PollCreationMessage`.
 
 ## Grupos (núcleo)
 

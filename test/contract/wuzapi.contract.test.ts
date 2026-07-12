@@ -355,6 +355,34 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    // messages.sendLocation (ADR-0014): POST /chat/send/location.
+    if (method === 'POST' && pathname === '/chat/send/location') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Sent', Timestamp: 1751000005, Id: 'contrato-msg-location' },
+      });
+    }
+
+    // messages.sendContactCard (ADR-0014): POST /chat/send/contact.
+    if (method === 'POST' && pathname === '/chat/send/contact') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Sent', Timestamp: 1751000006, Id: 'contrato-msg-contact' },
+      });
+    }
+
+    // messages.sendPoll (ADR-0014): POST /chat/send/poll — resposta SEM Timestamp (diferente do
+    // resto da API), confirmado no código-fonte.
+    if (method === 'POST' && pathname === '/chat/send/poll') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Poll sent successfully', Id: 'contrato-msg-poll' },
+      });
+    }
+
     throw new Error(`fetchStub (wuzapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -869,6 +897,95 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
     expect(adapter.capabilities).not.toContain('messages.forward');
     expect(adapter.capabilities).not.toContain('messages.pin');
     expect(adapter.messages.forward).toBeUndefined();
+  });
+
+  it('messages.sendLocation envia { Phone, Latitude, Longitude, Name } para POST /chat/send/location', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/send/location') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendLocation({
+      to: '5511999999999',
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody).toEqual({
+      Phone: '5511999999999',
+      Latitude: -3.7,
+      Longitude: -38.5,
+      Name: 'Escritório',
+    });
+  });
+
+  it('messages.sendContactCard monta um vCard 3.0 a partir de contactName/contactPhone para POST /chat/send/contact', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/send/contact') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendContactCard({
+      to: '5511999999999',
+      contactName: 'Fulano',
+      contactPhone: '5511988888888',
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody?.Phone).toBe('5511999999999');
+    expect(capturedBody?.Name).toBe('Fulano');
+    expect(capturedBody?.Vcard).toContain('FN:Fulano');
+    expect(capturedBody?.Vcard).toContain('waid=5511988888888:+5511988888888');
+  });
+
+  it('messages.sendPoll envia { group, header, options } (tags minúsculas) para POST /chat/send/poll, ignorando allowMultipleAnswers (endpoint hardcoded para escolha única)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/send/poll') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendPoll({
+      to: '5511999999999',
+      question: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+      allowMultipleAnswers: true,
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody).toEqual({
+      group: '5511999999999',
+      header: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+    });
   });
 
   it('chats.archive envia { jid, archive: true } (tags minúsculas) para POST /chat/archive, completando o sufixo @s.whatsapp.net quando o chatId vem em dígitos crus', async () => {

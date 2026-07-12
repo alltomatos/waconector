@@ -117,11 +117,12 @@ dessa identidade.
 
 `instance.pairingCode` **não** foi declarada (ver justificativa acima).
 
-## Capabilities implementadas nesta fase (ADR-0012: edição/exclusão de mensagem + `chats.*`; ADR-0013: ações sobre mensagem)
+## Capabilities implementadas nesta fase (ADR-0012: edição/exclusão de mensagem + `chats.*`; ADR-0013: ações sobre mensagem; ADR-0014: conteúdo estruturado)
 
 `messages.edit`, `messages.delete`, `chats.archive`, `chats.unarchive` (ADR-0012);
 `messages.markRead` (ADR-0013 — sem `messages.forward`/`star`/`pin`/`unpin`, ver seção dedicada
-abaixo).
+abaixo); `messages.sendLocation`/`sendContactCard`/`sendPoll` (ADR-0014 — cobertura 3/3, ver seção
+"Conteúdo estruturado" abaixo).
 
 > ⚠️ **Nota de metodologia**: nesta rodada, o relatório de pesquisa dedicado (1 agente por
 > provider, mesma metodologia das rodadas anteriores — ver ADR-0012) não estava disponível para o
@@ -185,6 +186,16 @@ como confirmado "a fundo" para este provider.
 
 **Resposta confirmada**: `{"Details":"Deleted","Timestamp":<unix seconds>,"Id":"<id>"}` (`Id` = eco
 do id requisitado) — inteiramente ignorada, contrato retorna `Promise<void>`.
+
+## Conteúdo estruturado (`messages.sendLocation`/`sendContactCard`/`sendPoll`, ADR-0014)
+
+Cobertura 3/3 — confirmado no `API.md` e em código-fonte (`handlers.go`).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.sendLocation` | `POST /chat/send/location` | Corpo `{Phone, Name?, Latitude, Longitude}`. **Nuance documentada no próprio código**: a validação de obrigatoriedade é `if t.Latitude == 0 { ... }`/`if t.Longitude == 0 { ... }` (`handlers.go:1922-1928`) — o servidor **não distingue "campo ausente" de "0.0 exato"**; uma localização real no equador/meridiano de Greenwich (`0.0`) seria rejeitada como "faltando" (edge case real do provider, não deste adapter). Resposta: mesmo envelope `{Details,Timestamp,Id}` de `sendText`. |
+| `messages.sendContactCard` | `POST /chat/send/contact` | Corpo `{Phone, Name (obrigatório), Vcard (obrigatório, string vCard 3.0 completa)}` — **este provider não monta o vCard a partir de campos soltos** (diferente de Evolution/uazapi/Z-API): `Vcard` precisa ser uma string já formatada pelo chamador (o próprio exemplo do `API.md` mostra um vCard inteiro escapado com `\n`). `SendContactCardInput` só expõe `contactName`/`contactPhone` soltos — este adapter monta a string vCard mínima localmente (`buildVcard`: `FN:{name}` + `TEL;type=CELL;type=VOICE;waid={phone}:+{phone}`, mesmo formato que a Evolution confirma gerar server-side). |
+| `messages.sendPoll` | `POST /chat/send/poll` | Confiança Alta no endpoint/código-fonte (`handlers.go:2735-2815`), Média no formato de "capability" canônica — **não documentado** no `API.md`. Corpo com tags JSON MINÚSCULAS (diferente do padrão PascalCase-sem-tag do resto da API): `{group, header, options}` (`req.Group`/`req.Header`/`req.Options`, obrigatórios; `len(req.Options) < 2` é rejeitado). Apesar do nome do campo, `group` passa por `validateMessageFields(req.Group, nil, nil)` — o mesmo parser genérico de `Phone` usado em mensagens 1:1 — então aceita qualquer JID (indivíduo ou grupo), não só `@g.us`. **`allowMultipleAnswers` é ignorado**: `BuildPollCreation(req.Header, req.Options, 1)` — o último argumento (`selectableOptionsCount`) é HARDCODED em `1` (`handlers.go:2789`) — só enquetes de escolha única são suportadas, sem exceção (limitação real do provider). Resposta **diferente** do resto da API: `{"Details":"Poll sent successfully","Id":"<msgid>"}` — **sem `Timestamp`** (`handlers.go:2807`). O servidor guarda as opções em texto plano num cache interno (`SetPollOptions`) para decodificar votos recebidos depois — estado do lado do provider, não do waconector. |
 
 ## Conversas (`chats.*`)
 

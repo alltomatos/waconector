@@ -13,14 +13,14 @@ Nenhuma linha aqui é escrita à mão.
 
 ## Resumo por provider
 
-- **waha**: 40/46
-- **evolution**: 36/46
-- **uazapi**: 41/46
-- **zapi**: 42/46
-- **wuzapi**: 34/46
-- **whapi**: 45/46
-- **quepasa**: 14/46
-- **wppconnect**: 42/46
+- **waha**: 43/49
+- **evolution**: 39/49
+- **uazapi**: 44/49
+- **zapi**: 45/49
+- **wuzapi**: 37/49
+- **whapi**: 48/49
+- **quepasa**: 17/49
+- **wppconnect**: 45/49
 
 ## Detalhe por namespace
 
@@ -48,6 +48,9 @@ Nenhuma linha aqui é escrita à mão.
 | `messages.pin` | ✅ | — | ✅ | ✅ | — | ✅ | — | — |
 | `messages.unpin` | ✅ | — | ✅ | ✅ | — | ✅ | — | — |
 | `messages.markRead` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `messages.sendLocation` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `messages.sendContactCard` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `messages.sendPoll` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ### `groups.*`
 

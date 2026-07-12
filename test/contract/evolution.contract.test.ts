@@ -101,6 +101,48 @@ function createFetchStub(): typeof globalThis.fetch {
     if (method === 'POST' && url.pathname === '/message/markread') {
       return jsonResponse(200, { message: 'success' });
     }
+    // messages.sendLocation (ADR-0014): POST /send/location.
+    if (method === 'POST' && url.pathname === '/send/location') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          Info: {
+            ID: '3EB0FAKE0000000000LOCATION',
+            ServerID: 4,
+            Timestamp: '2026-07-12T10:00:01-03:00',
+            Type: 'LocationMessage',
+          },
+        },
+      });
+    }
+    // messages.sendContactCard (ADR-0014): POST /send/contact.
+    if (method === 'POST' && url.pathname === '/send/contact') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          Info: {
+            ID: '3EB0FAKE0000000000CONTACT',
+            ServerID: 5,
+            Timestamp: '2026-07-12T10:00:02-03:00',
+            Type: 'ContactMessage',
+          },
+        },
+      });
+    }
+    // messages.sendPoll (ADR-0014): POST /send/poll.
+    if (method === 'POST' && url.pathname === '/send/poll') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          Info: {
+            ID: '3EB0FAKE0000000000POLL',
+            ServerID: 6,
+            Timestamp: '2026-07-12T10:00:03-03:00',
+            Type: 'PollCreationMessage',
+          },
+        },
+      });
+    }
     if (method === 'DELETE' && url.pathname === '/instance/logout') {
       return jsonResponse(200, { message: 'success' });
     }
@@ -1245,6 +1287,104 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
     expect(adapter.capabilities).not.toContain('messages.star');
     expect(adapter.capabilities).not.toContain('messages.pin');
     expect(adapter.messages.forward).toBeUndefined();
+  });
+
+  it('messages.sendLocation envia POST /send/location com {number, latitude, longitude, name, address}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/send/location') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendLocation({
+      to: '5511999999999',
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+      address: 'Av. Principal, 100',
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody).toEqual({
+      number: '5511999999999',
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+      address: 'Av. Principal, 100',
+    });
+  });
+
+  it('messages.sendContactCard envia POST /send/contact com {number, vcard: {fullName, phone}}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/send/contact') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendContactCard({
+      to: '5511999999999',
+      contactName: 'Fulano',
+      contactPhone: '5511988888888',
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody).toEqual({
+      number: '5511999999999',
+      vcard: { fullName: 'Fulano', phone: '5511988888888' },
+    });
+  });
+
+  it('messages.sendPoll envia POST /send/poll com {number, question, options, maxAnswer}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/send/poll') {
+        capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      }
+      return createFetchStub()(input, init);
+    };
+
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendPoll({
+      to: '5511999999999',
+      question: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+      allowMultipleAnswers: true,
+    });
+
+    expect(sent.chatId).toBe('5511999999999');
+    expect(capturedBody).toEqual({
+      number: '5511999999999',
+      question: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+      maxAnswer: 2,
+    });
   });
 
   it('chats.archive envia POST /chat/archive com {number}', async () => {

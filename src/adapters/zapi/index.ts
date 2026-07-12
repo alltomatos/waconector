@@ -35,7 +35,10 @@ import type {
   MessageAck,
   MessageKind,
   PinMessageInput,
+  SendContactCardInput,
+  SendLocationInput,
   SendMediaInput,
+  SendPollInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
@@ -101,6 +104,9 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'messages.pin',
   'messages.unpin',
   'messages.markRead',
+  'messages.sendLocation',
+  'messages.sendContactCard',
+  'messages.sendPoll',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -173,6 +179,9 @@ export function zapi(options: ZapiOptions): WaAdapter {
     pin: (input) => setMessagePinned(http, prefix, input, 'pin'),
     unpin: (input) => setMessagePinned(http, prefix, input, 'unpin'),
     markRead: (input) => markMessageRead(http, prefix, input),
+    sendLocation: (input) => sendLocation(http, prefix, input),
+    sendContactCard: (input) => sendContactCard(http, prefix, input),
+    sendPoll: (input) => sendPoll(http, prefix, input),
   };
 
   const groups: GroupsApi = {
@@ -660,6 +669,85 @@ async function markMessageRead(
     path: `${prefix}/read-message`,
     body: { phone, messageId: input.messageId },
   });
+}
+
+/**
+ * `messages.sendLocation` (ADR-0014) — `POST /send-location`, confirmado via `developer.z-api.io`
+ * e o mirror GitHub raw da doc (não coberto pelo relatório de pesquisa original desta rodada, que
+ * só tinha `messages.sendPoll` para este provider). Body: `{phone, title, address, latitude,
+ * longitude}` — `SendLocationInput.name` mapeia para `title` (ambos tratados como o mesmo rótulo
+ * do pin); `title`/`address` sem valor no input não são enviados. Resposta: mesmo shape
+ * `{zaapId, messageId, id}` de `send-text` — reaproveita `mapSentMessage`.
+ */
+async function sendLocation(
+  http: HttpClient,
+  prefix: string,
+  input: SendLocationInput,
+): Promise<SentMessage> {
+  const phone = toZapiPhone(input.to);
+  const body: Record<string, unknown> = {
+    phone,
+    latitude: input.latitude,
+    longitude: input.longitude,
+  };
+  if (input.name) body.title = input.name;
+  if (input.address) body.address = input.address;
+
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: `${prefix}/send-location`,
+    body,
+  });
+  return mapSentMessage(response, phone);
+}
+
+/**
+ * `messages.sendContactCard` (ADR-0014) — `POST /send-contact`, confirmado via
+ * `developer.z-api.io` (não coberto pelo relatório de pesquisa original). Body: `{phone,
+ * contactName, contactPhone}` — campos soltos, **sem vCard**: diferente de Whapi/Wuzapi, este
+ * provider aceita nome/telefone diretamente e monta a mensagem de contato internamente. Mapeamento
+ * direto de `SendContactCardInput.contactName`/`.contactPhone`.
+ */
+async function sendContactCard(
+  http: HttpClient,
+  prefix: string,
+  input: SendContactCardInput,
+): Promise<SentMessage> {
+  const phone = toZapiPhone(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: `${prefix}/send-contact`,
+    body: { phone, contactName: input.contactName, contactPhone: input.contactPhone },
+  });
+  return mapSentMessage(response, phone);
+}
+
+/**
+ * `messages.sendPoll` (ADR-0014) — `POST /send-poll`, confiança Média-Alta (já citado no relatório
+ * de pesquisa original desta rodada). Body: `{phone, message, poll: [{name}], pollMaxOptions}` —
+ * `SendPollInput.question` mapeia para `message`; `options` mapeia para um array de objetos
+ * `{name}` (não strings soltas, diferente da maioria dos outros adapters). `pollMaxOptions: 1` é a
+ * forma documentada de simular escolha única; a doc afirma que sem esse campo o padrão parece ser
+ * múltipla escolha — este adapter sempre envia o valor explícito (`options.length` para múltipla
+ * escolha) em vez de depender desse default implícito não confirmado contra instância real.
+ */
+async function sendPoll(
+  http: HttpClient,
+  prefix: string,
+  input: SendPollInput,
+): Promise<SentMessage> {
+  const phone = toZapiPhone(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: `${prefix}/send-poll`,
+    body: {
+      phone,
+      message: input.question,
+      poll: input.options.map((name) => ({ name })),
+      pollMaxOptions: input.allowMultipleAnswers ? input.options.length : 1,
+    },
+  });
+  return mapSentMessage(response, phone);
 }
 
 /**

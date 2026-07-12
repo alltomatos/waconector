@@ -25,7 +25,10 @@ import type {
   MediaRef,
   MessageAck,
   MessageKind,
+  SendContactCardInput,
+  SendLocationInput,
   SendMediaInput,
+  SendPollInput,
   SendTextInput,
   SentMessage,
   WaMessage,
@@ -118,6 +121,13 @@ const PROVIDER = 'quepasa';
  *   unpins the chat automatically"), não um endpoint dedicado de pin/unpin. Ver
  *   docs/providers/quepasa.md#edição-e-exclusão-de-mensagem e
  *   docs/providers/quepasa.md#conversas-chats.
+ * - `messages.sendLocation`/`sendContactCard`/`sendPoll` (ADR-0014): TODAS confirmadas via
+ *   `POST /send` (`api_handlers+SendController.go`, handler `SendAny` — mesma família v3/bot já
+ *   confiável de `sendText`/`sendMedia`), campos alternativos `location`/`contact`/`poll` no lugar
+ *   de `text`. Pesquisa desta rodada também encontrou (e corrigiu) um gap em `sendMedia`: figurinha
+ *   (`kind: 'sticker'`) agora usa esse mesmo endpoint com um campo dedicado `sticker: {url|content}`
+ *   que CONVERTE para WebP via FFmpeg no servidor — ver nota "Sticker — gap fechado" em
+ *   `sendMedia` abaixo.
  */
 const QUEPASA_CAPABILITIES: CapabilitySet = [
   'instance.status',
@@ -127,6 +137,9 @@ const QUEPASA_CAPABILITIES: CapabilitySet = [
   'messages.edit',
   'messages.delete',
   'messages.markRead',
+  'messages.sendLocation',
+  'messages.sendContactCard',
+  'messages.sendPoll',
   'groups.getInviteLink',
   'contacts.getProfilePicture',
   'chats.archive',
@@ -164,6 +177,9 @@ export function quepasa(options: QuepasaOptions): WaAdapter {
     edit: (input) => editMessage(http, input),
     delete: (input) => deleteMessage(http, input),
     markRead: (input) => markMessageRead(http, input),
+    sendLocation: (input) => sendLocation(http, options.token, input),
+    sendContactCard: (input) => sendContactCard(http, options.token, input),
+    sendPoll: (input) => sendPoll(http, options.token, input),
   };
 
   // Só o único endpoint de grupo confirmado pela pesquisa (ver QUEPASA_CAPABILITIES acima).
@@ -362,17 +378,20 @@ function stripDataUriPrefix(base64: string): string {
  * adapter não precisa replicar essa lógica — só repassa `text`/`fileName` e deixa o servidor
  * decidir.
  *
- * **Sticker**: o enum `WhatsappMessageType` DO INCLUI um `StickerMessageType` real (confirmado
- * lendo `whatsapp_message_type.go` no snapshot mais recente, `deivisonrpg/quepasa` — serializa como
- * a string literal `"sticker"`, o mesmo tipo que este adapter já reconhece na RECEPÇÃO de webhooks,
- * ver `KIND_BY_TYPE`/`parseWebhookUnsafe`). O que de fato falta, e é a razão real do `INVALID_INPUT`
- * abaixo, é um caminho de auto-detecção por mimetype no ENVIO: `GetMessageType`
- * (`whatsapp_extensions.go`) não tem nenhum case para `image/webp` — um `kind: 'sticker'` enviado
- * via `/sendurl`/`/sendencoded` seria classificado pelo servidor como `DocumentMessageType` comum,
- * não como figurinha de verdade no WhatsApp. Em vez de mandar silenciosamente algo diferente do que
- * o chamador pediu, este adapter lança `INVALID_INPUT` para `kind: 'sticker'` — mas por ausência de
- * rota de envio, não por ausência do tipo no modelo (correção de um erro deste dossiê: a versão
- * anterior afirmava que o tipo não existia).
+ * **Sticker — gap fechado (achado durante a pesquisa da ADR-0014)**: o enum `WhatsappMessageType`
+ * DO INCLUI um `StickerMessageType` real (confirmado lendo `whatsapp_message_type.go`), mas a
+ * auto-detecção por mimetype em `GetMessageType` (`whatsapp_extensions.go`) de fato não reconhece
+ * `image/webp` — enviar `kind: 'sticker'` via `/sendurl`/`/sendencoded` (que dependem dessa
+ * auto-detecção) seria classificado como documento genérico, não figurinha. **O que a versão
+ * anterior deste dossiê não tinha encontrado**: existe um caminho de envio DEDICADO que não passa
+ * por essa auto-detecção — `POST /send` (mesmo commit, `api_handlers+SendController.go`, endpoint
+ * também registrado nas famílias legacy e v3/bot, mesma confiança de `/sendtext`/`/sendurl`)
+ * aceita um campo `sticker: {url?, content?}` que é resolvido por `ResolveStickerAttachment`
+ * (`api_sticker.go`) — baixa/decodifica o conteúdo e CONVERTE para WebP 512×512 via FFmpeg
+ * server-side quando necessário (pula a conversão se o mimetype de entrada já for
+ * `image/webp`/`video/webp`). `content` aceita base64 cru OU data URI indistintamente
+ * (`decodeStickerContent` detecta o prefixo `data:` sozinho) — diferente do `content` genérico de
+ * `/sendencoded`, não precisa de `stripDataUriPrefix`. Ver docs/providers/quepasa.md#messagessendmedia.
  */
 async function sendMedia(
   http: HttpClient,
@@ -380,15 +399,7 @@ async function sendMedia(
   input: SendMediaInput,
 ): Promise<SentMessage> {
   if (input.media.kind === 'sticker') {
-    throw new WaConnectorError(
-      'INVALID_INPUT',
-      'QuePasa: não tem caminho de ENVIO para figurinha (sticker) — o servidor auto-detecta o ' +
-        'tipo da mensagem pelo mimetype e não reconhece image/webp, então trataria o envio como ' +
-        'um documento genérico, não como uma figurinha de verdade no WhatsApp (o tipo de ' +
-        'figurinha em si existe no modelo do provider e é reconhecido na recepção; ver ' +
-        'docs/providers/quepasa.md#messagessendmedia).',
-      { provider: PROVIDER },
-    );
+    return sendSticker(http, token, input);
   }
 
   const chatId = toQuepasaChatId(input.to);
@@ -418,6 +429,34 @@ async function sendMedia(
     method: 'POST',
     path: botPath(token, path),
     body,
+  });
+  return mapSendResponse(response, chatId);
+}
+
+/** Ver nota "Sticker — gap fechado" em `sendMedia` acima. Sem `caption`: `WhatsappSticker` não tem campo de texto (mesma limitação do WhatsApp real para figurinhas). */
+async function sendSticker(
+  http: HttpClient,
+  token: string,
+  input: SendMediaInput,
+): Promise<SentMessage> {
+  const chatId = toQuepasaChatId(input.to);
+  const sticker: Record<string, unknown> = {};
+  if (input.media.url !== undefined) {
+    sticker.url = input.media.url;
+  } else if (input.media.base64 !== undefined) {
+    sticker.content = input.media.base64;
+  } else {
+    throw new WaConnectorError(
+      'INVALID_INPUT',
+      'QuePasa: sendMedia exige "media.url" ou "media.base64".',
+      { provider: PROVIDER },
+    );
+  }
+
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: botPath(token, '/send'),
+    body: { chatId, sticker },
   });
   return mapSendResponse(response, chatId);
 }
@@ -521,6 +560,83 @@ async function deleteMessage(http: HttpClient, input: DeleteMessageInput): Promi
  */
 async function markMessageRead(http: HttpClient, input: MarkMessageReadInput): Promise<void> {
   await http.request({ method: 'POST', path: '/read', body: [input.messageId] });
+}
+
+/**
+ * `POST /send` (ADR-0014; `api_handlers+SendController.go`, handler `SendAny` — MESMO handler já
+ * usado por `sendText`/`sendMedia` via os aliases `/sendtext`/`/sendurl`/`/sendencoded`, família
+ * v3/bot já confiável, não a v5-JWT). Corpo: `{chatId, location: {latitude, longitude, name?,
+ * address?}}` (`whatsapp.WhatsappLocation`, confirmado por struct + exemplo literal no swagger do
+ * handler). `SendLocationInput.name`/`.address` mapeiam direto para os campos homônimos
+ * (`address`/`url` também existem no schema, mas só `name`/`address` têm equivalente no contrato
+ * canônico). Resposta: reaproveita `mapSendResponse` (mesmo envelope de `sendtext`/`sendurl`).
+ */
+async function sendLocation(
+  http: HttpClient,
+  token: string,
+  input: SendLocationInput,
+): Promise<SentMessage> {
+  const chatId = toQuepasaChatId(input.to);
+  const location: Record<string, unknown> = {
+    latitude: input.latitude,
+    longitude: input.longitude,
+  };
+  if (input.name) location.name = input.name;
+  if (input.address) location.address = input.address;
+
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: botPath(token, '/send'),
+    body: { chatId, location },
+  });
+  return mapSendResponse(response, chatId);
+}
+
+/**
+ * `POST /send` (ADR-0014; mesmo handler `SendAny` de `sendLocation` acima). Corpo: `{chatId,
+ * contact: {phone, name, vcard?}}` (`whatsapp.WhatsappContact`) — `vcard` é OPCIONAL e
+ * auto-gerado pelo servidor quando ausente (confirmado na doc do handler: "vcard (string,
+ * optional): Full vCard string (auto-generated if not provided)") — diferente de Whapi/Wuzapi,
+ * este provider NÃO exige que o adapter monte a string vCard. `SendContactCardInput.contactName`/
+ * `.contactPhone` mapeiam direto para `name`/`phone`.
+ */
+async function sendContactCard(
+  http: HttpClient,
+  token: string,
+  input: SendContactCardInput,
+): Promise<SentMessage> {
+  const chatId = toQuepasaChatId(input.to);
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: botPath(token, '/send'),
+    body: { chatId, contact: { phone: input.contactPhone, name: input.contactName } },
+  });
+  return mapSendResponse(response, chatId);
+}
+
+/**
+ * `POST /send` (ADR-0014; mesmo handler `SendAny` de `sendLocation`/`sendContactCard` acima).
+ * Corpo: `{chatId, poll: {question, options, selections?}}` (`whatsapp.WhatsappPoll`) —
+ * `selections` é o NÚMERO MÁXIMO de opções que o respondente pode marcar, default `1` (escolha
+ * única) quando omitido. `SendPollInput.allowMultipleAnswers` mapeia para `selections:
+ * options.length` (qualquer número de opções) quando `true`; omitido (default `1` do servidor)
+ * quando `false`/ausente.
+ */
+async function sendPoll(
+  http: HttpClient,
+  token: string,
+  input: SendPollInput,
+): Promise<SentMessage> {
+  const chatId = toQuepasaChatId(input.to);
+  const poll: Record<string, unknown> = { question: input.question, options: input.options };
+  if (input.allowMultipleAnswers) poll.selections = input.options.length;
+
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: botPath(token, '/send'),
+    body: { chatId, poll },
+  });
+  return mapSendResponse(response, chatId);
 }
 
 // ---------------------------------------------------------------------------

@@ -418,6 +418,19 @@ fontes (`openapi.json` oficial + páginas `docs/how-to/`).
 (`toWahaChatId`/`encodeURIComponent`, função `messagePath` estendida com um `suffix` opcional para
 `pin`/`unpin`).
 
+## Conteúdo estruturado (`messages.sendLocation`/`sendContactCard`/`sendPoll`, ADR-0014)
+
+Cobertura 3/3 — mesma fonte (`openapi.json` oficial + páginas `docs/how-to/send-messages/`).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.sendLocation` | `POST /api/sendLocation` | Confirmado no `openapi.json` (operationId `ChattingController_sendLocation`, schema `MessageLocationRequest` — confiança Alta). Body: `{chatId, latitude, longitude, title, session}` — **`title` é campo obrigatório no schema, não há `address`** (o `WALocation` de RECEPÇÃO tem `address`/`url`/`description`/`thumbnail`/`live`, mas o request de ENVIO só aceita `title`); `SendLocationInput.address` não tem para onde ir neste provider e é ignorado. `input.name` mapeia para `title`; ausente vira string vazia. |
+| `messages.sendContactCard` | `POST /api/sendContactVcard` | Confirmado no `openapi.json` (operationId `ChattingController_sendContactVcard`, schema `MessageContactVcardRequest` — confiança **Média**, o schema `oneOf` tem um segundo formato `Contact`/vCard bruto não totalmente capturado). Body: `{session, chatId, contacts: [{fullName, phoneNumber}]}` — o schema aceita um ARRAY de contatos (`VCardContact`), mas `SendContactCardInput` só modela um contato; este adapter sempre envia um array de 1 elemento. `whatsappId`/`organization` (opcionais no schema) não têm de onde vir no contrato canônico e são omitidos. |
+| `messages.sendPoll` | `POST /api/sendPoll` | Confirmado no `openapi.json` (operationId `ChattingController_sendPoll`, schema `MessagePollRequest` — confiança Alta). Body: `{session, chatId, poll: {name, options, multipleAnswers}}` — `question`/`options`/`allowMultipleAnswers` mapeiam direto para `name`/`options`/`multipleAnswers` (booleano puro, sem tradução de escala). A doc recomenda salvar o `id` da resposta (`201`) para casar com votos recebidos via webhook (`poll.vote`/`poll.vote.failed`, este último indicando falha de decriptação por falta de storage persistente) — não modelado nesta fase, fora do escopo de ENVIO. |
+
+Resposta `201` das 3 operações: `WAMessage` completo, mesmo shape reaproveitado por
+`mapSentMessage` (mesmo padrão de `sendText`/`sendMedia`/`forward`).
+
 ## Conversas (`chats.*`, retrofit ADR-0012)
 
 Namespace novo (ADR-0012) de gestão de estado de conversa. Cobertura real na pesquisa de

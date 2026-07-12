@@ -362,6 +362,16 @@ fontes (`openapi.yaml` oficial).
 | `messages.pin` / `messages.unpin` | `POST` / `DELETE /messages/{MessageID}/pin` (`operationId: pinMessage`/`unpinMessage`, `:2580-2649`) | Corpo `Pin {time}` só no `POST` (`:8893-8904`) — enum `day`\|`week`\|`month` (fixação COM prazo, diferente do star permanente). Nota de spec: o `example` do campo (`2592000`, segundos) é inconsistente com o próprio enum de strings — possível erro de doc do provider. `PinMessageInput` não expõe duração (ADR-0013); este adapter usa **`'day'`** como default para `pin` (decisão própria, valor mais conservador do enum). `unpin` é `DELETE`, sem corpo. |
 | `messages.markRead` | `PUT /messages/{MessageID}` (`operationId: markMessageAsRead`, `:2388-2418`) | Sem corpo. Marca UMA mensagem específica (e, por extensão de protocolo, a conversa até ali) como lida — distinto de `chats.markRead` (`PATCH /chats/{ChatID}` com `mark_unread: false`, ADR-0012), que atua no nível do chat inteiro. |
 
+## Conteúdo estruturado (`messages.sendLocation`/`sendContactCard`/`sendPoll`, ADR-0014)
+
+Cobertura 3/3, confiança **Alta** para as 3, mesma fonte (`openapi.yaml` oficial).
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.sendLocation` | `POST /messages/location` (`operationId: sendMessageLocation`, `openapi.yaml:1299`) | Corpo `SenderLocation`/`MessageContentLocation` (`:11362-11406`): `latitude`/`longitude` obrigatórios; `address`/`name` mapeados de `SendLocationInput` (opcionais no schema); `url`/`preview`/`accuracy`/`speed`/`degrees`/`comment` (demais opcionais do schema) sem campo equivalente no contrato canônico, não enviados. Sem "hasWhatsApp" nem verificação de coordenada — conteúdo livre. |
+| `messages.sendContactCard` | `POST /messages/contact` (`operationId: sendMessageContact`, `:1417`) | Corpo `SenderContact`/`VCard`: `name`/`vcard` obrigatórios — cartão de contato único em vCard CRU, sem normalização de telefone pelo Whapi. **Este provider não monta o vCard a partir de campos soltos** (diferente de Evolution/uazapi/Z-API); `SendContactCardInput` só expõe `contactName`/`contactPhone` — este adapter monta a string vCard mínima localmente (`buildVcard`: `FN:{name}` + `TEL;type=CELL;type=VOICE;waid={phone}:+{phone}`, mesmo formato que a Evolution confirma gerar server-side). |
+| `messages.sendPoll` | `POST /messages/poll` (`operationId: sendMessagePoll`, `:1560`) | Corpo `MessagePropsPoll` (`:12652-12674`): `title`/`options` (2-12 itens) obrigatórios; `count` **inverte a convenção intuitiva** — `0` permite múltipla escolha, `1` restringe a uma só. `SendPollInput.allowMultipleAnswers` mapeia para `count: 0`/`count: 1`. |
+
 ## Conversas (`chats.*`, ADR-0012)
 
 Namespace novo de gestão de ESTADO da conversa (distinto de `messages.*`, que age sobre UMA

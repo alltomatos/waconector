@@ -27,7 +27,10 @@ import type {
   MarkMessageReadInput,
   MediaRef,
   PinMessageInput,
+  SendContactCardInput,
+  SendLocationInput,
   SendMediaInput,
+  SendPollInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
@@ -68,6 +71,9 @@ export interface ConnectorMessagesApi {
   pin(input: PinMessageInput): Promise<void>;
   unpin(input: PinMessageInput): Promise<void>;
   markRead(input: MarkMessageReadInput): Promise<void>;
+  sendLocation(input: SendLocationInput): Promise<SentMessage>;
+  sendContactCard(input: SendContactCardInput): Promise<SentMessage>;
+  sendPoll(input: SendPollInput): Promise<SentMessage>;
 }
 
 /**
@@ -204,6 +210,18 @@ export class WaConnector {
       markRead: (input) =>
         this.callMessagesMethod('markRead', 'messages.markRead', (fn) =>
           fn(this.prepareMarkMessageRead(input)),
+        ),
+      sendLocation: (input) =>
+        this.callMessagesMethod('sendLocation', 'messages.sendLocation', (fn) =>
+          fn(this.prepareSendLocation(input)),
+        ),
+      sendContactCard: (input) =>
+        this.callMessagesMethod('sendContactCard', 'messages.sendContactCard', (fn) =>
+          fn(this.prepareSendContactCard(input)),
+        ),
+      sendPoll: (input) =>
+        this.callMessagesMethod('sendPoll', 'messages.sendPoll', (fn) =>
+          fn(this.prepareSendPoll(input)),
         ),
     };
 
@@ -460,12 +478,67 @@ export class WaConnector {
     return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
   }
 
+  private prepareSendLocation(input: SendLocationInput): SendLocationInput {
+    if (typeof input.latitude !== 'number' || !Number.isFinite(input.latitude)) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'messages.sendLocation exige "latitude" numérica.',
+        {
+          provider: this.provider,
+        },
+      );
+    }
+    if (typeof input.longitude !== 'number' || !Number.isFinite(input.longitude)) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'messages.sendLocation exige "longitude" numérica.',
+        { provider: this.provider },
+      );
+    }
+    return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
+  }
+
+  private prepareSendContactCard(input: SendContactCardInput): SendContactCardInput {
+    if (typeof input.contactName !== 'string' || input.contactName.length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'messages.sendContactCard exige "contactName" não vazio.',
+        { provider: this.provider },
+      );
+    }
+    if (typeof input.contactPhone !== 'string' || input.contactPhone.length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'messages.sendContactCard exige "contactPhone" não vazio.',
+        { provider: this.provider },
+      );
+    }
+    return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
+  }
+
+  private prepareSendPoll(input: SendPollInput): SendPollInput {
+    if (typeof input.question !== 'string' || input.question.length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'messages.sendPoll exige "question" não vazia.', {
+        provider: this.provider,
+      });
+    }
+    if (!Array.isArray(input.options) || input.options.length < 2) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'messages.sendPoll exige "options" com pelo menos 2 itens.',
+        { provider: this.provider },
+      );
+    }
+    return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
+  }
+
   /**
    * Guard-rail comum aos métodos opcionais de `MessagesApi` (`sendReaction`/`edit`/`delete`/
-   * `forward`/`star`/`unstar`/`pin`/`unpin`/`markRead`) — generaliza o que antes era inline só
-   * para `sendReaction` (ADR-0008), sem mudar o texto do erro nem o comportamento observável.
-   * Reaproveitado para `edit`/`delete` (ADR-0012) e `forward`/`star`/`unstar`/`pin`/`unpin`/
-   * `markRead` (ADR-0013).
+   * `forward`/`star`/`unstar`/`pin`/`unpin`/`markRead`/`sendLocation`/`sendContactCard`/
+   * `sendPoll`) — generaliza o que antes era inline só para `sendReaction` (ADR-0008), sem mudar o
+   * texto do erro nem o comportamento observável. Reaproveitado para `edit`/`delete` (ADR-0012),
+   * `forward`/`star`/`unstar`/`pin`/`unpin`/`markRead` (ADR-0013) e `sendLocation`/
+   * `sendContactCard`/`sendPoll` (ADR-0014).
    */
   private async callMessagesMethod<K extends keyof MessagesApi, R>(
     method: K,

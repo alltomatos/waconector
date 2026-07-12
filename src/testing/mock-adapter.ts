@@ -130,6 +130,33 @@ export class MockAdapter implements WaAdapter {
         this.assertConnected();
         this.readMessageIds.add(input.messageId);
       },
+      sendLocation: async (input) => {
+        this.assertConnected();
+        return {
+          id: `mock-${++this.seq}`,
+          chatId: input.to,
+          timestamp: Date.now(),
+          raw: { mock: true, input },
+        };
+      },
+      sendContactCard: async (input) => {
+        this.assertConnected();
+        return {
+          id: `mock-${++this.seq}`,
+          chatId: input.to,
+          timestamp: Date.now(),
+          raw: { mock: true, input },
+        };
+      },
+      sendPoll: async (input) => {
+        this.assertConnected();
+        return {
+          id: `mock-${++this.seq}`,
+          chatId: input.to,
+          timestamp: Date.now(),
+          raw: { mock: true, input },
+        };
+      },
     };
 
     this.groups = {

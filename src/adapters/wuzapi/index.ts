@@ -39,7 +39,10 @@ import type {
   MediaRef,
   MessageAck,
   MessageKind,
+  SendContactCardInput,
+  SendLocationInput,
   SendMediaInput,
+  SendPollInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
@@ -103,6 +106,9 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'messages.edit',
   'messages.delete',
   'messages.markRead',
+  'messages.sendLocation',
+  'messages.sendContactCard',
+  'messages.sendPoll',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -156,6 +162,9 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     edit: (input) => editMessage(http, input),
     delete: (input) => deleteMessage(http, input),
     markRead: (input) => markMessageRead(http, input),
+    sendLocation: (input) => sendLocation(http, input),
+    sendContactCard: (input) => sendContactCard(http, input),
+    sendPoll: (input) => sendPoll(http, input),
   };
 
   const groups: GroupsApi = {
@@ -531,6 +540,83 @@ async function markMessageRead(http: HttpClient, input: MarkMessageReadInput): P
     path: '/chat/markread',
     body: { Id: [input.messageId], ChatPhone: toWuzapiPhone(input.to) },
   });
+}
+
+/**
+ * `POST /chat/send/location` (ADR-0014; documentado no `API.md` e confirmado em código-fonte,
+ * `handlers.go`). Corpo: `{Phone, Name?, Latitude, Longitude}`. **Nuance documentada no próprio
+ * código**: a validação de obrigatoriedade é `if t.Latitude == 0 { ... }`/`if t.Longitude == 0 {
+ * ... }` — o servidor NÃO distingue "campo ausente" de "0.0 exato"; uma localização real no
+ * equador/meridiano de Greenwich seria rejeitada como "faltando" (limitação real do provider, não
+ * deste adapter). Resposta confirmada: mesmo envelope `{Details,Timestamp,Id}` de `sendText`.
+ */
+async function sendLocation(http: HttpClient, input: SendLocationInput): Promise<SentMessage> {
+  const phone = toWuzapiPhone(input.to);
+  const body: Record<string, unknown> = {
+    Phone: phone,
+    Latitude: input.latitude,
+    Longitude: input.longitude,
+  };
+  if (input.name) body.Name = input.name;
+
+  const response = await http.request<WuzapiEnvelope>({
+    method: 'POST',
+    path: '/chat/send/location',
+    body,
+  });
+  return mapSentMessage(response, phone);
+}
+
+/**
+ * `POST /chat/send/contact` (ADR-0014; documentado no `API.md` e confirmado em código-fonte).
+ * Corpo: `{Phone, Name (obrigatório), Vcard (obrigatório, string vCard 3.0 completa)}` — **este
+ * provider não monta o vCard a partir de campos soltos** (diferente de Evolution/uazapi/Z-API);
+ * `SendContactCardInput` só expõe `contactName`/`contactPhone` soltos, então este adapter monta a
+ * string vCard mínima localmente (`buildVcard`, mesmo formato `FN`/`TEL;type=CELL;waid=` que a
+ * Evolution confirma gerar server-side, usado aqui como formato mínimo seguro).
+ */
+async function sendContactCard(
+  http: HttpClient,
+  input: SendContactCardInput,
+): Promise<SentMessage> {
+  const phone = toWuzapiPhone(input.to);
+  const response = await http.request<WuzapiEnvelope>({
+    method: 'POST',
+    path: '/chat/send/contact',
+    body: {
+      Phone: phone,
+      Name: input.contactName,
+      Vcard: buildVcard(input.contactName, input.contactPhone),
+    },
+  });
+  return mapSentMessage(response, phone);
+}
+
+/**
+ * `POST /chat/send/poll` (ADR-0014; confiança Alta no endpoint/código-fonte, Média no formato de
+ * "capability" canônica — não documentado no `API.md`). Corpo com tags JSON MINÚSCULAS (diferente
+ * do padrão PascalCase-sem-tag do resto da API): `{group, header, options}` — apesar do nome do
+ * campo, `group` é validado pelo mesmo parser genérico de `Phone` usado em mensagens 1:1
+ * (`validateMessageFields`), então aceita qualquer JID (indivíduo ou grupo), não só `@g.us`; o
+ * nome é só uma pista de uso pretendido, não uma restrição de fato. **`allowMultipleAnswers` é
+ * ignorado**: `BuildPollCreation` é chamado com `selectableOptionsCount` HARDCODED em `1` no
+ * código-fonte — só enquetes de escolha única são suportadas por este endpoint, sem exceção
+ * (limitação real do provider, documentada aqui em vez de fingir suporte). Resposta **diferente**
+ * dos demais endpoints: `{"Details":"Poll sent successfully","Id":"<msgid>"}` — sem `Timestamp`.
+ */
+async function sendPoll(http: HttpClient, input: SendPollInput): Promise<SentMessage> {
+  const recipient = toWuzapiPhone(input.to);
+  const response = await http.request<WuzapiEnvelope>({
+    method: 'POST',
+    path: '/chat/send/poll',
+    body: { group: recipient, header: input.question, options: input.options },
+  });
+  return mapSentMessage(response, recipient);
+}
+
+/** Ver `sendContactCard`: vCard 3.0 mínimo, mesmo formato que a Evolution confirma gerar server-side. */
+function buildVcard(name: string, phone: string): string {
+  return `BEGIN:VCARD\nVERSION:3.0\nFN:${name}\nTEL;type=CELL;type=VOICE;waid=${phone}:+${phone}\nEND:VCARD`;
 }
 
 // ---------------------------------------------------------------------------

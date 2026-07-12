@@ -17,7 +17,10 @@ import type {
   JoinGroupInviteInput,
   MarkMessageReadInput,
   PinMessageInput,
+  SendContactCardInput,
+  SendLocationInput,
   SendMediaInput,
+  SendPollInput,
   SendReactionInput,
   SendTextInput,
   SentMessage,
@@ -78,6 +81,12 @@ export interface MessagesApi {
   unpin?(input: PinMessageInput): Promise<void>;
   /** Opcional: só implementado por adapters que declaram a capability `messages.markRead`. Ver ADR-0013. */
   markRead?(input: MarkMessageReadInput): Promise<void>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.sendLocation`. Ver ADR-0014. */
+  sendLocation?(input: SendLocationInput): Promise<SentMessage>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.sendContactCard`. Ver ADR-0014. */
+  sendContactCard?(input: SendContactCardInput): Promise<SentMessage>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.sendPoll`. Ver ADR-0014. */
+  sendPoll?(input: SendPollInput): Promise<SentMessage>;
 }
 
 /**

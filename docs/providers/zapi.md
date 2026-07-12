@@ -188,6 +188,18 @@ página consultada (índice `llms.txt` completo); busca negativa confirmada, nã
 `messages.sendText`/`contacts.*` — não o tratamento sintético de `groupId` (ver seção "Grupos"
 acima).
 
+## Conteúdo estruturado (`messages.sendLocation`/`sendContactCard`/`sendPoll`, ADR-0014)
+
+Cobertura 3/3. `sendPoll` já estava no relatório de pesquisa original desta rodada (confiança
+Média-Alta); `sendLocation`/`sendContactCard` **não estavam** — confirmados via verificação ao
+vivo (`developer.z-api.io` + mirror GitHub raw da doc) durante a implementação desta ADR.
+
+| Operação canônica | Endpoint | Confiança | Observações |
+| --- | --- | --- | --- |
+| `messages.sendLocation` | `POST /send-location` | Alta (verificação ao vivo) | Body `{phone, title, address, latitude, longitude}` — `SendLocationInput.name` mapeia para `title` (ambos tratados como o mesmo rótulo do pin); campos ausentes no input não são enviados. Resposta: mesmo shape `{zaapId, messageId, id}` de `send-text`. |
+| `messages.sendContactCard` | `POST /send-contact` | Alta (verificação ao vivo) | Body `{phone, contactName, contactPhone}` — campos soltos, **sem vCard**: diferente de Whapi/Wuzapi, este provider aceita nome/telefone diretamente e monta a mensagem de contato internamente (não precisa de um helper `buildVcard` como os outros dois). |
+| `messages.sendPoll` | `POST /send-poll` | Média-Alta | Body `{phone, message, poll: [{name}], pollMaxOptions}` — `question` mapeia para `message`; `options` mapeia para um array de OBJETOS `{name}` (não strings soltas, diferente da maioria dos outros adapters pesquisados). `pollMaxOptions: 1` é a forma documentada de simular escolha única; a doc afirma que sem esse campo o padrão parece ser múltipla escolha — este adapter sempre envia o valor explícito (`options.length` para múltipla escolha) em vez de depender desse default implícito não confirmado contra instância real. Endpoint irmão `POST /send-poll-vote` existe para a própria instância votar (`{phone, pollMessageId, pollVote: [{name}]}`) — fora do escopo desta ADR (só ENVIO). |
+
 ### Mapeamento de status → `InstanceState`
 
 | Z-API `connected` | `InstanceState` |

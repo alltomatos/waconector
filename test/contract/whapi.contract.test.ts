@@ -131,6 +131,43 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    // messages.sendLocation (ADR-0014): POST /messages/location. Checado ANTES do
+    // messageIdMatch genérico abaixo (mesmo prefixo de path, "location" não é um MessageID real).
+    if (method === 'POST' && pathname === '/messages/location') {
+      return jsonResponse(200, {
+        sent: true,
+        message: {
+          id: 'whapi-fake-location',
+          chat_id: `${RECIPIENT}@s.whatsapp.net`,
+          timestamp: 1712995410,
+        },
+      });
+    }
+
+    // messages.sendContactCard (ADR-0014): POST /messages/contact.
+    if (method === 'POST' && pathname === '/messages/contact') {
+      return jsonResponse(200, {
+        sent: true,
+        message: {
+          id: 'whapi-fake-contact',
+          chat_id: `${RECIPIENT}@s.whatsapp.net`,
+          timestamp: 1712995420,
+        },
+      });
+    }
+
+    // messages.sendPoll (ADR-0014): POST /messages/poll.
+    if (method === 'POST' && pathname === '/messages/poll') {
+      return jsonResponse(200, {
+        sent: true,
+        message: {
+          id: 'whapi-fake-poll',
+          chat_id: `${RECIPIENT}@s.whatsapp.net`,
+          timestamp: 1712995430,
+        },
+      });
+    }
+
     const reactionMatch = pathname.match(/^\/messages\/(.+)\/reaction$/);
     if ((method === 'PUT' || method === 'DELETE') && reactionMatch) {
       return jsonResponse(200, { success: true });
@@ -1198,6 +1235,98 @@ describe('whapi adapter: comportamento específico do provider', () => {
 
     expect(capturedMethod).toBe('PUT');
     expect(capturedBody).toBeUndefined();
+  });
+
+  it('messages.sendLocation envia {to, latitude, longitude, name, address} para POST /messages/location', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/messages/location') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendLocation({
+      to: RECIPIENT,
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+      address: 'Av. Principal, 100',
+    });
+
+    expect(sent.chatId).toBe(`${RECIPIENT}@s.whatsapp.net`);
+    expect(capturedBody).toEqual({
+      to: RECIPIENT,
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+      address: 'Av. Principal, 100',
+    });
+  });
+
+  it('messages.sendContactCard monta um vCard a partir de contactName/contactPhone para POST /messages/contact', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/messages/contact') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendContactCard({
+      to: RECIPIENT,
+      contactName: 'Fulano',
+      contactPhone: '5511988888888',
+    });
+
+    expect(sent.chatId).toBe(`${RECIPIENT}@s.whatsapp.net`);
+    expect(capturedBody?.to).toBe(RECIPIENT);
+    expect(capturedBody?.name).toBe('Fulano');
+    expect(capturedBody?.vcard).toContain('FN:Fulano');
+    expect(capturedBody?.vcard).toContain('waid=5511988888888:+5511988888888');
+  });
+
+  it('messages.sendPoll envia {to, title, options, count} para POST /messages/poll (count invertido: 0=múltipla, 1=única)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/messages/poll') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const sent = await wa.messages.sendPoll({
+      to: RECIPIENT,
+      question: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+      allowMultipleAnswers: true,
+    });
+
+    expect(sent.chatId).toBe(`${RECIPIENT}@s.whatsapp.net`);
+    expect(capturedBody).toEqual({
+      to: RECIPIENT,
+      title: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+      count: 0,
+    });
   });
 
   it('chats.archive/unarchive enviam POST /chats/{ChatID} com {archive: boolean}', async () => {

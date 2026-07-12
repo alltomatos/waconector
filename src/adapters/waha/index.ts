@@ -88,6 +88,9 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'messages.pin',
   'messages.unpin',
   'messages.markRead',
+  'messages.sendLocation',
+  'messages.sendContactCard',
+  'messages.sendPoll',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -352,6 +355,80 @@ export function waha(options: WahaOptions): WaAdapter {
         path: '/api/sendSeen',
         body: { chatId, messageIds: [input.messageId], session },
       });
+    },
+
+    /**
+     * `POST /api/sendLocation` (ADR-0014; `operationId ChattingController_sendLocation`, schema
+     * `MessageLocationRequest` — confiança Alta, página dedicada com exemplo curl idêntico). Body:
+     * `{chatId, latitude, longitude, title, session}` — **`title` é campo obrigatório no schema,
+     * não há `address`** (o `WALocation` de RECEPÇÃO tem `address`/`url`/`description`, mas o
+     * request de ENVIO só aceita `title`); `input.address` do contrato canônico não tem para onde
+     * ir neste provider e é ignorado. `input.name` mapeia para `title`; se ausente, envia string
+     * vazia (o schema exige o campo presente, não necessariamente não-vazio).
+     */
+    sendLocation: async (input) => {
+      const chatId = toWahaChatId(input.to);
+      const body = await http.request<unknown>({
+        method: 'POST',
+        path: '/api/sendLocation',
+        body: {
+          chatId,
+          latitude: input.latitude,
+          longitude: input.longitude,
+          title: input.name ?? '',
+          session,
+        },
+      });
+      return mapSentMessage(body, chatId);
+    },
+
+    /**
+     * `POST /api/sendContactVcard` (ADR-0014; `operationId ChattingController_sendContactVcard`,
+     * schema `MessageContactVcardRequest` — confiança Média, formatos alternativos do schema
+     * `oneOf` não totalmente capturados). Body: `{session, chatId, contacts: [{fullName,
+     * phoneNumber}]}` — array de contatos no schema (`VCardContact`), mas `SendContactCardInput`
+     * do contrato canônico só modela um único contato; este adapter sempre envia um array de 1
+     * elemento. `whatsappId`/`organization` (campos opcionais do schema) não têm de onde vir no
+     * contrato canônico e são omitidos.
+     */
+    sendContactCard: async (input) => {
+      const chatId = toWahaChatId(input.to);
+      const body = await http.request<unknown>({
+        method: 'POST',
+        path: '/api/sendContactVcard',
+        body: {
+          session,
+          chatId,
+          contacts: [{ fullName: input.contactName, phoneNumber: input.contactPhone }],
+        },
+      });
+      return mapSentMessage(body, chatId);
+    },
+
+    /**
+     * `POST /api/sendPoll` (ADR-0014; `operationId ChattingController_sendPoll`, schema
+     * `MessagePollRequest` — confiança Alta). Body: `{session, chatId, poll: {name, options,
+     * multipleAnswers}}` — `question`/`options`/`allowMultipleAnswers` do contrato canônico mapeiam
+     * direto para `name`/`options`/`multipleAnswers` (booleano, sem tradução de escala). A doc
+     * recomenda salvar o `id` da resposta para casar com votos recebidos via webhook
+     * (`poll.vote`/`poll.vote.failed`) — não modelado nesta fase (fora do escopo de ENVIO).
+     */
+    sendPoll: async (input) => {
+      const chatId = toWahaChatId(input.to);
+      const body = await http.request<unknown>({
+        method: 'POST',
+        path: '/api/sendPoll',
+        body: {
+          session,
+          chatId,
+          poll: {
+            name: input.question,
+            options: input.options,
+            multipleAnswers: !!input.allowMultipleAnswers,
+          },
+        },
+      });
+      return mapSentMessage(body, chatId);
     },
   };
 

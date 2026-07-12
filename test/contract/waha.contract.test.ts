@@ -335,6 +335,42 @@ function createFetchStub(): typeof globalThis.fetch {
       return new Response(null, { status: 201 });
     }
 
+    // messages.sendLocation (ADR-0014): POST /api/sendLocation. Resposta 201: WAMessage completo.
+    if (method === 'POST' && pathname === '/api/sendLocation') {
+      return jsonResponse(201, {
+        id: 'true_5585999999999@c.us_MOCKLOCATION0000001',
+        timestamp: 1735689600,
+        from: '5585999999999@c.us',
+        fromMe: true,
+        to: '5585999999999@c.us',
+        hasMedia: false,
+      });
+    }
+
+    // messages.sendContactCard (ADR-0014): POST /api/sendContactVcard.
+    if (method === 'POST' && pathname === '/api/sendContactVcard') {
+      return jsonResponse(201, {
+        id: 'true_5585999999999@c.us_MOCKCONTACT00000001',
+        timestamp: 1735689600,
+        from: '5585999999999@c.us',
+        fromMe: true,
+        to: '5585999999999@c.us',
+        hasMedia: false,
+      });
+    }
+
+    // messages.sendPoll (ADR-0014): POST /api/sendPoll.
+    if (method === 'POST' && pathname === '/api/sendPoll') {
+      return jsonResponse(201, {
+        id: 'true_5585999999999@c.us_MOCKPOLL000000001',
+        timestamp: 1735689600,
+        from: '5585999999999@c.us',
+        fromMe: true,
+        to: '5585999999999@c.us',
+        hasMedia: false,
+      });
+    }
+
     throw new Error(`fetchStub: rota não configurada — ${method} ${pathname}`);
   };
 }
@@ -1285,6 +1321,109 @@ describe('WAHA adapter: comportamento específico do provider', () => {
       chatId: '5585999999999@c.us',
       messageIds: ['MOCKREAD001'],
       session: SESSION,
+    });
+  });
+
+  it('messages.sendLocation chama POST /api/sendLocation com {chatId, latitude, longitude, title, session}', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendLocation({
+      to: '5585999999999',
+      latitude: -3.7,
+      longitude: -38.5,
+      name: 'Escritório',
+    });
+
+    expect(sent.chatId).toBe('5585999999999@c.us');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe('/api/sendLocation');
+    expect(calls[0]?.body).toEqual({
+      chatId: '5585999999999@c.us',
+      latitude: -3.7,
+      longitude: -38.5,
+      title: 'Escritório',
+      session: SESSION,
+    });
+  });
+
+  it('messages.sendContactCard chama POST /api/sendContactVcard com {session, chatId, contacts: [{fullName, phoneNumber}]}', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendContactCard({
+      to: '5585999999999',
+      contactName: 'Fulano',
+      contactPhone: '5585988888888',
+    });
+
+    expect(sent.chatId).toBe('5585999999999@c.us');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe('/api/sendContactVcard');
+    expect(calls[0]?.body).toEqual({
+      session: SESSION,
+      chatId: '5585999999999@c.us',
+      contacts: [{ fullName: 'Fulano', phoneNumber: '5585988888888' }],
+    });
+  });
+
+  it('messages.sendPoll chama POST /api/sendPoll com {session, chatId, poll: {name, options, multipleAnswers}}', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendPoll({
+      to: '5585999999999',
+      question: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+      allowMultipleAnswers: true,
+    });
+
+    expect(sent.chatId).toBe('5585999999999@c.us');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe('/api/sendPoll');
+    expect(calls[0]?.body).toEqual({
+      session: SESSION,
+      chatId: '5585999999999@c.us',
+      poll: { name: 'Qual sua cor favorita?', options: ['Azul', 'Verde'], multipleAnswers: true },
     });
   });
 
