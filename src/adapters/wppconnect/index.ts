@@ -20,6 +20,9 @@ import { HttpClient } from '../../core/http';
 import type {
   CheckExistsResult,
   ConnectResult,
+  Contact,
+  ContactAbout,
+  ContactProfilePicture,
   CreateGroupInput,
   GroupInfo,
   GroupInviteLink,
@@ -99,21 +102,31 @@ export interface WppconnectOptions {
 const PROVIDER = 'wppconnect';
 
 /**
- * Só as capabilities com endpoint E shape de resposta confirmados pela pesquisa
- * (docs/providers/wppconnect.md). Deliberadamente de fora, com justificativa registrada no
- * dossiê:
+ * Capabilities com endpoint E shape de resposta confirmados pela pesquisa
+ * (docs/providers/wppconnect.md). Só `instance.pairingCode` fica deliberadamente de fora, com
+ * justificativa registrada no dossiê:
  * - `instance.pairingCode`: mesmo obstáculo estrutural de todo adapter deste pacote —
  *   `InstanceApi.connect()` não recebe telefone como parâmetro, e o WPPConnect só produz pairing
  *   code quando `phone` é enviado no body de `start-session` (momento de criação da sessão).
- * - `groups.list`: o único endpoint de listagem (`GET /all-groups`) está marcado como
- *   `#swagger.deprecated` pelo próprio provider ("Deprecated in favor of 'list-chats'") e a
- *   pesquisa não confirma o shape de resposta — implementar exigiria adivinhar.
- * - `contacts.list`/`contacts.get`/`contacts.getProfilePicture`/`contacts.getAbout`: os endpoints
- *   existem (`/all-contacts`, `/contact/:phone`, `/profile-pic/:phone`, `/profile-status/:phone`),
- *   mas a pesquisa não trouxe o shape de resposta de nenhum dos quatro (só a transformação do lado
- *   do request). `contacts.checkExists`/`block`/`unblock`/`listBlocked` SÃO implementadas porque a
- *   pesquisa confirma o shape de resposta dos quatro (a primeira via reuso do middleware
- *   `statusConnection`, que consome `checkNumberStatus` internamente).
+ *
+ * `groups.list` e as 4 operações de `contacts.*` abaixo foram reavaliadas descendo à LIB
+ * subjacente (`@wppconnect-team/wppconnect`, não só o controller fino do server, que era a fonte
+ * da versão anterior deste dossiê) — o shape de resposta de todas está tipado
+ * (`src/api/model/*.ts`) ou visível no script injetado (`src/lib/wapi/functions/*.js`), então
+ * nenhuma segue sendo gap por "shape não confirmado":
+ * - `groups.list`: o único endpoint dedicado (`GET /all-groups`) está `#swagger.deprecated`
+ *   ("Deprecated in favor of 'list-chats'") — usamos o substituto, `POST /list-chats`
+ *   (`listChats(options?: ChatListOptions): Promise<Chat[]>`), com `{onlyGroups: true}` filtrando
+ *   só grupos. Ver `listGroups`.
+ * - `contacts.list`/`contacts.get`: `GET /all-contacts`/`GET /contact/:phone` — shape confirmado
+ *   pelo script injetado real (`get-all-contacts.js`/`get-contact.js`):
+ *   `WAPI._serializeContactObj(...)`, consistente com a interface `Contact` da lib. Ver
+ *   `mapContact`.
+ * - `contacts.getProfilePicture`: `GET /profile-pic/:phone` → `getProfilePicFromServer(chatId):
+ *   Promise<ProfilePicThumbObj>` (assinatura tipada). Ver `getContactProfilePicture`.
+ * - `contacts.getAbout`: `GET /profile-status/:phone` → `getStatus(contactId):
+ *   Promise<ContactStatus>` (assinatura tipada, montagem do retorno visível no código-fonte da
+ *   lib). Ver `getContactAbout`.
  */
 const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'instance.connect',
@@ -124,6 +137,7 @@ const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'messages.sendReaction',
   'groups.create',
   'groups.getInfo',
+  'groups.list',
   'groups.addParticipants',
   'groups.removeParticipants',
   'groups.promoteParticipants',
@@ -135,7 +149,11 @@ const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'groups.revokeInviteLink',
   'groups.joinViaInviteLink',
   'groups.leaveGroup',
+  'contacts.list',
+  'contacts.get',
   'contacts.checkExists',
+  'contacts.getProfilePicture',
+  'contacts.getAbout',
   'contacts.block',
   'contacts.unblock',
   'contacts.listBlocked',
@@ -170,6 +188,7 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
   const groups: GroupsApi = {
     create: (input) => createGroup(http, session, input),
     getInfo: (groupId) => getGroupInfo(http, session, groupId),
+    list: () => listGroups(http, session),
     addParticipants: (input) => updateGroupParticipants(http, session, input, 'add'),
     removeParticipants: (input) => updateGroupParticipants(http, session, input, 'remove'),
     promoteParticipants: (input) => updateGroupParticipants(http, session, input, 'promote'),
@@ -184,7 +203,11 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
   };
 
   const contacts: ContactsApi = {
+    list: () => listContacts(http, session),
+    get: (chatId) => getContact(http, session, chatId),
     checkExists: (phone) => checkContactExists(http, session, phone),
+    getProfilePicture: (chatId) => getContactProfilePicture(http, session, chatId),
+    getAbout: (chatId) => getContactAbout(http, session, chatId),
     block: (chatId) => blockContact(http, session, chatId),
     unblock: (chatId) => unblockContact(http, session, chatId),
     listBlocked: () => listBlockedContacts(http, session),
@@ -416,6 +439,13 @@ async function logoutInstance(http: HttpClient, session: string): Promise<void> 
  * **Não se aplica** aos endpoints de sessão (`start-session`/`status-session`/`logout-session`/
  * `generate-token`), que têm shapes próprios com significado semântico no próprio campo `status`
  * (ver `connectInstance`/`statusInstance`).
+ *
+ * **Segunda exceção confirmada, isolada**: `POST /list-chats` (`groups.list`, ver `listGroups`)
+ * também foge do envelope — `DeviceController.listChats` responde `res.status(200).json(response)`
+ * sem embrulho, diferente de todos os outros handlers de mensagem/grupo/contato verificados. Esta
+ * função "funciona" para `/list-chats` só porque `asRecord` rejeita arrays e cai no `return body`
+ * bruto, que por coincidência já é o array cru esperado — não remover essa checagem defensiva de
+ * array sem revalidar `listGroups`.
  */
 function unwrapResponse(body: unknown): unknown {
   const record = asRecord(body);
@@ -820,9 +850,117 @@ async function leaveGroupCall(http: HttpClient, session: string, groupId: string
   });
 }
 
+/**
+ * `POST /list-chats` (== `DeviceController.listChats` do server → `listChats(options?:
+ * ChatListOptions): Promise<Chat[]>` da lib). Substitui `GET /all-groups`
+ * (`GroupController.getAllGroups`), confirmado `#swagger.deprecated` ("Deprecated in favor of
+ * 'list-chats'") — não usado por este adapter. Body `{onlyGroups: true}` filtra a listagem para só
+ * devolver grupos (sem esse filtro, `listChats` devolveria TODOS os chats, incluindo conversas
+ * individuais).
+ *
+ * **Resposta SEM envelope — anomalia confirmada e isolada deste único endpoint do provider**:
+ * diferente de literalmente todos os outros handlers verificados (`getGroupInfo`,
+ * `getAllContacts`, `getContact`, `getProfilePicFromServer`, `getStatus`, `getBlockList`,
+ * `blockContact`, `unblockContact`, `checkNumberStatus`, `createGroup`, ...), que respondem
+ * `res.json({status: 'success', response})`, `DeviceController.listChats` termina com
+ * `res.status(200).json(response)` (confirmado no commit `f09e2fed`,
+ * `src/controller/deviceController.ts`, tanto nesse commit pinado quanto em HEAD do branch main —
+ * não é drift de branch). Ou seja, o corpo HTTP É o array `Chat[]` (`src/api/model/chat.ts` da
+ * lib) BRUTO: `{id: Wid, name, isGroup, archive, pin, unreadCount, ephemeralDuration, ...}`, nunca
+ * `{status, response, mapper}`. Ver `unwrapResponse` para o porquê disso não quebrar hoje. **Note
+ * também a limitação de conteúdo**: `Chat` não carrega a lista de participantes — só
+ * `groups.getInfo` traz isso. Este adapter mapeia `participants: []` de propósito (não inventado);
+ * quem precisar da lista completa deve encadear `groups.getInfo(id)` por grupo depois de listar.
+ */
+async function listGroups(http: HttpClient, session: string): Promise<GroupInfo[]> {
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: sessionPath(session, '/list-chats'),
+    body: { onlyGroups: true },
+  });
+  // `unwrapResponse` acerta aqui só "por acidente": o corpo cru já É o array (ver docstring acima),
+  // e `asRecord` rejeita arrays (`Array.isArray` -> undefined), então `unwrapResponse` cai no
+  // `return body` bruto — que por coincidência é exatamente o array que queremos. Não simplificar
+  // `unwrapResponse`/`asRecord` assumindo que todo endpoint segue o envelope `{status, response}`
+  // sem revalidar este caso especificamente.
+  const items = unwrapResponse(response);
+  const array = Array.isArray(items) ? items : [];
+  return array.map((item) => mapChatToGroupInfo(item));
+}
+
+/** `Chat.id` é um `Wid` (`{..., _serialized}`) — mesmo padrão de `extractChatId` usado no resto do arquivo. */
+function mapChatToGroupInfo(item: unknown): GroupInfo {
+  const data = asRecord(item);
+  return {
+    id: extractChatId(data?.id) ?? '',
+    subject: asString(data?.name) ?? '',
+    // `Chat` não expõe participantes (ver docstring de `listGroups`) — vazio de propósito, nunca
+    // inventado a partir de outro campo.
+    participants: [],
+    raw: item,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // contacts.*
 // ---------------------------------------------------------------------------
+
+/**
+ * `GET /all-contacts` (== `DeviceController.getAllContacts` do server → script injetado
+ * `get-all-contacts.js`): `WPP.whatsapp.ContactStore.map(c => WAPI._serializeContactObj(c))` — um
+ * array do MESMO shape usado por `contacts.get` (ver `mapContact`).
+ */
+async function listContacts(http: HttpClient, session: string): Promise<Contact[]> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: sessionPath(session, '/all-contacts'),
+  });
+  const items = unwrapResponse(response);
+  const array = Array.isArray(items) ? items : [];
+  return array.map((item) => mapContact(item));
+}
+
+/**
+ * `GET /contact/:phone` (== `DeviceController.getContact` do server → script injetado
+ * `get-contact.js`): `return window.WAPI._serializeContactObj(found)`. **Confiança média-alta**
+ * (script injetado real, não a interface TS tipada diretamente da lib) — ver
+ * docs/providers/wppconnect.md.
+ */
+async function getContact(http: HttpClient, session: string, chatId: string): Promise<Contact> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: sessionPath(session, `/contact/${encodeURIComponent(chatId)}`),
+  });
+  return mapContact(unwrapResponse(response));
+}
+
+/**
+ * Mapeia o objeto montado por `WAPI._serializeContactObj` (comum a `contacts.list`/`contacts.get`):
+ * `{...serializeRawObj(obj), formattedName, isHighLevelVerified, isMe, isMyContact, isPSA, isUser,
+ * isVerified, isWAContact, profilePicThumbObj, statusMute, msgs: null}` — consistente com a
+ * interface `Contact` da lib (`src/api/model/contact.ts`: `id, name, pushname, shortName, type`).
+ * `name` prioriza o nome salvo na agenda (`name`), caindo para `pushname`/`formattedName`/
+ * `shortName` quando ausente. `profilePictureUrl` só é populado quando `profilePicThumbObj` vem
+ * embutido no próprio objeto de contato, preferindo `imgFull` sobre `img` (mesmo padrão "prefira a
+ * versão full" já usado por outros adapters deste pacote, ex.: Whapi `profile_pic_full`/
+ * `profile_pic`). `about`/`isBlocked` ficam sempre `undefined` aqui — este payload não carrega
+ * recado nem status de bloqueio (endpoints dedicados: `contacts.getAbout`/`contacts.listBlocked`).
+ */
+function mapContact(value: unknown): Contact {
+  const data = asRecord(value);
+  const thumb = asRecord(data?.profilePicThumbObj);
+  return {
+    id: extractChatId(data?.id) ?? '',
+    name:
+      asString(data?.name) ??
+      asString(data?.pushname) ??
+      asString(data?.formattedName) ??
+      asString(data?.shortName),
+    hasWhatsApp: asBoolean(data?.isWAContact),
+    profilePictureUrl: thumb ? (asString(thumb.imgFull) ?? asString(thumb.img)) : undefined,
+    raw: value,
+  };
+}
 
 /**
  * `GET /check-number-status/:phone`. O corpo da resposta HTTP em si não tem um exemplo literal na
@@ -847,6 +985,50 @@ async function checkContactExists(
     chatId: idRecord ? asString(idRecord._serialized) : undefined,
     raw: response,
   };
+}
+
+/**
+ * `GET /profile-pic/:phone` (== `DeviceController.getProfilePicFromServer` do server → lib
+ * `getProfilePicFromServer(chatId): Promise<ProfilePicThumbObj>`, assinatura tipada). Resposta
+ * (dentro do envelope): `ProfilePicThumbObj` (`src/api/model/profile-pic-thumb.ts`):
+ * `{eurl, id, img, imgFull, raw: null, tag}`. Prioriza `imgFull` sobre `img` (mesmo padrão "prefira
+ * a versão full" de `mapContact`/de outros adapters deste pacote). Ausência de foto/privacidade
+ * fecha o contato não é modelada aqui como caso especial — se o provider responder sem `img`/
+ * `imgFull`, `url` fica `undefined` (nunca inventado).
+ */
+async function getContactProfilePicture(
+  http: HttpClient,
+  session: string,
+  chatId: string,
+): Promise<ContactProfilePicture> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: sessionPath(session, `/profile-pic/${encodeURIComponent(chatId)}`),
+  });
+  const data = asRecord(unwrapResponse(response));
+  return { url: asString(data?.imgFull) ?? asString(data?.img), raw: response };
+}
+
+/**
+ * `GET /profile-status/:phone` (== `DeviceController.getStatus` do server → lib
+ * `getStatus(contactId): Promise<ContactStatus>`). Montagem do retorno confirmada no código-fonte
+ * da lib: `return {id: contactId, status: (status as any)?.status || status}`. Resposta (dentro do
+ * envelope): `ContactStatus` (`src/api/model/contact-status.ts`): `{id, status, stale?}`. `status`
+ * mapeia para `about` — string vazia é tratada como "sem recado" (mesma convenção do resto deste
+ * pacote para campos opcionais textuais).
+ */
+async function getContactAbout(
+  http: HttpClient,
+  session: string,
+  chatId: string,
+): Promise<ContactAbout> {
+  const response = await http.request<unknown>({
+    method: 'GET',
+    path: sessionPath(session, `/profile-status/${encodeURIComponent(chatId)}`),
+  });
+  const data = asRecord(unwrapResponse(response));
+  const about = asString(data?.status);
+  return { about: about === '' ? undefined : about, raw: response };
 }
 
 /** `POST /block-contact`, body `{phone}`. Resposta ignorada — contrato retorna `Promise<void>`. */
