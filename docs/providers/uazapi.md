@@ -422,7 +422,8 @@ tráfego real.
   — uma resposta `200` só indica enfileiramento, não sucesso de entrega (falhas exigem consultar
   `GET/POST /message/find?status=failed`, fora do escopo desta fase). O adapter nunca envia
   `async:true`.
-- Suporta placeholders estilo Mustache (`{{name}}`, `{{wa_name}}`, `{{lead_*}}`) em texto/legenda —
+- Suporta placeholders estilo Mustache (<code v-pre>{{name}}</code>, <code v-pre>{{wa_name}}</code>,
+  <code v-pre>{{lead_*}}</code>) em texto/legenda —
   recurso de CRM embutido do provider, tratado como texto opaco por este adapter (nenhuma
   substituição client-side).
 - Usa tanto JIDs tradicionais (`@s.whatsapp.net`) quanto o novo "LID" (Linked ID) de privacidade do

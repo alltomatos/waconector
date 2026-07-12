@@ -22,6 +22,10 @@ npm run lint          # biome check .
 npm run lint:fix      # biome check --write .
 npm run build         # tsup → dist/ (ESM + CJS + tipos)
 npm run smoke         # exercita o pacote empacotado (rode após build)
+
+npm run docs:capabilities # gera docs/capabilities.md a partir do código (rode após build)
+npm run docs:dev          # site de documentação (VitePress) local, com hot reload
+npm run docs:build        # build de produção do site em docs/.vitepress/dist
 ```
 
 ## Antes de codificar
@@ -80,7 +84,8 @@ A metodologia completa está em [docs/providers/README.md](docs/providers/README
 5. **Adicione o subpath export**: entrada em `tsup.config.ts` (`entry`) e em `package.json`
    (`exports`), seguindo o padrão dos adapters existentes.
 6. Rode `npm run lint && npm run typecheck && npm test && npm run build && npm run smoke` antes de
-   abrir o PR.
+   abrir o PR. Se as capabilities mudaram, rode também `npm run docs:capabilities` e commite o
+   `docs/capabilities.md` atualizado — o CI falha se ele ficar desatualizado.
 
 Não é necessário implementar todas as capabilities de um provider de uma vez — declarar um
 subconjunto honesto (documentado no dossiê) é melhor que fingir suporte completo.

@@ -7,6 +7,7 @@
 
 [![CI](https://github.com/alltomatos/waconector/actions/workflows/ci.yml/badge.svg)](https://github.com/alltomatos/waconector/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/waconector)](https://www.npmjs.com/package/waconector)
+[![Docs](https://img.shields.io/badge/docs-site-blue)](https://alltomatos.github.io/waconector/)
 
 **Status: em desenvolvimento (v0.x).** Core de contratos, conector, eventos canônicos, `MockAdapter`
 e suite de contrato prontos; adapters **WAHA**, **Evolution GO** (F1), **uazapi**, **Z-API**,
@@ -84,6 +85,10 @@ Roadmap completo e arquitetura em [docs/CONTEXT.md](docs/CONTEXT.md); decisões 
 [CONTRIBUTING.md](CONTRIBUTING.md) e comece pelo dossiê:
 [docs/providers/README.md](docs/providers/README.md).
 
+Site de documentação completo (com busca e a
+[matriz de capabilities](https://alltomatos.github.io/waconector/capabilities) gerada do código):
+<https://alltomatos.github.io/waconector/>.
+
 ## Desenvolvimento
 
 ```bash
@@ -94,6 +99,11 @@ npm run typecheck     # tsc --noEmit
 npm run lint          # biome
 npm run build         # tsup → dist/ (ESM + CJS + tipos)
 npm run smoke         # valida o pacote empacotado (exports ESM/CJS + fluxo completo)
+
+npm run docs:capabilities # gera docs/capabilities.md a partir do código (roda após build)
+npm run docs:dev          # site de documentação (VitePress) local, com hot reload
+npm run docs:build        # build de produção do site em docs/.vitepress/dist
+npm run docs:preview      # serve o build de produção localmente
 ```
 
 Guia completo de contribuição (convenções, checklist de QA, como propor um adapter novo) em

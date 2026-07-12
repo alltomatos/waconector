@@ -176,7 +176,16 @@ Estado: **in_progress**
       regressão explícitos. Mergeado via
       [PR #26](https://github.com/alltomatos/waconector/pull/26). **Fecha os 3 adapters
       originalmente escopados para F3 (Whapi/QuePasa/WPPConnect).**
-- [ ] Site de docs com matriz de capabilities gerada do código
+- [x] Site de docs com matriz de capabilities gerada do código — VitePress publicado via GitHub
+      Pages (`docs/.vitepress/`, consumindo `docs/` já existente sem duplicar conteúdo;
+      `docs/agents/**` excluído da navegação pública via `srcExclude`). `docs/capabilities.md`
+      gerado por `scripts/generate-capabilities-matrix.mjs`, reaproveitando a técnica de
+      instanciação fake do `scripts/smoke.mjs` (lista `ADAPTER_SUBPATHS` extraída para
+      `scripts/adapter-subpaths.mjs`, compartilhada pelos dois, para eliminar risco de divergência).
+      CI (`ci.yml`) ganhou um step de drift-check (regenera e compara) e um job `docs-build`
+      independente; deploy novo (`docs-deploy.yml`) só em push para `main`, usando
+      `GITHUB_TOKEN`/OIDC nativo (sem secret novo). Pré-requisito manual do usuário: habilitar
+      GitHub Pages nas configurações do repositório (Settings → Pages → Source: GitHub Actions).
 - [ ] Exemplos de bot (Express/Next), `npx waconector doctor`
 
 ## Epic 5 — v1.0

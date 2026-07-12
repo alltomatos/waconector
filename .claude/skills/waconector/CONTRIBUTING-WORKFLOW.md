@@ -80,6 +80,7 @@ npm test              # inclui a suite de contrato compartilhada
 npm run test:coverage # thresholds em vitest.config.ts são um piso, não uma meta — ver docs/CONTEXT.md
 npm run build
 npm run smoke
+npm run docs:capabilities # só se capabilities mudaram — CI falha se docs/capabilities.md ficar desatualizado
 ```
 
 Os thresholds de cobertura são calibrados contra o baseline real (não inventados) — subi-los nos
