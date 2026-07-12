@@ -384,7 +384,23 @@ pesquisa já produzidos na Epic 7 (`scratchpad/provider-reports/`), sem repetir 
       de fato não suporta sticker, mas existe um endpoint irmão que sim. Implementado sem
       `Workflow`/`Agent`. QA gate completo verde: 737 testes, cobertura 90.19%/68.23%/99.36%/91.81%
       (acima dos thresholds 77/60/90/80).
-- [ ] `presence.*` (ADR-0015).
+- [x] **`presence.*`** (ADR-0015, [PR #38](https://github.com/alltomatos/waconector/pull/38)) —
+      primeiro namespace inteiramente novo desta rodada (`WaAdapter.presence?`, mesmo padrão
+      opcional de `chats?`). Cobertura por método: `setTyping` 7/8 (só Z-API sem), `set` 5/8
+      (WAHA/uazapi/Wuzapi/Whapi/WPPConnect), `subscribe` 4/8 (WAHA/Wuzapi/Whapi/WPPConnect). Z-API
+      fica sem nenhum dos 3 — busca negativa confirmada (só `delayTyping` como efeito colateral de
+      `send-text`, e um webhook de recepção). Achado que mudou o cálculo de risco do WPPConnect: o
+      relatório original só tinha encontrado o webhook `onPresenceChanged`; verificação ao vivo
+      encontrou 4 rotas de ENVIO reais (`/typing`, `/recording`, `/set-online-presence`,
+      `/subscribe-presence`), dando cobertura 3/3 ao adapter. `presence.get` deliberadamente fora
+      de escopo (cobertura 2/8, shapes de resposta divergentes demais para unificar com confiança).
+      Implementado sem `Workflow`/`Agent`. QA gate completo verde: 766 testes, cobertura
+      90.41%/68.5%/99.38%/92% (acima dos thresholds 77/60/90/80). Merge da PR exigiu reconciliar um
+      conflito com `main` causado pelo workflow de squash-merge (branch `develop` mantém histórico
+      completo enquanto `main` recebe commits squashed por PR, fazendo o merge-base recuar a cada
+      rodada) — resolvido mantendo o lado `develop` (superset estrito do conteúdo de `main` em
+      todos os hunks, exceto `docs/capabilities.md`, regenerado do zero via
+      `npm run docs:capabilities`).
 - [ ] `labels.*` (ADR-0016).
 - [ ] `channels.*`/`newsletters.*` (ADR-0017).
 - [ ] `business.*` (ADR-0018).
