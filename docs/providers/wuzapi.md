@@ -117,6 +117,146 @@ dessa identidade.
 
 `instance.pairingCode` **não** foi declarada (ver justificativa acima).
 
+## Capabilities implementadas nesta fase (ADR-0012: edição/exclusão de mensagem + `chats.*`)
+
+`messages.edit`, `messages.delete`, `chats.archive`, `chats.unarchive`.
+
+> ⚠️ **Nota de metodologia**: nesta rodada, o relatório de pesquisa dedicado (1 agente por
+> provider, mesma metodologia das rodadas anteriores — ver ADR-0012) não estava disponível para o
+> Wuzapi no momento da implementação. As seções abaixo ("Edição e exclusão de mensagem",
+> "Conversas (`chats.*`)") foram verificadas **diretamente contra o código-fonte público** de
+> `asternic/wuzapi` (`routes.go`, `handlers.go`, `wmiau.go`; branch `main`, verificado em
+> 2026-07-12) em vez de a partir daquele relatório — mesmo padrão de citação de fonte primária já
+> usado no resto deste dossiê, só que sem o relatório intermediário.
+>
+> Isso também **corrige** uma leitura possível do achado registrado em ADR-0012 ("Wuzapi não tem
+> NENHUMA das 8 operações candidatas exceto `archive` — busca exaustiva em código sem resultado
+> para mute/pin/markRead/markUnread"): a verificação direta confirma que `chats.unarchive` também
+> está coberta (mesmo endpoint de `archive`, variando um booleano — ver seção dedicada abaixo), e
+> que `POST /chat/markread` **existe** no código, ainda que não sirva ao contrato canônico
+> `chats.markRead(chatId)` (ver justificativa na mesma seção). O achado de ADR-0012 permanece
+> correto para `mute`/`unmute`/`pin`/`unpin` (nenhum endpoint equivalente encontrado) e para
+> `markUnread` (nenhum endpoint, nem incompatível nem compatível — simplesmente não existe).
+
+## Edição e exclusão de mensagem
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.edit` | `POST /chat/send/edit` | Corpo `{Phone, Body, Id}`. Ver subseção dedicada abaixo. |
+| `messages.delete` | `POST /chat/delete` | Corpo `{Phone, Id}`. Ver subseção dedicada abaixo. |
+
+### `messages.edit` — `POST /chat/send/edit`
+
+Confirmado no código-fonte (`handlers.go`, func `SendEditMessage`; registrado em `routes.go`).
+Corpo: `{Phone, Body, Id}` — `Phone` recebe o mesmo tratamento de `sendText`/`sendReaction`
+(`toWuzapiPhone`, identidade — o servidor usa o mesmo `parseJID` lenient, aceitando dígitos crus ou
+JID explícito); `Body` é o **novo texto** (reaproveita o mesmo nome de campo de `sendText`); `Id` é
+o id da mensagem original a editar (`EditMessageInput.messageId`).
+
+Internamente o handler monta um `waE2E.Message{ExtendedTextMessage:{Text: &Body}}` e chama
+`BuildEdit(recipient, msgid, msg)` do whatsmeow, via `SendMessage` — é uma edição real, não um
+reenvio. **Sem validação de janela de tempo no código** (nenhum prazo é checado no servidor — um
+eventual limite de ~15min do WhatsApp real, se existir, só se manifestaria como erro HTTP em
+runtime, nunca validado client-side — mesma conclusão da ADR-0012 para os demais providers
+pesquisados). O struct do servidor também aceita um `ContextInfo` opcional (`StanzaID`/
+`Participant`/`MentionedJID`) — não exposto por `EditMessageInput` (sem campo canônico
+equivalente), então não é enviado; a ausência não impede a edição (o campo é opcional no decode).
+
+**Resposta confirmada**: mesmo envelope `{"Details":"Sent","Timestamp":<unix seconds>,"Id":"<id>"}`
+de `sendText`/`sendReaction` — aqui `Id` é o **eco** do id requisitado (editar não gera um novo id
+de mensagem). Mapeado com a mesma `mapSentMessage` já usada pelas demais operações de envio, sem
+alteração.
+
+### `messages.delete` — `POST /chat/delete`
+
+Confirmado no código-fonte (`handlers.go`, func `DeleteMessage`; registrado em `routes.go`). Corpo:
+`{Phone, Id}` — mesmo tratamento de `Phone` via `toWuzapiPhone` (identidade).
+
+Internamente o handler chama `BuildRevoke(recipient, types.EmptyJID, msgid)` do whatsmeow — o
+segundo parâmetro vazio (`types.EmptyJID`) é a convenção do whatsmeow para "revogar uma mensagem
+que a própria sessão enviou" (só é possível revogar mensagens próprias). **Sempre revogação para
+todos os participantes**, nunca um "apagar só localmente" — não há nenhum campo de escopo no corpo
+aceito pelo servidor, coerente com `DeleteMessageInput` do contrato canônico (sem campo de escopo —
+ver ADR-0012). Mesmo mecanismo (`BuildRevoke`, protocolo real do whatsmeow) citado na própria ADR
+como confirmado "a fundo" para este provider.
+
+**Resposta confirmada**: `{"Details":"Deleted","Timestamp":<unix seconds>,"Id":"<id>"}` (`Id` = eco
+do id requisitado) — inteiramente ignorada, contrato retorna `Promise<void>`.
+
+## Conversas (`chats.*`)
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `chats.archive` | `POST /chat/archive` (`archive: true`) | Ver subseção dedicada abaixo. |
+| `chats.unarchive` | `POST /chat/archive` (`archive: false`) | MESMO endpoint de `chats.archive`. |
+
+`chats.mute`/`chats.unmute`/`chats.pin`/`chats.unpin`/`chats.markRead`/`chats.markUnread` **não**
+foram declaradas — ver justificativas nas subseções abaixo.
+
+### `chats.archive`/`chats.unarchive` — `POST /chat/archive`, endpoint único com parâmetro booleano
+
+Confirmado no código-fonte (`handlers.go`, func `ArchiveChat`; registrado em `routes.go`). Corpo:
+`{jid, archive}` — **atenção de nomenclatura**: tags JSON minúsculas (`jid`/`archive`), diferente da
+maioria dos outros endpoints deste provider (PascalCase sem tag) — mesma exceção já documentada
+para `groups.create` (`name`/`participants`). `archive` é um booleano: o mesmo endpoint cobre as
+duas direções (`true` = arquivar, `false` = desarquivar) — mesmo padrão de endpoint único
+reaproveitado por parâmetro já usado neste adapter em `getInviteLink`/`revokeInviteLink`
+(`reset`) e em `addParticipants`/`removeParticipants`/`promoteParticipants`/`demoteParticipants`
+(`Action`).
+
+Internamente o handler chama `client.SendAppState(ctx, appstate.BuildArchive(chatJID, t.Archive,
+time.Time{}, nil))` — é uma mutação real de app-state sincronizada com o WhatsApp (não um estado
+só local do servidor Wuzapi).
+
+> ⚠️ **Conversão de `chatId` necessária — divergência confirmada em como o `jid` é parseado neste
+> endpoint especificamente**: diferente de TODO outro endpoint deste adapter (que, do lado do
+> servidor, passam pelo helper interno lenient `parseJID` do Wuzapi — aceita dígitos crus,
+> completando com `@s.whatsapp.net` quando a string não contém `@`), o handler `ArchiveChat` chama
+> `types.ParseJID` (função crua da lib `whatsmeow`) **diretamente** sobre o campo `jid`, sem passar
+> pelo wrapper lenient. `types.ParseJID` exige um `@` na própria string — sem ele, o servidor
+> responde 400 ("invalid Chat JID format") antes mesmo de tentar a operação. Ou seja, um `chatId`
+> em dígitos crus (sem `@`), que funciona normalmente em `messages.sendText`/`sendReaction`/
+> `chat/delete`/`chat/send/edit` neste mesmo provider, **falharia** em `chats.archive`/
+> `chats.unarchive` se repassado como está. Este adapter completa o sufixo `@s.whatsapp.net`
+> quando o `chatId` recebido não contém `@` (`toWuzapiChatJid`), para que as duas operações aceitem
+> o mesmo formato de entrada (dígitos ou JID explícito) que todo o resto do adapter — sem essa
+> conversão, um consumidor que só usa números de telefone (o caso mais comum) teria
+> `chats.archive`/`chats.unarchive` quebrados de forma não óbvia.
+
+Resposta confirmada: `{"success": true, "message": "Chat archived"|"Chat unarchived"}` (dentro do
+envelope padrão `data`) — inteiramente ignorada, contrato retorna `Promise<void>` para as duas
+operações.
+
+### `chats.mute`/`chats.unmute`/`chats.pin`/`chats.unpin` — não implementadas, sem endpoint
+
+Busca exaustiva em `routes.go` (todas as rotas registradas via `s.router.Handle(...)`, branch
+`main`, 2026-07-12) não encontra nenhum handler equivalente a mutar ou fixar uma conversa — confirma
+o achado já registrado em ADR-0012 para este subconjunto específico. Se uma versão futura do
+servidor adicionar esses endpoints, esta seção precisa ser revisitada.
+
+### `chats.markRead`/`chats.markUnread` — não implementadas, apesar de `POST /chat/markread` existir
+
+Diferente do subconjunto acima, **existe** um endpoint `POST /chat/markread` (`handlers.go`, func
+`MarkRead`; registrado em `routes.go`) — achado que a pesquisa resumida em ADR-0012 não previu
+especificamente para este provider (a ADR generaliza "Wuzapi não tem nenhuma [operação de
+`chats.*`] exceto archive", o que se mostra impreciso para este caso específico: o endpoint existe,
+só não serve ao contrato canônico — ver abaixo).
+
+O corpo aceito é `{Id: string[], ChatPhone, SenderPhone, Chat?, Sender?}` — **`Id` é obrigatório e é
+uma lista de ids de MENSAGEM** (`len(t.Id) < 1` é rejeitado com 400 "missing Id in Payload"), não
+apenas um `chatId`. Ou seja, este endpoint implementa a operação de **nível de mensagem** ("marcar
+estas mensagens específicas como lidas") que a própria ADR-0012 reserva explicitamente para um
+eventual `messages.markRead` futuro — distinto de `chats.markRead(chatId)` (nível de chat: "marcar
+a conversa INTEIRA como lida", só com o `chatId`, sem precisar saber quais mensagens estão não
+lidas).
+
+**Não implementado** por este motivo: não há como cumprir o contrato canônico `chats.markRead
+(chatId): Promise<void>` com este endpoint sem inventar ids de mensagem ou compor uma chamada extra
+(ex.: `GET /chat/history` para descobrir mensagens não lidas antes de marcá-las) — o que violaria a
+regra de uma única chamada HTTP por operação canônica (mesmo critério já usado em ADR-0010 para
+`contacts.get`/`getAbout`). `chats.markUnread` não tem NENHUM endpoint equivalente no código-fonte
+(nem com essa limitação) — ausência total, mesma conclusão da ADR-0012.
+
 ## Operações core
 
 | Operação canônica | Endpoint | Observações |

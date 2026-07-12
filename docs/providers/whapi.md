@@ -6,15 +6,20 @@
   2026-07-11. `groups.*`/`contacts.*`/`messages.sendReaction` (auditoria de gaps, 23+1
   capabilities) revalidados no MESMO arquivo `openapi.yaml` (`info.version: 1.8.7`, ainda 13.141
   linhas) em 2026-07-11 — sem deriva de spec detectada entre as duas consultas.
+  `messages.edit`/`messages.delete` e as 8 operações de `chats.*` (ADR-0012) revalidados no MESMO
+  arquivo (`info.version: 1.8.7`, 13.141 linhas, byte-a-byte idêntico) em 2026-07-12 — de novo, sem
+  deriva de spec.
 - Hospedagem: SaaS — host único `https://gate.whapi.cloud` para todos os clientes. Existe uma API
   **separada** (`manager.whapi.cloud`, "Partner API") para criar/gerenciar canais programaticamente
   — fora do escopo deste adapter, ver "Limites e particularidades".
 
-> **Escopo**: 29/30 capabilities do core — todas exceto `instance.pairingCode` (obstáculo
+> **Escopo**: 39/40 capabilities do core — todas exceto `instance.pairingCode` (obstáculo
 > estrutural do contrato, não do provider — ver "Capabilities confirmadas mas não implementadas").
 > `messages.sendReaction`, as 14 operações de `groups.*` e as 8 de `contacts.*` foram implementadas
 > numa rodada posterior às capabilities núcleo (`instance.*`/`messages.sendText`/`sendMedia`/
-> `webhooks.parse`) — ver "Grupos" e "Contatos" abaixo.
+> `webhooks.parse`) — ver "Grupos" e "Contatos" abaixo. `messages.edit`/`messages.delete` e as 8
+> operações de `chats.*` (ADR-0012) foram implementadas numa terceira rodada — ver "Edição e
+> exclusão de mensagem" e "Conversas (`chats.*`)" abaixo.
 
 ## Autenticação
 
@@ -124,11 +129,13 @@ Reaproveitado tanto por `instance.status()` (`GET /health`) quanto pelo webhook 
 ## Capabilities implementadas
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
-`messages.sendMedia`, `messages.sendReaction`, as 14 operações de `groups.*` (`create`, `getInfo`,
-`list`, `addParticipants`, `removeParticipants`, `promoteParticipants`, `demoteParticipants`,
-`updateSubject`, `updateDescription`, `updatePicture`, `getInviteLink`, `revokeInviteLink`,
-`joinViaInviteLink`, `leaveGroup`), as 8 de `contacts.*` (`list`, `get`, `checkExists`,
-`getProfilePicture`, `getAbout`, `block`, `unblock`, `listBlocked`) e `webhooks.parse`.
+`messages.sendMedia`, `messages.sendReaction`, `messages.edit`, `messages.delete`, as 14 operações
+de `groups.*` (`create`, `getInfo`, `list`, `addParticipants`, `removeParticipants`,
+`promoteParticipants`, `demoteParticipants`, `updateSubject`, `updateDescription`, `updatePicture`,
+`getInviteLink`, `revokeInviteLink`, `joinViaInviteLink`, `leaveGroup`), as 8 de `contacts.*`
+(`list`, `get`, `checkExists`, `getProfilePicture`, `getAbout`, `block`, `unblock`, `listBlocked`),
+as 8 de `chats.*` (`archive`, `unarchive`, `mute`, `unmute`, `pin`, `unpin`, `markRead`,
+`markUnread`) e `webhooks.parse`.
 
 Só `instance.pairingCode` **não** foi declarada — ver "Capabilities confirmadas mas não
 implementadas" ao final (obstáculo estrutural do contrato `InstanceApi.connect()`, não do
@@ -208,6 +215,58 @@ sem id próprio"); `timestamp` fica `undefined`.
 
 Round-trip de recebimento (webhook `type: "action"`, `action.type: "reaction"`) continua **não**
 implementado — cai em `kind: 'unknown'`, ver seção de webhooks.
+
+## Edição e exclusão de mensagem (ADR-0012)
+
+| Capability | Endpoint | Confiança | Observações |
+| --- | --- | --- | --- |
+| `messages.edit` | `POST /messages/text` (o MESMO endpoint de `messages.sendText`) | **Alta** | Ver nota dedicada abaixo — não é um endpoint próprio, é um campo do schema base `Sender`. |
+| `messages.delete` | `DELETE /messages/{MessageID}` (`operationId: deleteMessage`, `openapi.yaml:2419-2453`) | **Média** | Sem corpo/query, só o `messageId` no path. Ver nota de ambiguidade local/revogação abaixo. |
+
+### `messages.edit` — reaproveita `POST /messages/text`, não um endpoint dedicado
+
+Achado **fora da pesquisa de gaps original** (que cobriu a seção "ações sobre mensagem já enviada/
+recebida" do spec — `delete`/`forward`/`markAsRead`/`star`/`pin`/`get`/`list`/`comment` — mas não
+revisitou o schema de ENVIO de texto): o schema `Sender` (`openapi.yaml:12565-12587`, base
+compartilhada por TODO endpoint de envio de mensagem) tem um campo `edit`:
+
+```yaml
+edit:
+  type: string
+  description: Message ID of the message to be edited
+  pattern: ^[A-Za-z0-9._]{4,30}-[A-Za-z0-9._]{4,30}(-[A-Za-z0-9._]{2,30})?(-[A-Za-z0-9._]{2,30})?$
+```
+
+`SenderText` (`openapi.yaml:8494-8516`, corpo de `POST /messages/text` — `operationId:
+sendMessageText`, `openapi.yaml:609-676`) é `allOf: [Sender, MessagePropsText, ...]`, herdando esse
+campo. Ou seja: para editar uma mensagem de texto já enviada, este adapter reenvia
+`POST /messages/text` com `{to, body: <novo texto>, edit: <messageId>}` — o MESMO endpoint de
+`sendText`, só com o campo `edit` preenchido. Confiança **alta**: é um campo real, tipado e com
+descrição inequívoca ("Message ID of the message to be edited"), no mesmo endpoint já usado por
+este adapter — não uma inferência de nome de rota ou de convenção de terceiros. Resposta reaproveita
+o mesmo mapeamento de `sendText` (`mapSentMessage`), já que é o mesmo endpoint/schema de resposta.
+
+Como o campo `edit` está no schema BASE `Sender` (não só em `SenderText`), em tese os demais
+endpoints de envio (`/messages/image`, `/messages/video`, etc.) também aceitariam editar a legenda
+de uma mídia já enviada — **não implementado nesta fase**: `EditMessageInput` do contrato canônico
+só modela texto (ver ADR-0012), então este adapter só usa `/messages/text`.
+
+### `messages.delete` — ambiguidade local vs. revogação
+
+`DELETE /messages/{MessageID}` descreve literalmente: *"Method used to delete a text sent in a
+chat. You will be able to delete a message that you sent as well as a message that was sent by a
+contact. To use this resource you will only need the messageId of the message that you want to
+delete."* (`openapi.yaml:2450-2453`).
+
+No protocolo WhatsApp real, apagar a mensagem de **outra pessoa** "para todos" não é possível — só
+localmente (soft-delete no próprio dispositivo). O fato de a doc afirmar explicitamente que dá para
+apagar "a message that was sent by a contact" é indício de que este endpoint pode ser **"delete for
+me" (local)**, não "revoke for everyone" — mas **não há campo explícito**
+(`for_everyone`/`revoke`/`scope`) no request para confirmar nenhuma das duas leituras; é inferência
+da descrição, não citação literal de um flag. `DeleteMessageInput` (ADR-0012) não expõe escopo — a
+semântica assumida por todo o pacote, na ausência de um campo que permita escolher, é sempre
+revogação; esta nota existe para não perder essa ambiguidade específica do Whapi caso uma instância
+real revele o comportamento oposto (ver "Gaps conhecidos" ao final). Resposta `Success`, ignorada.
 
 ## Grupos (`groups.*`)
 
@@ -289,6 +348,54 @@ O path param dos endpoints `/blacklist/*` (`ContactIdOrLid`) usa um schema DIFER
 (`get`/`getProfilePicture`/`getAbout`/`checkExists`, pattern
 `^([\d]{7,15})?(@lid|@s.whatsapp.net)?$`). `block`/`unblock` removem esse sufixo quando presente
 antes de montar o path; `@lid` (já aceito pelo pattern) e dígitos crus passam intactos.
+
+## Conversas (`chats.*`, ADR-0012)
+
+Namespace novo de gestão de ESTADO da conversa (distinto de `messages.*`, que age sobre UMA
+mensagem, e de `groups.*`/`contacts.*`, que são metadados/participantes/perfil). `chatId` não é
+opaco — já chega normalizado pelo conector (mesmo tratamento de `contacts.*`); `toWhapiChatId`
+(função identidade) é reaproveitada de `messages.*`.
+
+> **Nuance de formato**: diferente de `ContactID` (`^([\d]{7,15})?(@lid|@s.whatsapp.net)?$` — sufixo
+> `@domínio` **opcional**), o schema `ChatID` usado por `/chats/{ChatID}` exige o sufixo:
+> `^(?:0@(?:c\.us|s\.whatsapp\.net)|[\d-]{10,31}@[\w\.]{1,})$` (`openapi.yaml:9753-9756`). Como
+> `normalizeChatId` (core) devolve dígitos crus quando o chamador passa só um telefone (sem `@`),
+> chamar `chats.*` com um chatId de dígitos puros passaria a validação do conector mas poderia
+> falhar contra uma instância real do Whapi — **não confirmado empiricamente** (a pesquisa não
+> exercitou uma chamada real com dígitos puros contra `/chats/{ChatID}`). Consumidores devem
+> preferir um JID explícito (`<dígitos>@s.whatsapp.net` ou `...@g.us`) ao chamar `chats.*` neste
+> adapter.
+
+| Capability | Endpoint | Confiança | Observações |
+| --- | --- | --- | --- |
+| `archive` | `POST /chats/{ChatID}` (`operationId: archiveChat`, `openapi.yaml:2833-2870`) | Alta | Corpo `ArchiveChatRequest {archive: true}` (`openapi.yaml:8968-8975`). |
+| `unarchive` | `POST /chats/{ChatID}` (MESMO endpoint) | Alta | Corpo `{archive: false}` — toggle único, sem endpoint dedicado de "desarquivar". |
+| `pin` | `PATCH /chats/{ChatID}` (`operationId: patchChat`, `openapi.yaml:2871-2910`) | Alta | Corpo `PatchChatRequest {pin: true}` (`openapi.yaml:8980-8983`) — fixa a CONVERSA no topo, sem prazo. |
+| `unpin` | `PATCH /chats/{ChatID}` (MESMO endpoint) | Alta | Corpo `{pin: false}`. |
+| `markRead` | `PATCH /chats/{ChatID}` (MESMO endpoint) | Alta | Corpo `{mark_unread: false}` (campo `PatchChatRequest.mark_unread`, `openapi.yaml:8989-8992`) — marca a CONVERSA inteira, sem precisar dos ids das mensagens. |
+| `markUnread` | `PATCH /chats/{ChatID}` (MESMO endpoint) | Alta | Corpo `{mark_unread: true}`. |
+| `mute` | `PATCH /chats/{ChatID}` (MESMO endpoint) | Alta | Corpo `{mute_until: <timestamp ms>}` (campo `PatchChatRequest.mute_until`, `openapi.yaml:8984-8988`) — ver nota de duração abaixo. |
+| `unmute` | `PATCH /chats/{ChatID}` (MESMO endpoint) | Alta | Corpo `{mute_until: 0}` — "Use 0 to unmute the chat", citação literal do spec. |
+
+### `pin`/`markRead`/`mute` compartilham um único endpoint (`PATCH /chats/{ChatID}`)
+
+`PatchChatRequest` tem **quatro** sub-ações no mesmo corpo: `pin`, `mute_until`, `mark_unread` e
+`ephemeral` (mensagens temporárias — fora do escopo desta fase, sem capability canônica
+correspondente). Cada operação canônica deste adapter envia SÓ o campo que lhe corresponde, nunca
+os demais — mesmo padrão de `groups.updateSubject`/`updateDescription` (que compartilham `PUT
+/groups/{GroupID}`), para não sobrescrever silenciosamente um ajuste que não foi pedido.
+
+### `mute`/`unmute` — sem duração no contrato canônico, `mute_until` é um timestamp
+
+`ChatsApi.mute`/`unmute` do contrato canônico (ADR-0012) não recebem duração — nenhum formato de
+duração converge entre os providers pesquisados (uazapi usa um enum de horas, WPPConnect usa
+`time`+`type` com um bug confirmado). O Whapi usa um timestamp Unix em **milissegundos**
+(`mute_until`), sem nenhum valor sentinela documentado para "silenciar para sempre" — só `0` para
+desmutar está confirmado em prosa. Este adapter escolhe **1º de janeiro de 2099 (UTC)** como
+"silenciar por muito tempo" para `mute(chatId)` — uma DECISÃO deste adapter (mesmo espírito do
+`muteEndTime: -1` do adapter uazapi, que usa o enum nativo do provider para o equivalente), não um
+default do provider. Consumidores que precisem de uma duração específica (ex.: "silenciar por 8
+horas") só têm essa granularidade via chamada direta ao provider, fora do contrato canônico.
 
 ## Webhooks
 
@@ -502,3 +609,6 @@ do WAHA, que usa HMAC real sobre o corpo bruto).
 | `AUTH`/`SYNC_ERROR` no webhook `channel` | Citados só em prosa; fixture `webhook-connection-update-auth.json` é reconstruída, `code` não confirmado. |
 | `qr` no envelope do webhook `channel` | Campo existe no schema `WebhookPayload`, mas nenhum exemplo literal capturado com QR de fato embutido. |
 | Rate limit numérico em plano pago | Nenhuma fonte oficial com número; só qualitativo (terceiros). |
+| `messages.delete` — local vs. revogação | A descrição do endpoint (`DELETE /messages/{MessageID}`) afirma que dá para apagar mensagem de um contato, o que sugeriria "delete for me" (local) em vez de "revoke for everyone" — mas não há campo explícito de escopo para confirmar. Ver seção "Edição e exclusão de mensagem". |
+| `chats.mute` — sentinela de "silenciar para sempre" | `mute_until` (timestamp ms) não documenta nenhum valor especial para "permanente" — este adapter usa 1º/jan/2099 (UTC) como decisão própria, não um default do provider. Ver seção "Conversas (`chats.*`)". |
+| `messages.edit` via campo `Sender.edit` | Campo confirmado no OpenAPI oficial (schema + descrição), mas sem exemplo de payload/resposta real capturado para uma edição de fato — mesmo nível de confiança "por schema" já aplicado ao resto deste dossiê para endpoints sem payload literal. |

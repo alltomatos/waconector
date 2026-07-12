@@ -119,6 +119,27 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'PUT' && pathname === '/edit') {
+      // Resposta REAL confirmada (`QpResponse` padrão) NÃO traz um "message" aninhado com id/chatId
+      // — ver docs/providers/quepasa.md#messagesedit---put-edit.
+      return jsonResponse(200, { success: true, status: 'message edited successfully' });
+    }
+
+    if (method === 'DELETE' && pathname.startsWith('/message/')) {
+      return jsonResponse(200, { success: true, status: 'revoked with success' });
+    }
+
+    if (method === 'POST' && pathname === '/chat/archive') {
+      return jsonResponse(200, {
+        success: true,
+        status: `chat ${RECIPIENT_JID} archived successfully`,
+      });
+    }
+
+    if (method === 'POST' && (pathname === '/chat/markread' || pathname === '/chat/markunread')) {
+      return jsonResponse(200, { success: true, message: `chat ${RECIPIENT_JID} marked as read` });
+    }
+
     throw new Error(`fetchStub (quepasa): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -437,6 +458,158 @@ describe('quepasa adapter: comportamento específico do provider', () => {
     const adapter = quepasa(buildAdapterOptions());
     expect(adapter.capabilities).not.toContain('messages.sendReaction');
     expect(adapter.messages.sendReaction).toBeUndefined();
+  });
+
+  it('messages.edit envia {messageId, content} para PUT /edit (rota legacy, não /v3/bot/{token}/...) e mapeia a resposta sem "message" aninhado (fallback no messageId/chatId requisitados)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    let requestedUrl: URL | undefined;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/edit') {
+            requestedUrl = url;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const edited = await wa.messages.edit({
+      to: RECIPIENT,
+      messageId: 'quepasa-msg-original',
+      text: 'texto editado',
+    });
+
+    expect(requestedUrl?.pathname).toBe('/edit');
+    expect(capturedBody).toEqual({ messageId: 'quepasa-msg-original', content: 'texto editado' });
+    // Resposta real (`QpResponse` padrão) não traz um "message" aninhado — fallback no messageId/
+    // chatId requisitados, não um id sintético (ver docs/providers/quepasa.md).
+    expect(edited.id).toBe('quepasa-msg-original');
+    expect(edited.chatId).toBe(RECIPIENT);
+    expect(edited.timestamp).toBeUndefined();
+    expect(edited).toHaveProperty('raw');
+  });
+
+  it('messages.delete envia DELETE /message/{messageid} (rota legacy) e ignora a resposta (sempre revoke/"apagar para todos")', async () => {
+    let requestedUrl: URL | undefined;
+    let requestedMethod: string | undefined;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.startsWith('/message/')) {
+            requestedUrl = url;
+            requestedMethod = init?.method;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.messages.delete({ to: RECIPIENT, messageId: 'quepasa-msg-apagada' });
+
+    expect(requestedMethod).toBe('DELETE');
+    expect(requestedUrl?.pathname).toBe('/message/quepasa-msg-apagada');
+    expect(result).toBeUndefined();
+  });
+
+  it('chats.archive envia {chatid, archive: true} (tag minúscula, distinta de "chatId" de sendtext) para POST /chat/archive (rota legacy)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/archive') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    expect(adapter.capabilities).toContain('chats.archive');
+    const wa = createConnector(adapter);
+
+    await expect(wa.chats?.archive?.(RECIPIENT)).resolves.toBeUndefined();
+    expect(capturedBody).toEqual({ chatid: RECIPIENT, archive: true });
+  });
+
+  it('chats.unarchive usa o MESMO endpoint POST /chat/archive com archive: false', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/archive') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    expect(adapter.capabilities).toContain('chats.unarchive');
+    const wa = createConnector(adapter);
+
+    await expect(wa.chats?.unarchive?.(RECIPIENT_JID)).resolves.toBeUndefined();
+    expect(capturedBody).toEqual({ chatid: RECIPIENT_JID, archive: false });
+  });
+
+  it('chats.markRead envia {chatid} para POST /chat/markread (rota legacy, nível de CHAT, não de mensagem)', async () => {
+    let requestedUrl: URL | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/markread') {
+            requestedUrl = url;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    expect(adapter.capabilities).toContain('chats.markRead');
+    const wa = createConnector(adapter);
+
+    await expect(wa.chats?.markRead?.(RECIPIENT)).resolves.toBeUndefined();
+    expect(requestedUrl?.pathname).toBe('/chat/markread');
+    expect(capturedBody).toEqual({ chatid: RECIPIENT });
+  });
+
+  it('chats.markUnread envia {chatid} para POST /chat/markunread (endpoint irmão de markRead)', async () => {
+    let requestedUrl: URL | undefined;
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/chat/markunread') {
+            requestedUrl = url;
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    expect(adapter.capabilities).toContain('chats.markUnread');
+    const wa = createConnector(adapter);
+
+    await expect(wa.chats?.markUnread?.(RECIPIENT)).resolves.toBeUndefined();
+    expect(requestedUrl?.pathname).toBe('/chat/markunread');
+    expect(capturedBody).toEqual({ chatid: RECIPIENT });
+  });
+
+  it('não declara chats.mute/unmute/pin/unpin (sem endpoint equivalente confirmado no código-fonte)', () => {
+    const adapter = quepasa(buildAdapterOptions());
+
+    expect(adapter.capabilities).not.toContain('chats.mute');
+    expect(adapter.capabilities).not.toContain('chats.unmute');
+    expect(adapter.capabilities).not.toContain('chats.pin');
+    expect(adapter.capabilities).not.toContain('chats.unpin');
+    expect(adapter.chats?.mute).toBeUndefined();
+    expect(adapter.chats?.pin).toBeUndefined();
   });
 
   it('parseWebhook normaliza mensagem de texto recebida (fromme:false) para message.received', () => {

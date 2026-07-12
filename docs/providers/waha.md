@@ -104,6 +104,16 @@ As 5 capabilities de descoberta/perfil de `ContactsApi` (`contacts.list`, `conta
 este adapter num retrofit posterior (ADR-0010, PR1 — moderação `block`/`unblock`/`listBlocked`
 fica para o PR2). Suportado: ver seção "Contatos" abaixo.
 
+## Capabilities adicionais: `messages.edit`/`messages.delete` e `chats.*` (retrofit ADR-0012)
+
+Pesquisa dedicada de 2026-07-12 (mesma metodologia das anteriores — `openapi.json` oficial +
+páginas `docs/how-to/`) confirmou, com confiança **Alta**, endpoints para `messages.edit`,
+`messages.delete` e 4 das 8 operações do novo namespace `chats.*` (`archive`, `unarchive`,
+`markRead`, `markUnread`). As outras 4 (`chats.mute`, `chats.unmute`, `chats.pin`, `chats.unpin`)
+**não** foram declaradas — busca exaustiva não encontrou endpoint de silenciar/fixar a CONVERSA
+(distinto de fixar uma MENSAGEM dentro do chat, que existe e é discutido abaixo). Suportado: ver
+seções "Edição e exclusão de mensagem" e "Conversas (`chats.*`)" abaixo.
+
 ## Operações core
 
 | Operação canônica | Endpoint | Observações |
@@ -353,6 +363,82 @@ Reaproveita a mesma função `toWahaChatId` já usada por `messages.*`/`groups.*
 - O shape exato de `WWebJSContact` quando o contato é um `@lid` (formato de privacidade) — a
   pesquisa não encontrou um exemplo de resposta nesse caso específico, diferente do que já é
   documentado para participantes de grupo (campo `pn`, ver "Mapeamento de participantes" acima).
+
+## Edição e exclusão de mensagem (`messages.edit`/`messages.delete`, retrofit ADR-0012)
+
+Confiança **Alta** para os dois — schema OpenAPI e prosa da doc concordam, com exemplo curl
+completo em `docs/how-to/send-messages/` e `docs/how-to/chats/` (pesquisa de 2026-07-12).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.edit` | `PUT /api/{session}/chats/{chatId}/messages/{messageId}` | Confirmado no `openapi.json` oficial (operationId `ChatsController_editMessage`, schema `EditMessageRequest`). Body: `{ text }`. O schema também aceita `linkPreview`/`linkPreviewHighQuality` opcionais (mesma semântica de `sendText`), mas `EditMessageInput` do contrato canônico não expõe esses campos ao chamador, então o adapter não os envia — mesma regra de "não inventar campo fora do contrato" já seguida em `sendMedia`/`convert`. A doc confirma explicitamente: "You can edit text messages or 'caption' in media messages" — dá para editar a legenda de uma mídia já enviada, não só texto puro. Resposta `200` sem schema de conteúdo — `mapSentMessage` cai no mesmo fallback já usado por `sendReaction` (`id` vira `waha-<timestamp>` se a resposta não ecoar). |
+| `messages.delete` | `DELETE /api/{session}/chats/{chatId}/messages/{messageId}` | Confirmado no `openapi.json` oficial (operationId `ChatsController_deleteMessage`). Sem body, sem schema de resposta relevante — contrato retorna `void`. |
+
+`{chatId}`/`{messageId}` no path passam por `toWahaChatId`/`encodeURIComponent` respectivamente
+(função auxiliar `messagePath`, que reaproveita `chatPath` — ver seção "Conversas (`chats.*`)"
+abaixo). `messageId` já vem no formato de JID de mensagem que o WAHA usa em toda a API
+(`{fromMe}_{chat}_{message_id}[_{participant}]`, ex.:
+`true_5585999999999@c.us_AAAAAAAAAAAAAAAAAAAA`) — a doc chama atenção explicitamente para escapar
+`@` (`%40`) tanto em `chatId` quanto em `messageId` ("👉 Remember to escape @ in chatId and
+messageId with %40"), o que `encodeURIComponent` já cobre para os dois.
+
+**Não confirmado nesta pesquisa** (a validar contra uma instância WAHA real):
+
+- **Sem janela de tempo documentada para `messages.edit`.** O WhatsApp real limita edição a ~15
+  minutos após o envio e só para mensagens próprias — nenhuma das duas fontes oficiais do WAHA
+  menciona essa restrição nem um código de erro específico para "prazo expirado". Fica a cargo do
+  engine subjacente devolver erro nesse caso; o adapter não valida nenhum prazo localmente.
+- **Sem distinção documentada em `messages.delete` entre "apagar só localmente" vs. "apagar para
+  todos" (revoke).** Não há parâmetro `everyone`/`forEveryone` no schema, nem prosa que descreva o
+  comportamento exato — diferente de outros providers pesquisados (ex.: Evolution GO/Wuzapi/
+  QuePasa confirmam em código que é sempre revogação). `DeleteMessageInput` do contrato canônico
+  não carrega campo de escopo (ver ADR-0012), então esta ambiguidade não afeta a assinatura do
+  adapter, só o comportamento real em runtime (a confirmar).
+
+## Conversas (`chats.*`, retrofit ADR-0012)
+
+Namespace novo (ADR-0012) de gestão de estado de conversa. Cobertura real na pesquisa de
+2026-07-12 é bem mais desigual que `groups.*`/`contacts.*`: só 4 das 8 operações candidatas têm
+endpoint confirmado.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `chats.archive` | `POST /api/{session}/chats/{chatId}/archive` | Confirmado no `openapi.json` oficial (operationId `ChatsController_archiveChat`). Sem body; resposta `201` com objeto genérico — ignorada, contrato retorna `void`. Existe também um webhook associado `chat.archive` (payload `{ id, timestamp, archived: true\|false }`, disparado tanto ao arquivar quanto ao desarquivar) — **não mapeado** por `parseWahaWebhook` nesta fase (fora de escopo desta ADR; cai em `unknown`). |
+| `chats.unarchive` | `POST /api/{session}/chats/{chatId}/unarchive` | Confirmado no `openapi.json` oficial (operationId `ChatsController_unarchiveChat`), par simétrico de `archive` — mesmo tratamento de resposta. |
+| `chats.markRead` | `POST /api/{session}/chats/{chatId}/messages/read` | Confirmado no `openapi.json` oficial (operationId `ChatsController_readChatMessages`). Existe um endpoint CONCORRENTE, `POST /api/sendSeen`, que opera no nível de MENSAGEM (exige `messageIds` explícito, `deprecated: true` para o campo singular `messageId`) — este (`.../messages/read`) é o único dos dois que opera por `chatId` sozinho, coerente com a semântica de chat INTEIRO de `ChatsApi.markRead` (distinto de um eventual `messages.markRead` por id, fora de escopo desta ADR). Sem query params: o adapter usa os defaults documentados pelo provider (marca como lidas as mensagens não lidas dos últimos 7 dias, até 30 no DM / 100 em grupo — citação verbatim da doc: "Send seen (read a message) for all unread messages older than 7 days (30 max for DM, 100 max for groups)"); o contrato canônico não expõe `count`/`days` para esta operação. Resposta (schema `ReadChatMessagesResponse`): `{ ids: string[] }` com os ids marcados como lidos — ignorada, contrato retorna `void`. A doc do endpoint concorrente `/messages/read` nota um pré-requisito de engine: "👉 NOWEB: Please make sure to Enable NOWEB Store before using this API!" (não documentado para `sendSeen`). |
+| `chats.markUnread` | `POST /api/{session}/chats/{chatId}/unread` | Confirmado no `openapi.json` oficial (operationId `ChatsController_unreadChat`). Sem body; resposta sem schema declarado — ignorada, contrato retorna `void`. |
+
+`{chatId}` em todas as 4 operações segue o mesmo mapeamento de `chatId` de `messages.*`/
+`contacts.*` (`toWahaChatId`, ver seção "Mapeamento de `chatId` canônico → WAHA" acima) — NÃO o
+tratamento opaco de `groupId` (ADR-0009 vs. ADR-0012): um "chat" é o mesmo alvo endereçável de
+`messages.sendText`, podendo ser indivíduo ou grupo via JID explícito. Função auxiliar dedicada
+`chatPath(session, chatId, suffix)` monta o path `/api/{session}/chats/{chatId}/<suffix>`
+reaproveitado pelas 4 operações (mesmo padrão de `groupParticipantsPath` para `groups.*`).
+
+### Operações candidatas NÃO implementadas (`chats.mute`/`unmute`/`pin`/`unpin`)
+
+- **`chats.mute`/`chats.unmute`**: busca exaustiva no `openapi.json` oficial não encontrou nenhum
+  endpoint de silenciar uma CONVERSA comum. O único "mute" confirmado no schema é
+  `POST /api/{session}/channels/{id}/mute` (e `.../unmute`) — domínio de **WhatsApp Channels**
+  (newsletters), não de chat regular (`@c.us`/`@g.us`). Declarar `chats.mute` reaproveitando esse
+  endpoint seria incorreto (semântica de domínio diferente) — capability NÃO declarada, método NÃO
+  implementado.
+- **`chats.pin`/`chats.unpin`**: o WAHA só documenta fixar uma MENSAGEM dentro do chat
+  (`POST /api/{session}/chats/{chatId}/messages/{messageId}/pin` e `.../unpin`, schema
+  `PinMessageRequest` com `duration` obrigatório em segundos — valores documentados: 24h
+  `86400`, 7 dias `604800`, 30 dias `2592000`, os três únicos aceitos nativamente pelo WhatsApp)
+  — operação distinta de fixar a CONVERSA no topo da lista (`ChatsApi.pin`, ver ADR-0012). Busca
+  não encontrou `POST /chats/{chatId}/pin` nem equivalente. Capability `chats.pin`/`chats.unpin`
+  NÃO declarada, método NÃO implementado — mesmo critério já usado para `contacts.listBlocked`
+  (feature ausente não vira "quase-suporte" via outro endpoint de domínio diferente).
+
+**Não confirmado nesta pesquisa** (a validar contra uma instância WAHA real):
+
+- Se `chats.archive`/`chats.unarchive`/`chats.markUnread` exigem algum pré-requisito de engine
+  (NOWEB/GOWS "Enable Store") equivalente ao já documentado para `chats.markRead` — a doc não
+  menciona isso para os outros 3 endpoints.
+- O shape exato do corpo de resposta `201` de `archive`/`unarchive` (a doc não declara schema,
+  mesmo gap já visto em `groups.create`/`updateSubject`).
 
 ## Webhooks
 

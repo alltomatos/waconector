@@ -70,13 +70,15 @@ presa permanentemente a um número). Não há conceito de "sessão" separado do 
 ## Capabilities implementadas nesta fase (F2)
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
-`messages.sendMedia`, `messages.sendReaction`, `groups.create`, `groups.getInfo`, `groups.list`,
+`messages.sendMedia`, `messages.sendReaction`, `messages.edit`, `messages.delete`,
+`groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
 `groups.updatePicture`, `groups.getInviteLink`, `groups.revokeInviteLink`,
 `groups.joinViaInviteLink`, `groups.leaveGroup`, `contacts.list`, `contacts.get`,
 `contacts.checkExists`, `contacts.getProfilePicture`, `contacts.getAbout`, `contacts.block`,
-`contacts.unblock`, `webhooks.parse`.
+`contacts.unblock`, `chats.archive`, `chats.unarchive`, `chats.mute`, `chats.unmute`, `chats.pin`,
+`chats.unpin`, `chats.markRead`, `chats.markUnread`, `webhooks.parse`.
 
 `contacts.listBlocked` **não** foi declarada: a Z-API não expõe um endpoint de listagem de
 contatos bloqueados (ver "### `contacts.listBlocked` — NÃO suportado pela Z-API" na seção
@@ -131,6 +133,43 @@ adapter roteia `emoji === ''` para `/send-remove-reaction` em vez de mandar `rea
 adição — `messages.sendReaction` cobre só o envio; `parseWebhook` continua sem mapear reações
 recebidas para `WaMessage.reaction`, que segue `kind: 'unknown'` quando o payload trouxer uma
 chave de reação, ver nota em `mapMessageContent`).
+
+## Edição e exclusão de mensagem (`messages.edit`/`messages.delete`, retrofit ADR-0012)
+
+Relatório de pesquisa dedicado a capabilities novas (2026-07-12, mesma metodologia das rodadas
+anteriores — índice `llms.txt` + páginas `developer.z-api.io/<seção>/<página>` + espelho `.md` em
+`raw.githubusercontent.com/Z-API/z-api-docs`).
+
+| Operação canônica | Endpoint | Confiança | Observações |
+| --- | --- | --- | --- |
+| `messages.edit` | `POST /send-text`, campo opcional `editMessageId` no corpo | Alta | MESMO endpoint de `messages.sendText` — sem rota dedicada. Body `{ phone, message, editMessageId }`; `editMessageId` já era citado en passant na tabela "Operações core" acima como campo "não exposto pelo contrato atual" antes desta adição. Resposta idêntica a `send-text` (`{ zaapId, messageId, id }`), reaproveitando `mapSentMessage`. |
+| `messages.delete` | `DELETE /messages?messageId=...&phone=...&owner=true\|false` | Média | **Único endpoint `DELETE` de toda a superfície Z-API pesquisada** — todos os demais efeitos colaterais já documentados neste dossiê usam `GET` (`/disconnect`, `/accept-invite-group`) ou `POST`/`PUT`. Parâmetros em **query string**, não em corpo JSON (incomum para um verbo que permite body). Resposta `204` sem corpo. |
+
+### `messages.edit`: pré-requisito de webhook e ausências
+
+A doc afirma explicitamente: **"É necessário configurar o webhook antes de editar"** — sem um
+webhook de recebimento configurado na instância, a edição não é aplicada (mesmo requisito
+documentado para `messages.forward`, candidata fora do escopo desta ADR). O adapter não valida
+esse pré-requisito (não há como checar de dentro de uma chamada HTTP isolada) — se a instância não
+tiver webhook configurado, a chamada provavelmente é aceita (`200`) mas sem efeito real no
+WhatsApp, **não confirmado contra uma instância real**. Também não confirmado: se a Z-API preserva
+o `messageId` original (comportamento do WhatsApp oficial) ou gera um novo; nem uma janela de tempo
+para editar (a doc não menciona limite, diferente do ~15min real do WhatsApp).
+
+### `messages.delete`: decisão de mapeamento do parâmetro `owner`
+
+`owner` (booleano) indica se a mensagem original foi enviada **pela própria instância** (`true`) ou
+**recebida** (`false`) — a doc não esclarece se esse campo controla o **escopo** da exclusão
+(apagar só para mim vs. revogar/apagar para todos) ou é só um metadado informativo; não há um
+parâmetro separado tipo `deleteForEveryone`. `DeleteMessageInput` do contrato canônico só carrega
+`to`/`messageId` (ADR-0012 não modela escopo/`onlyLocal`), sem indicar quem enviou a mensagem
+original. Este adapter sempre envia **`owner: true`**: a semântica assumida por `messages.delete`
+no contrato é "sempre revogação" (apagar para todos), e no protocolo real do WhatsApp só é possível
+revogar uma mensagem que a própria conta enviou — apagar uma mensagem recebida só teria efeito
+"local", fora do que este contrato modela. **Não validado contra uma instância real**: se uma
+chamada mostrar comportamento diferente para mensagens com `fromMe: false`, revisitar esta decisão.
+Também não há janela de tempo documentada (o WhatsApp oficial limita edição/exclusão-para-todos a
+~15min–2 dias dependendo da versão; a Z-API não menciona limite algum).
 
 ### Mapeamento de status → `InstanceState`
 
@@ -471,6 +510,33 @@ isso `get-disallowed-contacts` não é usado como substituto de `listBlocked`.
 - Não confirmado se `GET /phone-exists/{phone}` de fato aceita apenas dígitos no path para
   qualquer formato de telefone (DDI+DDD+número) ou se há alguma normalização adicional exigida
   pelo provider.
+
+## Conversas (`chats.*`, retrofit ADR-0012)
+
+Namespace novo (ADR-0012) de gestão de estado de conversa. As 8 operações candidatas dividem o
+**mesmo endpoint** `POST /instances/{id}/token/{token}/modify-chat`, discriminadas só pelo campo
+`action` — mesmo padrão "um endpoint, N verbos" já usado por `contacts.block`/`unblock` acima.
+
+| Operação canônica | `action` | Confiança | Observações |
+| --- | --- | --- | --- |
+| `chats.archive` | `"archive"` | Média-Alta | Body `{ phone, action }` → resposta `{ value: true }`, ignorada. |
+| `chats.unarchive` | `"unarchive"` | Média-Alta | Par simétrico de `archive`. |
+| `chats.mute` | `"mute"` | Média-Alta | **Gap notável**: a doc não expõe duração de silenciamento (8h/1 semana/sempre, como no app oficial) — só um booleano ligado/desligado. Limitação real do endpoint, não do adapter: qualquer uso deste método só resulta em mute permanente/indefinido até `unmute` explícito, coerente com a decisão de ADR-0012 de não modelar duração nesta fase (nenhum formato de duração converge entre os providers pesquisados). |
+| `chats.unmute` | `"unmute"` | Média-Alta | Par simétrico de `mute`. |
+| `chats.pin` | `"pin"` | Média-Alta | Fixa a CONVERSA no topo da lista — **distinto de `messages.pin`** (fixar uma MENSAGEM dentro do chat, candidata fora do escopo desta ADR, com endpoint Z-API completamente diferente, `POST /pin-message`). Não confirmado se a Z-API replica o limite de 3 conversas fixadas simultaneamente do app oficial. |
+| `chats.unpin` | `"unpin"` | Média-Alta | Par simétrico de `pin`. |
+| `chats.markRead` | `"read"` | Alta | Confirmado em `developer.z-api.io/chats/read-chat` ("Ler chats"): "responsável por realizar a ação de ler um chat como um todo, ou também marcar um chat como não lido" — mesmo endpoint/shape dos demais 6 verbos. **Correção (verificação adversarial de 2026-07-12)**: uma primeira rodada de implementação não encontrou esta página e declarou `markRead`/`markUnread` como "não suportado"; a página existe no mesmo diretório `docs/chats/` já citado para as demais 6 ações. |
+| `chats.markUnread` | `"unread"` | Alta | Par simétrico de `markRead`, mesma página/endpoint. |
+
+`chatId` (diferente de `groupId`, opaco — ver seção "Grupos" acima) passa por `toZapiPhone`, MESMA
+conversão de `contacts.*`/`messages.*` — coerente com ADR-0012 (um "chat" é o mesmo alvo
+endereçável de `messages.sendText`, indivíduo ou grupo via JID explícito, não o tratamento opaco
+de `groupId`).
+
+`chats.markRead`/`chats.markUnread` (nível de CHAT INTEIRO, via `/modify-chat`) são operações
+distintas de `POST /read-message` (`{ phone, messageId }`, nível de UMA mensagem específica) — o
+segundo corresponderia a um eventual `messages.markRead` futuro, fora do escopo desta ADR (ADR-0012
+distingue explicitamente os dois mecanismos).
 
 ## Limites e particularidades
 

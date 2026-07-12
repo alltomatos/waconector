@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
+  ChatsApi,
   ContactsApi,
   GroupsApi,
   InstanceApi,
@@ -78,6 +79,8 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'messages.edit',
+  'messages.delete',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -99,6 +102,10 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'contacts.getAbout',
   'contacts.block',
   'contacts.unblock',
+  'chats.archive',
+  'chats.unarchive',
+  'chats.markRead',
+  'chats.markUnread',
   'webhooks.parse',
 ];
 
@@ -217,6 +224,46 @@ export function waha(options: WahaOptions): WaAdapter {
         },
       });
       return mapSentMessage(body, chatId);
+    },
+
+    /**
+     * `PUT /api/{session}/chats/{chatId}/messages/{messageId}` (retrofit ADR-0012; confirmado no
+     * `openapi.json` oficial, operationId `ChatsController_editMessage`, schema
+     * `EditMessageRequest` — confiança Alta, com exemplo curl completo em
+     * `docs/how-to/send-messages/` e `docs/how-to/chats/`). Body: `{ text }` — o schema também
+     * aceita `linkPreview`/`linkPreviewHighQuality` opcionais (mesma semântica de `sendText`), mas
+     * `EditMessageInput` não expõe esses campos ao chamador, então não são enviados (mesma regra
+     * de "não inventar campo fora do contrato canônico" já seguida em `sendMedia`/`convert`). A doc
+     * confirma explicitamente: "You can edit text messages or 'caption' in media messages". Sem
+     * janela de tempo validada pelo WAHA (nenhuma das duas fontes documenta um prazo de edição,
+     * diferente do limite real de ~15min do WhatsApp) — a confirmar contra instância real. Resposta
+     * `200` sem schema de conteúdo — `mapSentMessage` cai no mesmo fallback já usado por
+     * `sendReaction`. Ver docs/providers/waha.md#edição-e-exclusão-de-mensagem.
+     */
+    edit: async (input) => {
+      const chatId = toWahaChatId(input.to);
+      const body = await http.request<unknown>({
+        method: 'PUT',
+        path: messagePath(session, input.to, input.messageId),
+        body: { text: input.text },
+      });
+      return mapSentMessage(body, chatId);
+    },
+
+    /**
+     * `DELETE /api/{session}/chats/{chatId}/messages/{messageId}` (retrofit ADR-0012; confirmado
+     * no `openapi.json` oficial, operationId `ChatsController_deleteMessage` — confiança Alta,
+     * mesmo exemplo em `docs/how-to/send-messages/` e `docs/how-to/chats/`). Sem body, sem schema
+     * de resposta relevante — contrato retorna `void`. Nenhuma das duas fontes documenta uma
+     * distinção "apagar só localmente" vs. "apagar para todos" (revoke) — `DeleteMessageInput` não
+     * carrega campo de escopo (ver ADR-0012), o adapter apenas dispara a chamada. Ver
+     * docs/providers/waha.md#edição-e-exclusão-de-mensagem.
+     */
+    delete: async (input) => {
+      await http.request({
+        method: 'DELETE',
+        path: messagePath(session, input.to, input.messageId),
+      });
     },
   };
 
@@ -456,6 +503,62 @@ export function waha(options: WahaOptions): WaAdapter {
     // (ver docs/providers/waha.md#contatos).
   };
 
+  /**
+   * Namespace `chats.*` (retrofit ADR-0012, pesquisa dedicada de 2026-07-12). Só as 4 operações
+   * com endpoint confirmado (confiança Alta) são declaradas/implementadas:
+   *
+   * - `chats.mute`/`chats.unmute` NÃO são implementados: a busca não encontrou nenhum endpoint de
+   *   silenciar CONVERSA no `openapi.json` oficial (o único "mute" confirmado é
+   *   `POST /api/{session}/channels/{id}/mute`, domínio de WhatsApp Channels — não de chat comum).
+   * - `chats.pin`/`chats.unpin` NÃO são implementados: o WAHA só documenta fixar MENSAGEM dentro
+   *   do chat (`POST .../messages/{messageId}/pin`, operação distinta — ver ADR-0012), não fixar a
+   *   CONVERSA no topo da lista; busca não encontrou `POST /chats/{chatId}/pin`.
+   *
+   * Ver docs/providers/waha.md#conversas-chats para o detalhe de cada endpoint.
+   */
+  const chats: ChatsApi = {
+    /**
+     * `POST /api/{session}/chats/{chatId}/archive` (operationId `ChatsController_archiveChat` —
+     * confiança Alta). Sem body; resposta `201` com objeto genérico — ignorada, contrato retorna
+     * `void`.
+     */
+    archive: async (chatId) => {
+      await http.request({ method: 'POST', path: chatPath(session, chatId, 'archive') });
+    },
+
+    /**
+     * `POST /api/{session}/chats/{chatId}/unarchive` (operationId `ChatsController_unarchiveChat`
+     * — confiança Alta, par simétrico de `archive`). Mesmo tratamento de resposta.
+     */
+    unarchive: async (chatId) => {
+      await http.request({ method: 'POST', path: chatPath(session, chatId, 'unarchive') });
+    },
+
+    /**
+     * `POST /api/{session}/chats/{chatId}/messages/read` (operationId
+     * `ChatsController_readChatMessages` — confiança Alta). Endpoint CONCORRENTE a
+     * `POST /api/sendSeen` (nível de mensagem, exige `messageIds` explícito) — este é o único dos
+     * dois que opera por `chatId` sozinho, coerente com a semântica de chat INTEIRO de
+     * `ChatsApi.markRead` (ADR-0012, distinto de um eventual `messages.markRead` por id). Sem
+     * query params: o adapter usa os defaults documentados do provider (marca como lidas as
+     * mensagens não lidas dos últimos 7 dias, até 30 no DM / 100 em grupo) — o contrato canônico
+     * não expõe `count`/`days` para esta operação. Resposta (schema `ReadChatMessagesResponse`):
+     * `{ ids: string[] }` com os ids marcados — ignorada, contrato retorna `void`.
+     */
+    markRead: async (chatId) => {
+      await http.request({ method: 'POST', path: chatPath(session, chatId, 'messages/read') });
+    },
+
+    /**
+     * `POST /api/{session}/chats/{chatId}/unread` (operationId `ChatsController_unreadChat` —
+     * confiança Alta). Sem body; resposta sem schema declarado — ignorada, contrato retorna
+     * `void`.
+     */
+    markUnread: async (chatId) => {
+      await http.request({ method: 'POST', path: chatPath(session, chatId, 'unread') });
+    },
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WAHA_CAPABILITIES,
@@ -463,6 +566,7 @@ export function waha(options: WahaOptions): WaAdapter {
     messages,
     groups,
     contacts,
+    chats,
     parseWebhook: (input) => parseWahaWebhook(input, session, options.webhookHmacKey),
   };
 }
@@ -541,6 +645,27 @@ function toWahaParticipants(participants: readonly string[]): Array<{ id: string
  */
 function groupParticipantsPath(session: string, groupId: string, suffix: string): string {
   return `/api/${encodeURIComponent(session)}/groups/${encodeURIComponent(toWahaGroupId(groupId))}/${suffix}`;
+}
+
+/**
+ * Monta o path `/api/{session}/chats/{chatId}/<suffix>` usado pelas operações de `chats.*`
+ * (retrofit ADR-0012). `chatId` de `chats.*` NÃO é opaco (diferente de `groupId`, ver ADR-0012 vs.
+ * ADR-0009) — é o mesmo alvo endereçável de `messages.sendText`, então reaproveita `toWahaChatId`
+ * (mesma conversão já usada por `sendText`/`sendMedia`/`sendReaction`/`groups.*`/`contacts.*`).
+ */
+function chatPath(session: string, chatId: string, suffix: string): string {
+  return `/api/${encodeURIComponent(session)}/chats/${encodeURIComponent(toWahaChatId(chatId))}/${suffix}`;
+}
+
+/**
+ * Monta o path `/api/{session}/chats/{chatId}/messages/{messageId}` usado por
+ * `messages.edit`/`messages.delete` (retrofit ADR-0012). `messageId` já vem no formato de JID de
+ * mensagem que o WAHA espera (ex.: `true_5585999999999@c.us_AAAA...`) — a doc chama atenção
+ * explicitamente para escapar `@` (`%40`) tanto em `chatId` quanto em `messageId`, o que
+ * `encodeURIComponent` já cobre para os dois.
+ */
+function messagePath(session: string, chatId: string, messageId: string): string {
+  return chatPath(session, chatId, `messages/${encodeURIComponent(messageId)}`);
 }
 
 interface WahaRemoteFile {

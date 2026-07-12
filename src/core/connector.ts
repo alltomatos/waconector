@@ -1,4 +1,12 @@
-import type { ContactsApi, GroupsApi, InstanceApi, WaAdapter, WebhookInput } from './adapter';
+import type {
+  ChatsApi,
+  ContactsApi,
+  GroupsApi,
+  InstanceApi,
+  MessagesApi,
+  WaAdapter,
+  WebhookInput,
+} from './adapter';
 import { type Capability, type CapabilitySet, hasCapability } from './capabilities';
 import { normalizeChatId, normalizeInviteLink } from './chat-id';
 import { UnsupportedCapabilityError, WaConnectorError } from './errors';
@@ -9,6 +17,8 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  DeleteMessageInput,
+  EditMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipantsInput,
@@ -46,6 +56,8 @@ export interface ConnectorMessagesApi {
   sendText(input: SendTextInput): Promise<SentMessage>;
   sendMedia(input: SendMediaInput): Promise<SentMessage>;
   sendReaction(input: SendReactionInput): Promise<SentMessage>;
+  edit(input: EditMessageInput): Promise<SentMessage>;
+  delete(input: DeleteMessageInput): Promise<void>;
 }
 
 /**
@@ -87,6 +99,23 @@ export interface ConnectorContactsApi {
 }
 
 /**
+ * `ChatsApi` exposta pelo conector: todo método sempre presente (diferente da interface do
+ * adapter, onde o NAMESPACE INTEIRO é opcional — ver ADR-0012), gateado por capability +
+ * guard-rail `PROVIDER_ERROR`. `this.adapter.chats` pode ser `undefined`; o guard-rail trata isso
+ * exatamente como "método ausente" (nunca deixa um `TypeError` vazar).
+ */
+export interface ConnectorChatsApi {
+  archive(chatId: string): Promise<void>;
+  unarchive(chatId: string): Promise<void>;
+  mute(chatId: string): Promise<void>;
+  unmute(chatId: string): Promise<void>;
+  pin(chatId: string): Promise<void>;
+  unpin(chatId: string): Promise<void>;
+  markRead(chatId: string): Promise<void>;
+  markUnread(chatId: string): Promise<void>;
+}
+
+/**
  * Camada de ergonomia e política sobre um adapter: checagem de capabilities,
  * validação e normalização de entrada, eventos e parsing seguro de webhooks.
  */
@@ -98,6 +127,7 @@ export class WaConnector {
   readonly messages: ConnectorMessagesApi;
   readonly groups: ConnectorGroupsApi;
   readonly contacts: ConnectorContactsApi;
+  readonly chats: ConnectorChatsApi;
   readonly webhooks: WebhooksApi;
 
   private readonly listeners = new Map<string, Set<AnyListener>>();
@@ -131,18 +161,18 @@ export class WaConnector {
         this.assertCapability('messages.sendMedia');
         return adapter.messages.sendMedia(this.prepareSendMedia(input));
       },
-      sendReaction: async (input) => {
-        this.assertCapability('messages.sendReaction');
-        if (!adapter.messages.sendReaction) {
-          throw new WaConnectorError(
-            'PROVIDER_ERROR',
-            `Adapter "${this.provider}" declara a capability "messages.sendReaction" mas não ` +
-              'implementa messages.sendReaction — isso é um bug no adapter, não uma entrada inválida.',
-            { provider: this.provider },
-          );
-        }
-        return adapter.messages.sendReaction(this.prepareSendReaction(input));
-      },
+      sendReaction: (input) =>
+        this.callMessagesMethod('sendReaction', 'messages.sendReaction', (fn) =>
+          fn(this.prepareSendReaction(input)),
+        ),
+      edit: (input) =>
+        this.callMessagesMethod('edit', 'messages.edit', (fn) =>
+          fn(this.prepareEditMessage(input)),
+        ),
+      delete: (input) =>
+        this.callMessagesMethod('delete', 'messages.delete', (fn) =>
+          fn(this.prepareDeleteMessage(input)),
+        ),
     };
 
     this.groups = {
@@ -227,6 +257,29 @@ export class WaConnector {
         this.callContactsMethod('listBlocked', 'contacts.listBlocked', (fn) => fn()),
     };
 
+    this.chats = {
+      archive: (chatId) =>
+        this.callChatsMethod('archive', 'chats.archive', (fn) => fn(this.requireChatId(chatId))),
+      unarchive: (chatId) =>
+        this.callChatsMethod('unarchive', 'chats.unarchive', (fn) =>
+          fn(this.requireChatId(chatId)),
+        ),
+      mute: (chatId) =>
+        this.callChatsMethod('mute', 'chats.mute', (fn) => fn(this.requireChatId(chatId))),
+      unmute: (chatId) =>
+        this.callChatsMethod('unmute', 'chats.unmute', (fn) => fn(this.requireChatId(chatId))),
+      pin: (chatId) =>
+        this.callChatsMethod('pin', 'chats.pin', (fn) => fn(this.requireChatId(chatId))),
+      unpin: (chatId) =>
+        this.callChatsMethod('unpin', 'chats.unpin', (fn) => fn(this.requireChatId(chatId))),
+      markRead: (chatId) =>
+        this.callChatsMethod('markRead', 'chats.markRead', (fn) => fn(this.requireChatId(chatId))),
+      markUnread: (chatId) =>
+        this.callChatsMethod('markUnread', 'chats.markUnread', (fn) =>
+          fn(this.requireChatId(chatId)),
+        ),
+    };
+
     this.webhooks = {
       parse: (input) => this.parseWebhook(input),
       dispatch: async (input) => {
@@ -306,6 +359,52 @@ export class WaConnector {
     return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
   }
 
+  private prepareEditMessage(input: EditMessageInput): EditMessageInput {
+    if (typeof input.messageId !== 'string' || input.messageId.length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'messages.edit exige "messageId" não vazio.', {
+        provider: this.provider,
+      });
+    }
+    if (typeof input.text !== 'string' || input.text.length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'messages.edit exige "text" não vazio.', {
+        provider: this.provider,
+      });
+    }
+    return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
+  }
+
+  private prepareDeleteMessage(input: DeleteMessageInput): DeleteMessageInput {
+    if (typeof input.messageId !== 'string' || input.messageId.length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'messages.delete exige "messageId" não vazio.', {
+        provider: this.provider,
+      });
+    }
+    return { ...input, to: normalizeChatId(this.requireTo(input.to)) };
+  }
+
+  /**
+   * Guard-rail comum aos métodos opcionais de `MessagesApi` (`sendReaction`/`edit`/`delete`) —
+   * generaliza o que antes era inline só para `sendReaction` (ADR-0008), sem mudar o texto do erro
+   * nem o comportamento observável. Reaproveitado para `edit`/`delete` (ADR-0012).
+   */
+  private async callMessagesMethod<K extends keyof MessagesApi, R>(
+    method: K,
+    capability: Capability,
+    invoke: (fn: NonNullable<MessagesApi[K]>) => Promise<R>,
+  ): Promise<R> {
+    this.assertCapability(capability);
+    const fn = this.adapter.messages[method];
+    if (!fn) {
+      throw new WaConnectorError(
+        'PROVIDER_ERROR',
+        `Adapter "${this.provider}" declara a capability "${capability}" mas não implementa ` +
+          `messages.${String(method)} — isso é um bug no adapter, não uma entrada inválida.`,
+        { provider: this.provider },
+      );
+    }
+    return invoke(fn as NonNullable<MessagesApi[K]>);
+  }
+
   /**
    * Guard-rail comum aos 7 métodos de `groups.*`: checa a capability e, se o adapter a declarou
    * sem de fato implementar o método correspondente, lança `PROVIDER_ERROR` (bug do adapter, não
@@ -349,6 +448,30 @@ export class WaConnector {
       );
     }
     return invoke(fn as NonNullable<ContactsApi[K]>);
+  }
+
+  /**
+   * Guard-rail de `chats.*` — mesmo padrão de `callGroupsMethod`/`callContactsMethod`, com uma
+   * diferença: `this.adapter.chats` pode ser `undefined` inteiro (namespace opcional, ver
+   * ADR-0012), não só o método individual. `?.` cobre os dois casos com o mesmo `PROVIDER_ERROR`
+   * — nunca um `TypeError` por acessar propriedade de `undefined`.
+   */
+  private async callChatsMethod<K extends keyof ChatsApi, R>(
+    method: K,
+    capability: Capability,
+    invoke: (fn: NonNullable<ChatsApi[K]>) => Promise<R>,
+  ): Promise<R> {
+    this.assertCapability(capability);
+    const fn = this.adapter.chats?.[method];
+    if (!fn) {
+      throw new WaConnectorError(
+        'PROVIDER_ERROR',
+        `Adapter "${this.provider}" declara a capability "${capability}" mas não implementa ` +
+          `chats.${String(method)} — isso é um bug no adapter, não uma entrada inválida.`,
+        { provider: this.provider },
+      );
+    }
+    return invoke(fn as NonNullable<ChatsApi[K]>);
   }
 
   /**

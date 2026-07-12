@@ -24,6 +24,15 @@
 > script injetado. Nenhuma é limitação real do provider; todas implementadas nesta revisão (ver
 > "Capabilities implementadas nesta fase" abaixo).
 
+> **Retrofit ADR-0012 (pesquisa dedicada de 2026-07-12)**: `messages.edit`/`messages.delete` e as 8
+> operações do novo namespace `chats.*` (`archive`/`unarchive`/`mute`/`unmute`/`pin`/`unpin`/
+> `markRead`/`markUnread`) — TODAS confirmadas com endpoint E delegação até a lib (confiança Alta),
+> lendo `wppconnect-server@f09e2fed` (`src/controller/messageController.ts`,
+> `src/controller/deviceController.ts`) + `wppconnect@e153ff72` (`src/api/layers/controls.layer.ts`,
+> `src/lib/wapi/functions/send-mute.js`) + `wa-js@a4c57173` (HEAD, dependência de terceiro nível não
+> pinada pelo dossiê, citada com essa ressalva onde usada). Ver seções "Edição e exclusão de
+> mensagem" e "Conversas (`chats.*`)" abaixo.
+
 > **Arquitetura**: WPPConnect Server é um wrapper REST (Express) em cima da lib
 > `@wppconnect-team/wppconnect`, que controla o WhatsApp Web via Puppeteer (automação de browser,
 > não uma lib de protocolo standalone tipo whatsmeow/wa-js). O termo de domínio usado pela API
@@ -154,13 +163,16 @@ com `phone`), não em um "connect" de uma sessão já existente.
 ## Capabilities implementadas nesta fase
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
-`messages.sendMedia`, `messages.sendReaction`, `groups.create`, `groups.getInfo`, `groups.list`,
+`messages.sendMedia`, `messages.sendReaction`, `messages.edit`, `messages.delete`,
+`groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
 `groups.updatePicture`, `groups.getInviteLink`, `groups.revokeInviteLink`,
 `groups.joinViaInviteLink`, `groups.leaveGroup`, `contacts.list`, `contacts.get`,
 `contacts.checkExists`, `contacts.getProfilePicture`, `contacts.getAbout`, `contacts.block`,
-`contacts.unblock`, `contacts.listBlocked`, `webhooks.parse` — 29 de 30 capabilities.
+`contacts.unblock`, `contacts.listBlocked`, `chats.archive`, `chats.unarchive`, `chats.mute`,
+`chats.unmute`, `chats.pin`, `chats.unpin`, `chats.markRead`, `chats.markUnread`,
+`webhooks.parse` — 39 de 40 capabilities (enum `CAPABILITIES` cresceu com o retrofit ADR-0012).
 
 **Deliberadamente de fora** (obstáculo estrutural, não falta de pesquisa):
 
@@ -206,6 +218,8 @@ injetado — nenhuma é limitação real do provider:
 | `messages.sendText` | `POST /send-message` (ou `POST /send-mentioned` quando `mentions` não vazio) | Ver seção "Mensagens e mídia". |
 | `messages.sendMedia` | `POST /send-file-base64` (image/video/document) \| `/send-voice-base64` (audio) \| `/send-sticker` (sticker) | Ver seção "Mensagens e mídia". |
 | `messages.sendReaction` | `POST /react-message` | Ver seção "Mensagens e mídia". |
+| `messages.edit` | `POST /edit-message` | Ver seção "Edição e exclusão de mensagem". |
+| `messages.delete` | `POST /delete-message` | Ver seção "Edição e exclusão de mensagem". |
 
 ### Identificação do destinatário — extração da parte local do JID
 
@@ -340,6 +354,109 @@ Confirmado tanto no commit pinado quanto em HEAD do branch `main` — não é dr
 subseção `groups.list` abaixo para o detalhe e para por que isso não quebra o adapter hoje
 (`unwrapResponse`/`asRecord` acertam "por acidente").
 
+**Terceira exceção, confirmada na pesquisa de retrofit ADR-0012**: `POST /send-seen`
+(`chats.markRead`) usa ainda um OUTRO envelope, com `status` em maiúsculo e o payload aninhado dois
+níveis abaixo — ver seção "Conversas (`chats.*`)" abaixo para o detalhe.
+
+## Edição e exclusão de mensagem (`messages.edit`/`messages.delete`, retrofit ADR-0012)
+
+Pesquisa dedicada de 2026-07-12 (`wppconnect-server@f09e2fed`: `src/controller/messageController.ts`,
+`src/controller/deviceController.ts`; `wppconnect@e153ff72`: `src/api/layers/controls.layer.ts`).
+Confiança **Alta** para os dois — endpoint, body e delegação até a lib confirmados por leitura
+direta, sem inferência.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.edit` | `POST /edit-message` | `MessageController.editMessage`. Body `{id, newText, options?}` — **sem** `phone`/`isGroup`: o `id` da mensagem já identifica o chat sozinho. `input.to` não é enviado no request, só usado como fallback de `chatId` no mapeamento da resposta (mesmo padrão do adapter uazapi para o mesmo tipo de endpoint). |
+| `messages.delete` | `POST /delete-message` | `DeviceController.deleteMessage`. Body `{phone, isGroup, messageId, onlyLocal, deleteMediaInDevice}`. **Único provider pesquisado nesta rodada que confirma em código um parâmetro real de escopo** (`onlyLocal`) — ver subseção dedicada abaixo. |
+
+### `messages.edit` — resposta BARE, sem janela de tempo verificável, sem webhook de entrada
+
+**Delegação confirmada** (`controls.layer.ts:190-213`, lib `e153ff72`):
+
+```ts
+public async editMessage(msgId, newText, options: EditMessageOptions = {}) {
+  const editResult = await evaluateAndReturn(this.page, ({msgId,newText,options}) =>
+    WPP.chat.editMessage(msgId, newText, options), {msgId, newText, options});
+  const result = await evaluateAndReturn(this.page, async ({messageId}) =>
+    JSON.parse(JSON.stringify(await WAPI.getMessageById(messageId))), {messageId: editResult.id}) as Message;
+  if (result.body !== newText) throw editResult;
+  return result;
+}
+```
+
+Edita, RE-BUSCA a mensagem completa via `getMessageById` e valida `result.body === newText` —
+lançando o próprio resultado bruto do `WPP.chat.editMessage` (não um `Error` padrão) se a checagem
+falhar. A resposta HTTP segue o envelope padrão (`returnSucess`, `messageController.ts:30-32`):
+`response` é o objeto `Message` completo, **BARE** (diferente de `sendText`/`sendMedia` — este
+endpoint não passa pelo middleware `statusConnection`, que é quem produz o array de um elemento
+tratado por `unwrapArrayResponse` no restante do arquivo; `editMessage` usa `unwrapResponse` puro).
+
+**Sem janela de tempo verificável no código aberto**: a checagem "pode editar" (`canEditMsg`/
+`canEditCaption`, `wa-js@a4c57173`, `src/whatsapp/functions/canEditMsg.ts`) é apenas um re-export de
+símbolo interno do bundle fechado do próprio cliente web do WhatsApp (`canEditText`/`canEditMsg`,
+versionado por `@whatsapp 755707 >= 2.2307.10`) — a lógica real (janela de tempo, só remetente, só
+texto) não está em código aberto de nenhum provider pesquisado (ver ADR-0012). Se a checagem falhar,
+`WPP.chat.editMessage` lança `WPPError('edit_message_error', ...)` ANTES de qualquer chamada de
+rede — isso propaga pelo `page.evaluate` do Puppeteer até o catch do controller, que devolve uma
+mensagem **genérica e fixa** (`'Erro ao enviar a mensagem.'`, `messageController.ts:21-28`), com o
+erro real só dentro da chave `error` do corpo HTTP.
+
+**Sem webhook de entrada correspondente**: o controller emite a edição só via Socket.IO
+(`req.io.emit('edited-message', edited)`), não via `callWebHook` — busca exaustiva em todos os
+registros de hook (`src/util/createSessionUtil.ts`: `onMessage`, `onAnyMessage`, `onAck`,
+`onReactionMessage`, `onRevokedMessage`, `onPollResponse`, `onUpdateLabel`,
+`onParticipantsChanged`, `onPresenceChanged`, `onIncomingCall`) não encontra um
+`onEditMessage`/equivalente. Ou seja: mesmo implementando `messages.edit` como capability de saída,
+não há hoje um evento canônico de entrada para "mensagem editada por outra parte" — situação análoga
+(mas pior) à de `onrevokedmessage`, que ao menos dispara webhook (mapeado para `unknown` por falta
+de shape confirmado, ver seção "Webhooks").
+
+### `messages.delete` — comportamento PADRÃO é revogação, e um erro de documentação do próprio provider
+
+**Delegação confirmada** (`controls.layer.ts:150-175`, lib `e153ff72`):
+
+```ts
+public async deleteMessage(chatId, messageId, onlyLocal = false, deleteMediaInDevice = true) {
+  await evaluateAndReturn(this.page, ({chatId, messageId, onlyLocal, deleteMediaInDevice}) =>
+    WPP.chat.deleteMessage(chatId, messageId, deleteMediaInDevice, !onlyLocal),
+    {chatId, messageId, onlyLocal, deleteMediaInDevice});
+  return true;
+}
+```
+
+`onlyLocal` tem default `false`, e o valor repassado a `WPP.chat.deleteMessage` é `!onlyLocal` — ou
+seja, **o comportamento PADRÃO é revogar para todos** ("delete for everyone"); para apagar só
+localmente seria preciso enviar `onlyLocal: true` explicitamente. `DeleteMessageInput` do contrato
+canônico não expõe esse campo de escopo (ver ADR-0012 — semântica assumida é sempre revogação), e
+esse default do provider já bate exatamente com essa semântica — este adapter envia
+`onlyLocal: false` EXPLICITAMENTE (em vez de confiar num default silencioso que poderia mudar numa
+versão futura do provider). `deleteMediaInDevice` (default `true` na lib, não enviado por este
+adapter) só controla se o arquivo de mídia em cache local também é removido — não afeta o alcance
+da revogação.
+
+**Achado extra (bug de documentação do próprio provider, não suposição)**: os dois exemplos literais
+do JSDoc do controller são:
+
+```json
+"Delete message to all": {"phone":"...", "isGroup":false, "messageId":"<messageId>", "deleteMediaInDevice": true}
+"Delete message only me": {"phone":"...", "isGroup":false, "messageId":"<messageId>"}
+```
+
+O segundo exemplo (rotulado "only me") **não envia `onlyLocal: true`** — dado o default
+`onlyLocal=false` da lib, esse payload exatamente como documentado produziria o MESMO comportamento
+do primeiro (revoga para todos), não uma exclusão só local. Divergência real entre o exemplo do
+próprio Swagger/JSDoc e o comportamento do código, confirmada lendo os dois trechos — não é
+suposição.
+
+Resposta é mensagem FIXA (`{message: 'Message deleted'}`, sem `id`/`chatId`/`timestamp`) — ignorada
+pelo adapter, contrato retorna `Promise<void>`. Achado colateral de robustez, sem efeito prático: no
+sucesso, o controller faz `res.status(200).json(...)` e, **sem `return`**, cai na linha seguinte
+`res.status(401).json({...})` no mesmo `res` — como `client.deleteMessage` sempre retorna `true`, o
+segundo `.json()` sempre é alcançado e dispararia erro do Express por headers já enviados; não afeta
+o adapter (o primeiro response de 200 já foi totalmente escrito antes do erro), mas é um cheiro de
+código real do provider, não hipotético.
+
 ## Grupos
 
 14 operações confirmadas com endpoint. Todos POST/GET, nenhum PUT/PATCH/DELETE (confirmado em
@@ -464,6 +581,156 @@ Mapeamento para o `Contact` canônico deste pacote:
   deste pacote, ex.: Whapi `profile_pic_full`/`profile_pic`).
 - `about`/`isBlocked` — sempre `undefined` neste payload (endpoints dedicados:
   `contacts.getAbout`/`contacts.listBlocked` cobrem os dois).
+
+## Conversas (`chats.*`, retrofit ADR-0012)
+
+Namespace novo (ADR-0012) de gestão de estado de conversa. Pesquisa dedicada de 2026-07-12 confirma
+as 8 operações candidatas COM endpoint (confiança Alta para todas — controller + delegação até a
+lib, incluindo o script injetado `send-mute.js` para `chats.mute`/`unmute`) — cobertura completa,
+diferente de outros adapters deste pacote onde o namespace é parcial.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `chats.archive` / `chats.unarchive` | `POST /archive-chat` | Toggle único: `{phone, isGroup, value}`, o MESMO endpoint arquiva/desarquiva conforme `value` (booleano de verdade, sem o bug de `chats.pin` abaixo). Ver subseção dedicada. |
+| `chats.pin` / `chats.unpin` | `POST /pin-chat` | `{phone, isGroup, state}`. **Bug confirmado no controller**: `state === 'true'` compara com STRING, não booleano — ver subseção dedicada (achado mais acionável desta pesquisa). |
+| `chats.mute` / `chats.unmute` | `POST /send-mute` | `{phone, isGroup, time, type}`. Duração escolhida pelo ADAPTER (canônico não expõe duração, ver ADR-0012) — ver subseção dedicada. |
+| `chats.markRead` | `POST /send-seen` | `{phone, isGroup}`. Endpoint de nível de CHAT (distinto de `messages.markRead`, fora de escopo — ver ADR-0012). Terceira exceção de envelope do provider — ver subseção dedicada. |
+| `chats.markUnread` | `POST /mark-unseen` | `{phone, isGroup}`. NÃO é o mesmo endpoint de `markRead` com um parâmetro invertido — dois endpoints totalmente distintos. |
+
+Todas as 8 operações reaproveitam `toWppconnectRecipient` (mesma extração da parte local do JID já
+usada por `messages.*` — ver "Identificação do destinatário" acima) para popular `phone`/`isGroup`,
+evitando o mesmo risco de sufixo duplicado no servidor.
+
+### `chats.archive`/`chats.unarchive` — toggle único, e um achado de não-idempotência
+
+Chamada única confirmada no controller (sem loop): `await req.client.archiveChat(`${phone}`,
+value)` (`DeviceController.archiveChat`, `deviceController.ts:689-736`). Delegação
+(`controls.layer.ts:93-106`): `WPP.chat.archive(chatId, option=true)`. Resposta é um objeto REAL
+(`{wid, archive}`, confirmado em `wa-js@a4c57173`, `src/chat/functions/archive.ts:60-63`) —
+ignorada por este adapter, contrato retorna `Promise<void>`.
+
+**Nuance de comportamento (`wa-js` HEAD, dependência ativa não pinada pelo dossiê original —
+confiança média-alta, não o commit `e153ff72` do restante da pesquisa)**: o provider LANÇA erro se
+o chat já estiver no estado pedido:
+
+```ts
+if (chat.archive === archive) {
+  throw new WPPError(`${archive?'archive':'unarchive'}_error`,
+    `The chat ${wid} is already ${archive?'archived':'unarchived'}`, {wid, archive});
+}
+```
+
+Ou seja, arquivar um chat já arquivado (ou desarquivar um já desarquivado) é **erro**, não um no-op
+idempotente — comportamento que qualquer consumidor precisa tratar (checar o estado antes, ou
+tolerar um 500). Este adapter não tenta mascarar isso.
+
+A rota também tem `statusConnection` no meio (confirmado em `routes/index.ts`), que reescreve
+`req.body.phone` para um array de JIDs validados antes do handler rodar — mas o handler interpola
+esse valor direto num template string (`${phone}`) em vez de iterar. Funciona por acidente só
+porque um array de 1 elemento vira string igual ao próprio elemento (`String([x]) === String(x)`);
+não afeta este adapter (que só envia um destinatário por chamada).
+
+### `chats.pin`/`chats.unpin` — bug confirmado: `state === 'true'` compara STRING, não booleano
+
+**Bug crítico confirmado no código real** (`deviceController.ts:1167-1227`,
+`DeviceController.pinChat`):
+
+```ts
+const { phone, state } = req.body;
+for (const contato of phone) {
+  await req.client.pinChat(contato, state === 'true', false);
+}
+```
+
+O schema Swagger declara `state: {type:"boolean"}`, mas o controller compara com a STRING literal
+`'true'`, não o booleano. Se o chamador enviar JSON `state: true` (exatamente como o próprio schema
+pede), a comparação dá `false` — o chat seria **sempre desafixado**, independente da intenção, a
+menos que o chamador contorne o bug enviando a string literal `"true"`. **Este é o achado mais
+acionável de toda a pesquisa desta rodada**: este adapter (`setChatPinned`) sempre envia `state`
+como a STRING `"true"`/`"false"` (nunca o booleano JSON) para funcionar como documentado.
+
+Delegação (`controls.layer.ts:108-130`): `pinChat(chatId, option, nonExistent=false)` →
+`WPP.chat.pin(chatId, option)` — mesmo padrão "lança se já no estado pedido" de `archive` (confiança
+média-alta, confirmado em `wa-js@a4c57173`, `src/chat/functions/pin.ts:38-44`). Resposta é mensagem
+FIXA (`{message: 'Chat fixed'}` — usada tanto para pin quanto unpin, rótulo enganoso no caso de
+unpin) — ignorada, contrato retorna `Promise<void>`.
+
+### `chats.mute`/`chats.unmute` — `time`+`type` obrigatórios, bug de nomenclatura em `'year'`, e uma duração inventada pelo adapter
+
+**Endpoint**: `POST /send-mute` (`DeviceController.sendMute`, `deviceController.ts:1516-1568`).
+Body `{phone, isGroup, time: number, type: string}`. Delegação até o script injetado
+(`src/lib/wapi/functions/send-mute.js`, lib `e153ff72`):
+
+```js
+switch (type) {
+  case 'hours':   TimeInt = ...setHours(getHours()+time)... ; break;
+  case 'minutes': TimeInt = ...setMinutes(getMinutes()+time)...; break;
+  case 'year':    TimeInt = ...setDate(getDate()+time)...; break;   // soma DIAS, não anos
+}
+window.Store.SendMute.sendConversationMute(chat.id, TimeInt, 0)
+```
+
+**Nuances confirmadas**:
+
+- Só 3 valores de `type` acionam o mute de fato: `'hours'`, `'minutes'`, `'year'`. Qualquer outro
+  valor cai no branch de REMOÇÃO do mute — não há um `type: 'forever'`/`'always'` dedicado.
+- **`type: 'year'` tem nome enganoso**: o código usa `setDate(getDate() + time)`, ou seja, soma
+  `time` em DIAS, não anos — bug de nomenclatura confirmado no próprio provider, não suposição.
+- **"Desmutar" não é um `time`/`type` explícito**: é obtido enviando qualquer coisa que não seja o
+  par `{number, string}` esperado (ex.: omitir os campos) — cai no branch `remove=true`, que
+  restaura usando a expiração já registrada no chat (`isMute.__x_expiration`), não zera
+  incondicionalmente.
+- Resposta NÃO é fixa: `response` é o objeto retornado por `WAPI.sendMute` (mesclado com
+  `{type:'sendMute', time, timeType}`) — ignorada por este adapter mesmo assim, contrato retorna
+  `Promise<void>`.
+
+`ChatsApi.mute`/`ChatsApi.unmute` do contrato canônico não recebem duração (ver ADR-0012 — nenhum
+formato de duração converge entre os 8 providers pesquisados: uazapi usa enum de horas
+`0|8|168|-1`, Whapi usa timestamp Unix em ms, WPPConnect usa este `time`+`type` com o bug do
+`'year'`). Este adapter (`setChatMuted`, constante `MUTE_DURATION`) precisa escolher uma duração
+mesmo assim, já que o endpoint EXIGE `time`+`type` juntos para de fato silenciar — decisão do
+ADAPTER, não um default do provider: `mute(chatId)` usa `type: 'hours', time: 87600` (10 anos em
+horas), evitando tanto o `type: 'year'` confirmado-bugado (que somaria só 87600 DIAS, um valor
+absurdo) quanto um número pequeno de `'year'` (que somaria só alguns DIAS, muito curto para
+representar "silenciar indefinidamente"). `unmute(chatId)` OMITE `time`/`type` de propósito, para
+cair no branch de remoção confirmado acima. Consumidores que precisem de uma duração específica só
+têm essa granularidade via chamada direta ao provider, fora do contrato canônico.
+
+### `chats.markRead`/`chats.markUnread` — mecanismos assimétricos, e uma terceira exceção de envelope
+
+**Marcar como não lida**: `POST /mark-unseen` (`DeviceController.markUnseenMessage`,
+`deviceController.ts:1023-1069`). Body `{phone, isGroup}` (sem toggle booleano — só liga o estado
+"não lida", nunca desliga). Delega para `req.client.markUnseenMessage(phone)` →
+`WPP.chat.markIsUnread(chatId)` (`controls.layer.ts:65-76`). Resposta: envelope **padrão**
+(`status: 'success'` minúsculo), mensagem fixa `{message: 'unseen checked'}`.
+
+**Marcar como lida ("seen")**: `POST /send-seen` (`DeviceController.sendSeen`,
+`deviceController.ts:1570-1615`). Body `{phone, isGroup}`. **Não é o mesmo endpoint com um
+parâmetro invertido** — é outro endpoint, sem toggle, delegando a `req.client.sendSeen(phone)`.
+
+**Achado central — terceira exceção de envelope do provider**: `sendSeen` (e também
+`deleteChat`/`clearChat`/`getMessageById`, não usados por este adapter) usam um SEGUNDO
+`returnSucess`/`returnError` local, definido só em `deviceController.ts:22-44` — DIFERENTE do usado
+por `mark-unseen` e por todo o resto do arquivo padrão da lib (o `{status:'success', response,
+mapper:'return'}` já documentado na seção "Envelope de resposta"):
+
+```ts
+function returnSucess(res, session, phone, data) {
+  res.status(201).json({
+    status: 'Success',              // <- capital "S", diferente de 'success'
+    response: { message: '...', contact: phone, session: session, data: data },
+  });
+}
+```
+
+Ou seja, para `send-seen` (e `delete-chat`/`clear-chat`) o `status` vem com **S maiúsculo** e o
+payload real fica **dois níveis abaixo** (`response.data`), não em `response` diretamente — igual em
+espírito à exceção de `/list-chats` (seção "Envelope de resposta"), mas de um jeito diferente (aqui
+o envelope existe, só que com uma chave a mais e casing diferente). Relevante especificamente
+porque `mark-unseen` (a metade "unread" do par) usa o envelope padrão normal, e `send-seen` (a
+metade "read") usa este terceiro formato. Não afeta este adapter: a resposta inteira é ignorada em
+`markChatRead`/`markChatUnread` (contrato retorna `Promise<void>`) — citado aqui só para não ser
+redescoberto por engano como um bug de parsing numa manutenção futura.
 
 ## Webhooks
 
@@ -599,3 +866,23 @@ que a convenção NÃO é uniforme entre todos os eventos deste provider.
     único endpoint deste provider assim, confirmado no código-fonte real (`f09e2fed`,
     `DeviceController.listChats`). `unwrapResponse` só acerta por acidente (`asRecord` rejeita
     arrays) — ver "Envelope de resposta" e a subseção `groups.list` acima.
+11. **`chats.pin`/`chats.unpin` (retrofit ADR-0012) precisam do workaround `state` como STRING**
+    (`"true"`/`"false"`, nunca booleano) — bug confirmado no controller (`state === 'true'`), o
+    achado mais acionável de toda a pesquisa desta rodada. Ver "Conversas (`chats.*`)".
+12. **`chats.mute`/`chats.unmute` (retrofit ADR-0012) usam uma duração INVENTADA pelo adapter**
+    (`type: 'hours', time: 87600` para `mute`, ausência deliberada de `time`/`type` para `unmute`)
+    — `ChatsApi.mute`/`unmute` não recebem duração no contrato canônico (nenhum formato converge
+    entre providers, ver ADR-0012), e o endpoint deste provider exige `time`+`type` juntos para de
+    fato silenciar. Ver "Conversas (`chats.*`)".
+13. **`send-seen` (`chats.markRead`, retrofit ADR-0012) usa uma TERCEIRA variação de envelope** —
+    `status` com "S" maiúsculo e payload dois níveis abaixo (`response.data`) — sem efeito prático
+    porque a resposta é ignorada (`Promise<void>`), mas citado para não ser redescoberto como bug de
+    parsing. Ver "Conversas (`chats.*`)".
+14. **`messages.edit` não tem janela de tempo verificável em código aberto** — a checagem real vive
+    no bundle fechado do próprio WhatsApp Web; **sem webhook de entrada** para edição feita por
+    outra parte (busca exaustiva nos registros de hook não encontra `onEditMessage`/equivalente).
+    Ver "Edição e exclusão de mensagem".
+15. **`messages.delete` é revogação por padrão** (`onlyLocal` default `false` na lib) — coerente com
+    `DeleteMessageInput` (sem campo de escopo). O próprio exemplo de documentação do provider erra
+    esse default (rotula "only me" um payload que na verdade revoga para todos). Ver "Edição e
+    exclusão de mensagem".

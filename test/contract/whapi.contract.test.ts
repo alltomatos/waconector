@@ -18,6 +18,10 @@ const GROUP_ID = '120363000000000000@g.us';
  * comparar o path recebido pelo stub; `GROUP_ID` (com `@` cru) é usado para chamar o adapter e para
  * conferir valores de campo (`group.id`), nunca para comparar `pathname`. */
 const GROUP_ID_PATH = encodeURIComponent(GROUP_ID);
+/** `ChatID` (diferente de `ContactID`) exige o sufixo `@domínio` — ver docs/providers/whapi.md
+ * "Conversas (`chats.*`)". Mesmo tratamento de `GROUP_ID`/`GROUP_ID_PATH` acima. */
+const CHAT_ID = `${RECIPIENT}@s.whatsapp.net`;
+const CHAT_ID_PATH = encodeURIComponent(CHAT_ID);
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -129,6 +133,15 @@ function createFetchStub(): typeof globalThis.fetch {
 
     const reactionMatch = pathname.match(/^\/messages\/(.+)\/reaction$/);
     if ((method === 'PUT' || method === 'DELETE') && reactionMatch) {
+      return jsonResponse(200, { success: true });
+    }
+
+    const messageIdMatch = pathname.match(/^\/messages\/([^/]+)$/);
+    if (method === 'DELETE' && messageIdMatch) {
+      return jsonResponse(200, { success: true });
+    }
+
+    if ((method === 'POST' || method === 'PATCH') && pathname === `/chats/${CHAT_ID_PATH}`) {
       return jsonResponse(200, { success: true });
     }
 
@@ -998,6 +1011,161 @@ describe('whapi adapter: comportamento específico do provider', () => {
     const blocked = await wa.contacts.listBlocked();
 
     expect(blocked).toEqual(['5511988887777', '5511977776666@lid']);
+  });
+
+  it('messages.edit reenvia POST /messages/text com {to, body, edit: messageId} (mesmo endpoint de sendText)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/messages/text') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const edited = await wa.messages.edit({
+      to: RECIPIENT,
+      messageId: 'CONTRATO_MSG_ORIGINAL',
+      text: 'texto editado',
+    });
+
+    expect(capturedBody).toEqual({
+      to: RECIPIENT,
+      body: 'texto editado',
+      edit: 'CONTRATO_MSG_ORIGINAL',
+    });
+    expect(edited.id).toBe('whapi-fake-text');
+    expect(edited.chatId).toBe(`${RECIPIENT}@s.whatsapp.net`);
+  });
+
+  it('messages.delete chama DELETE /messages/{MessageID} sem corpo', async () => {
+    let capturedMethod: string | undefined;
+    let capturedBody: string | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/messages/CONTRATO_MSG_1') {
+            capturedMethod = (init?.method ?? 'GET').toUpperCase();
+            capturedBody = init?.body === undefined ? undefined : String(init.body);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.delete({ to: RECIPIENT, messageId: 'CONTRATO_MSG_1' }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedMethod).toBe('DELETE');
+    expect(capturedBody).toBeUndefined();
+  });
+
+  it('chats.archive/unarchive enviam POST /chats/{ChatID} com {archive: boolean}', async () => {
+    const hits: Array<{ method: string; body: unknown }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/chats/${CHAT_ID_PATH}` && (init?.method ?? '') === 'POST') {
+            hits.push({ method: 'POST', body: JSON.parse(String(init?.body)) });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.archive(CHAT_ID)).resolves.toBeUndefined();
+    await expect(wa.chats.unarchive(CHAT_ID)).resolves.toBeUndefined();
+
+    expect(hits).toEqual([
+      { method: 'POST', body: { archive: true } },
+      { method: 'POST', body: { archive: false } },
+    ]);
+  });
+
+  it('chats.pin/unpin enviam PATCH /chats/{ChatID} com {pin: boolean}', async () => {
+    const hits: unknown[] = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/chats/${CHAT_ID_PATH}` && (init?.method ?? '') === 'PATCH') {
+            hits.push(JSON.parse(String(init?.body)));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.pin(CHAT_ID)).resolves.toBeUndefined();
+    await expect(wa.chats.unpin(CHAT_ID)).resolves.toBeUndefined();
+
+    expect(hits).toEqual([{ pin: true }, { pin: false }]);
+  });
+
+  it('chats.markRead/markUnread enviam PATCH /chats/{ChatID} com {mark_unread: boolean} invertido', async () => {
+    const hits: unknown[] = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/chats/${CHAT_ID_PATH}` && (init?.method ?? '') === 'PATCH') {
+            hits.push(JSON.parse(String(init?.body)));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.markRead(CHAT_ID)).resolves.toBeUndefined();
+    await expect(wa.chats.markUnread(CHAT_ID)).resolves.toBeUndefined();
+
+    expect(hits).toEqual([{ mark_unread: false }, { mark_unread: true }]);
+  });
+
+  it('chats.mute/unmute enviam PATCH /chats/{ChatID} com {mute_until: <timestamp futuro>|0}', async () => {
+    const hits: unknown[] = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/chats/${CHAT_ID_PATH}` && (init?.method ?? '') === 'PATCH') {
+            hits.push(JSON.parse(String(init?.body)));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats.mute(CHAT_ID)).resolves.toBeUndefined();
+    await expect(wa.chats.unmute(CHAT_ID)).resolves.toBeUndefined();
+
+    expect(hits).toEqual([{ mute_until: Date.UTC(2099, 0, 1) }, { mute_until: 0 }]);
+  });
+
+  it('declara messages.edit/messages.delete e as 8 operações de chats.* (10 capabilities novas, ADR-0012)', () => {
+    const adapter = whapi(buildAdapterOptions());
+    expect(adapter.capabilities).toContain('messages.edit');
+    expect(adapter.capabilities).toContain('messages.delete');
+    for (const capability of [
+      'chats.archive',
+      'chats.unarchive',
+      'chats.mute',
+      'chats.unmute',
+      'chats.pin',
+      'chats.unpin',
+      'chats.markRead',
+      'chats.markUnread',
+    ] as const) {
+      expect(adapter.capabilities).toContain(capability);
+    }
+    expect(adapter.chats).toBeDefined();
   });
 
   it('parseWebhook normaliza mensagem de texto recebida (from_me:false) para message.received', () => {

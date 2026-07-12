@@ -14,6 +14,8 @@ export const CAPABILITIES = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'messages.edit',
+  'messages.delete',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -36,6 +38,14 @@ export const CAPABILITIES = [
   'contacts.block',
   'contacts.unblock',
   'contacts.listBlocked',
+  'chats.archive',
+  'chats.unarchive',
+  'chats.mute',
+  'chats.unmute',
+  'chats.pin',
+  'chats.unpin',
+  'chats.markRead',
+  'chats.markUnread',
   'webhooks.parse',
 ] as const;
 

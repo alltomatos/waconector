@@ -1,4 +1,5 @@
 import type {
+  ChatsApi,
   ContactsApi,
   GroupsApi,
   InstanceApi,
@@ -24,6 +25,8 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  DeleteMessageInput,
+  EditMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -127,6 +130,26 @@ const PROVIDER = 'wppconnect';
  * - `contacts.getAbout`: `GET /profile-status/:phone` → `getStatus(contactId):
  *   Promise<ContactStatus>` (assinatura tipada, montagem do retorno visível no código-fonte da
  *   lib). Ver `getContactAbout`.
+ *
+ * `messages.edit`/`messages.delete` e as 8 operações de `chats.*` (retrofit ADR-0012, pesquisa
+ * dedicada de 2026-07-12, `docs/providers/wppconnect.md`) — TODAS com endpoint E delegação até a
+ * lib confirmados com confiança Alta:
+ * - `messages.edit`: `POST /edit-message` → `WPP.chat.editMessage`. Ver `editMessage`.
+ * - `messages.delete`: `POST /delete-message` → `WPP.chat.deleteMessage`; comportamento PADRÃO é
+ *   revogação ("apagar para todos"), coerente com `DeleteMessageInput` (sem campo de escopo). Ver
+ *   `deleteMessage`.
+ * - `chats.archive`/`unarchive`: `POST /archive-chat` (toggle único via `value`). Ver
+ *   `setChatArchived`.
+ * - `chats.pin`/`unpin`: `POST /pin-chat`. **Bug confirmado no controller** (`state === 'true'`,
+ *   comparação com STRING, não booleano) — este adapter contorna enviando `state` como a string
+ *   literal `"true"`/`"false"`. Ver `setChatPinned`.
+ * - `chats.mute`/`unmute`: `POST /send-mute`. `ChatsApi.mute`/`unmute` não recebem duração (ver
+ *   ADR-0012) — `mute` usa uma duração longa arbitrária escolhida por este adapter (não um default
+ *   do provider); `unmute` omite `time`/`type` de propósito para cair no branch de remoção
+ *   confirmado no dossiê. Ver `setChatMuted`.
+ * - `chats.markRead`/`markUnread`: `POST /send-seen` / `POST /mark-unseen` — dois endpoints
+ *   distintos (não um toggle), com uma TERCEIRA exceção de envelope confirmada só em `send-seen`
+ *   (`status` com "S" maiúsculo). Ver `markChatRead`/`markChatUnread`.
  */
 const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'instance.connect',
@@ -135,6 +158,8 @@ const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'messages.edit',
+  'messages.delete',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -157,6 +182,14 @@ const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'contacts.block',
   'contacts.unblock',
   'contacts.listBlocked',
+  'chats.archive',
+  'chats.unarchive',
+  'chats.mute',
+  'chats.unmute',
+  'chats.pin',
+  'chats.unpin',
+  'chats.markRead',
+  'chats.markUnread',
   'webhooks.parse',
 ];
 
@@ -183,6 +216,8 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     sendText: (input) => sendText(http, session, input),
     sendMedia: (input) => sendMedia(http, session, input),
     sendReaction: (input) => sendReaction(http, session, input),
+    edit: (input) => editMessage(http, session, input),
+    delete: (input) => deleteMessage(http, session, input),
   };
 
   const groups: GroupsApi = {
@@ -213,6 +248,17 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     listBlocked: () => listBlockedContacts(http, session),
   };
 
+  const chats: ChatsApi = {
+    archive: (chatId) => setChatArchived(http, session, chatId, true),
+    unarchive: (chatId) => setChatArchived(http, session, chatId, false),
+    mute: (chatId) => setChatMuted(http, session, chatId, true),
+    unmute: (chatId) => setChatMuted(http, session, chatId, false),
+    pin: (chatId) => setChatPinned(http, session, chatId, true),
+    unpin: (chatId) => setChatPinned(http, session, chatId, false),
+    markRead: (chatId) => markChatRead(http, session, chatId),
+    markUnread: (chatId) => markChatUnread(http, session, chatId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WPPCONNECT_CAPABILITIES,
@@ -220,6 +266,7 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     messages,
     groups,
     contacts,
+    chats,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -576,6 +623,87 @@ async function sendReaction(
   });
 
   return { id: input.messageId, chatId: recipient.phone, raw: response };
+}
+
+/**
+ * `POST /edit-message` (`MessageController.editMessage`, retrofit ADR-0012 — pesquisa dedicada de
+ * 2026-07-12, confiança Alta). Body `{id, newText, options?}` — SEM `phone`/`isGroup`: o `id` da
+ * mensagem já identifica o chat sozinho (mesmo padrão do adapter uazapi para o mesmo tipo de
+ * endpoint), então `input.to` NÃO é enviado no request — só usado como fallback de `chatId` no
+ * mapeamento da resposta.
+ *
+ * **Delegação confirmada até a lib** (`controls.layer.ts`, `e153ff72`): edita, RE-BUSCA a mensagem
+ * completa via `getMessageById` e valida `result.body === newText`, lançando o próprio resultado
+ * bruto do WPP (não um `Error` padrão) se a checagem falhar. Resposta HTTP em si segue o envelope
+ * padrão (`returnSucess`, `messageController.ts`) — `response` é o objeto `Message` completo, BARE
+ * (diferente de `sendText`/`sendMedia`: este endpoint não passa pelo middleware
+ * `statusConnection`, que é quem produz o array de um elemento — não usa `unwrapArrayResponse`).
+ *
+ * **Sem janela de tempo verificável**: a checagem de "pode editar" (`canEditMsg`/`canEditCaption`)
+ * é um re-export de símbolo interno do bundle fechado do WhatsApp Web — se falhar, `WPP.chat.
+ * editMessage` lança ANTES de qualquer chamada de rede, propagando pelo `page.evaluate` até o
+ * catch do controller, que devolve uma mensagem genérica fixa (`'Erro ao enviar a mensagem.'`),
+ * com o motivo real só dentro da chave `error` do corpo HTTP. Este adapter não valida nenhum prazo
+ * localmente (nenhum provider pesquisado confirma essa janela em código, ver ADR-0012).
+ *
+ * **Sem webhook de entrada correspondente**: o controller emite a edição só via Socket.IO
+ * (`req.io.emit('edited-message', edited)`), não via `callWebHook` — busca exaustiva nos registros
+ * de hook (`src/util/createSessionUtil.ts`) não encontra um `onEditMessage`/equivalente. Uma
+ * mensagem editada por OUTRA parte não gera nenhum evento canônico de entrada nesta fase.
+ */
+async function editMessage(
+  http: HttpClient,
+  session: string,
+  input: EditMessageInput,
+): Promise<SentMessage> {
+  const response = await http.request<unknown>({
+    method: 'POST',
+    path: sessionPath(session, '/edit-message'),
+    body: { id: input.messageId, newText: input.text },
+  });
+  const message = asRecord(unwrapResponse(response));
+  const id = asString(message?.id) ?? input.messageId;
+  const chatId = extractChatId(message?.chatId) ?? toWppconnectRecipient(input.to).phone;
+  const timestamp = secondsToEpochMs(message?.timestamp ?? message?.t);
+  return { id, chatId, timestamp, raw: response };
+}
+
+/**
+ * `POST /delete-message` (`DeviceController.deleteMessage`, retrofit ADR-0012 — confiança Alta).
+ * Body `{phone, isGroup, messageId, onlyLocal, deleteMediaInDevice}`.
+ *
+ * **Achado central confirmado em código**: a lib subjacente (`controls.layer.ts`) tem
+ * `onlyLocal = false` como default e repassa `!onlyLocal` para `WPP.chat.deleteMessage` — ou seja,
+ * o comportamento PADRÃO do provider já é revogação ("apagar para todos"), exatamente a semântica
+ * assumida por `DeleteMessageInput` (sem campo de escopo, ver ADR-0012). Este adapter envia
+ * `onlyLocal: false` EXPLICITAMENTE (em vez de confiar num default silencioso que poderia mudar
+ * numa versão futura do provider) — não usa `deleteMediaInDevice` (fica no default `true` da lib,
+ * que só afeta o cache local de mídia, não o alcance da revogação).
+ *
+ * **Achado extra, registrado para não ser redescoberto**: o próprio exemplo de documentação do
+ * provider rotula um payload sem `onlyLocal: true` como "delete only me" — dado o default real,
+ * esse exemplo produziria revogação para todos, não exclusão local (divergência confirmada entre
+ * doc e código, ver docs/providers/wppconnect.md).
+ *
+ * Resposta é mensagem FIXA (`{message: 'Message deleted'}`, sem `id`/`chatId`/`timestamp`) —
+ * ignorada, contrato retorna `Promise<void>`.
+ */
+async function deleteMessage(
+  http: HttpClient,
+  session: string,
+  input: DeleteMessageInput,
+): Promise<void> {
+  const recipient = toWppconnectRecipient(input.to);
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/delete-message'),
+    body: {
+      phone: recipient.phone,
+      isGroup: recipient.isGroup,
+      messageId: input.messageId,
+      onlyLocal: false,
+    },
+  });
 }
 
 /**
@@ -1068,6 +1196,147 @@ async function listBlockedContacts(http: HttpClient, session: string): Promise<s
     if (phone !== undefined) phones.push(phone);
   }
   return phones;
+}
+
+// ---------------------------------------------------------------------------
+// chats.* (retrofit ADR-0012, pesquisa dedicada de 2026-07-12)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /archive-chat`, body `{phone, isGroup, value}` (`DeviceController.archiveChat`, confiança
+ * Alta) — toggle único: o MESMO endpoint arquiva/desarquiva conforme `value`. Chamada única
+ * confirmada no controller (sem loop): `await req.client.archiveChat(`${phone}`, value)` — `phone`
+ * segue o mesmo tratamento de `toWppconnectRecipient` (extração da parte local do JID) já usado
+ * por `messages.*`, evitando o mesmo risco de sufixo duplicado. Resposta é um objeto REAL
+ * (`{wid, archive}`, confirmado em `wa-js@a4c57173`) — ignorada aqui, contrato retorna
+ * `Promise<void>`.
+ *
+ * **Nuance de comportamento confirmada (`wa-js` HEAD, dependência ativa não pinada pelo dossiê
+ * original — confiança média-alta)**: o provider LANÇA erro se o chat já estiver no estado pedido
+ * (arquivar um chat já arquivado, ou desarquivar um já desarquivado) — não é um no-op idempotente.
+ * Este adapter não tenta mascarar isso (não inventa idempotência que o provider não garante);
+ * consumidores que chamem `archive`/`unarchive` sem checar o estado atual podem receber um erro
+ * nesse caso específico.
+ */
+async function setChatArchived(
+  http: HttpClient,
+  session: string,
+  chatId: string,
+  value: boolean,
+): Promise<void> {
+  const recipient = toWppconnectRecipient(chatId);
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/archive-chat'),
+    body: { phone: recipient.phone, isGroup: recipient.isGroup, value },
+  });
+}
+
+/**
+ * `POST /send-mute`, body `{phone, isGroup, time, type}` (`DeviceController.sendMute`, confiança
+ * Alta — controller + duas camadas da lib, incluindo o script injetado `send-mute.js`). `time`+
+ * `type` são OBRIGATÓRIOS JUNTOS para de fato silenciar: só 3 valores de `type` acionam o mute
+ * (`'hours'`/`'minutes'`/`'year'` — este ÚLTIMO soma DIAS, não anos, bug de nomenclatura confirmado
+ * na própria linha do script injetado). Qualquer outro valor — incluindo OMITIR os dois campos —
+ * cai no branch de REMOÇÃO do mute (restaura a partir da expiração já registrada no chat, não zera
+ * incondicionalmente).
+ *
+ * `ChatsApi.mute`/`ChatsApi.unmute` do contrato canônico não recebem duração (ver ADR-0012 —
+ * nenhum formato de duração converge entre os providers pesquisados, decisão deliberada de manter
+ * o campo fora do contrato). A duração abaixo é uma DECISÃO DESTE ADAPTER, não um default do
+ * provider: como não existe um `type` de fato permanente, `mute(chatId)` usa
+ * `type: 'hours', time: 87600` (10 anos em horas) para aproximar "silenciar indefinidamente" — não
+ * usa o `type: 'year'` confirmado-bugado (que somaria só 87600 DIAS, um valor absurdo) nem um
+ * número pequeno de `'year'` (que somaria só alguns DIAS, muito curto). `unmute(chatId)` OMITE
+ * `time`/`type` de propósito, para cair no branch de remoção confirmado no dossiê. Consumidores que
+ * precisem de uma duração específica só têm essa granularidade via `raw`/chamada direta ao
+ * provider, fora do contrato canônico.
+ */
+const MUTE_DURATION = { time: 24 * 365 * 10, type: 'hours' } as const;
+
+async function setChatMuted(
+  http: HttpClient,
+  session: string,
+  chatId: string,
+  muted: boolean,
+): Promise<void> {
+  const recipient = toWppconnectRecipient(chatId);
+  const body: Record<string, unknown> = { phone: recipient.phone, isGroup: recipient.isGroup };
+  if (muted) {
+    // Ver docstring acima da constante MUTE_DURATION para a justificativa da duração escolhida.
+    body.time = MUTE_DURATION.time;
+    body.type = MUTE_DURATION.type;
+  }
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/send-mute'),
+    body,
+  });
+}
+
+/**
+ * `POST /pin-chat`, body `{phone, isGroup, state}` (`DeviceController.pinChat`, confiança Alta — o
+ * achado mais acionável da pesquisa desta rodada). Schema Swagger declara `state:
+ * {type:"boolean"}`, mas o controller real faz `state === 'true'` — comparação com a STRING
+ * `'true'`, não o booleano. Enviar `state: true` (booleano JSON, como o próprio schema pede)
+ * resultaria SEMPRE em desafixar, independente da intenção. Este adapter contorna o bug enviando
+ * `state` sempre como a STRING literal `"true"`/`"false"` (nunca o booleano). Resposta é mensagem
+ * FIXA (`{message: 'Chat fixed'}`, usada tanto para pin quanto unpin) — ignorada, contrato retorna
+ * `Promise<void>`. Mesmo padrão "lança se já no estado pedido" de `archive` (confirmado em
+ * `wa-js@a4c57173`, confiança média-alta).
+ */
+async function setChatPinned(
+  http: HttpClient,
+  session: string,
+  chatId: string,
+  pinned: boolean,
+): Promise<void> {
+  const recipient = toWppconnectRecipient(chatId);
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/pin-chat'),
+    body: {
+      phone: recipient.phone,
+      isGroup: recipient.isGroup,
+      state: pinned ? 'true' : 'false',
+    },
+  });
+}
+
+/**
+ * `POST /mark-unseen` (`DeviceController.markUnseenMessage`, confiança Alta). Body
+ * `{phone, isGroup}` — sem toggle booleano, só liga o estado "não lida" (nunca desliga; o par
+ * simétrico é `markChatRead`, endpoint TOTALMENTE diferente, não o mesmo com um parâmetro
+ * invertido). Resposta: envelope PADRÃO (`status: 'success'` minúsculo), mensagem fixa
+ * (`{message: 'unseen checked'}`) — ignorada, contrato retorna `Promise<void>`.
+ */
+async function markChatUnread(http: HttpClient, session: string, chatId: string): Promise<void> {
+  const recipient = toWppconnectRecipient(chatId);
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/mark-unseen'),
+    body: { phone: recipient.phone, isGroup: recipient.isGroup },
+  });
+}
+
+/**
+ * `POST /send-seen` (`DeviceController.sendSeen`, confiança Alta). Body `{phone, isGroup}` — outro
+ * endpoint, não o mesmo de `markChatUnread` com um parâmetro invertido.
+ *
+ * **Terceira exceção de envelope confirmada no dossiê, isolada deste endpoint (e de
+ * `delete-chat`/`clear-chat`, não usados por este adapter)**: usa um `returnSucess` LOCAL diferente
+ * do padrão do resto do arquivo — `status` vem com "S" MAIÚSCULO (`'Success'`, não `'success'`) e o
+ * payload real fica DOIS níveis abaixo (`response.data`), não em `response` diretamente. Não afeta
+ * este adapter: a resposta inteira é ignorada (contrato retorna `Promise<void>`) — citado aqui só
+ * para não ser redescoberto por engano como um bug de parsing numa manutenção futura.
+ */
+async function markChatRead(http: HttpClient, session: string, chatId: string): Promise<void> {
+  const recipient = toWppconnectRecipient(chatId);
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/send-seen'),
+    body: { phone: recipient.phone, isGroup: recipient.isGroup },
+  });
 }
 
 // ---------------------------------------------------------------------------

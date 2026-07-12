@@ -78,6 +78,8 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 | `messages.sendText` | `POST /send/text` | Campo `number` aceita dígitos crus (`"5511999999999"`, sem `+`/`@`) OU JID completo (`...@s.whatsapp.net`, `...@g.us`) já formado — **compatível 1:1 com o `chatId` canônico do waconector** (`normalizeChatId`), então o adapter repassa sem transformação. `formatJid` (default `true`) normaliza dígitos crus no servidor. |
 | `messages.sendMedia` | `POST /send/media` | Duas variantes no mesmo endpoint, escolhidas pelo `Content-Type`: JSON (`{number, type, url, caption?, filename?, ...}`) ou `multipart/form-data` (campo binário `file`). **Este adapter implementa a variante JSON** — o `HttpClient` compartilhado sempre serializa o corpo como JSON, não há suporte a `multipart/form-data` nele. O campo `url` da variante JSON é overloaded pelo servidor (`pkg/sendMessage/handler/send_handler.go`): quando o valor não começa com `http://`/`https://`, é tratado como base64 e decodificado (`base64.StdEncoding.DecodeString`) antes do envio — então o adapter envia `media.base64` no mesmo campo `url` quando `media.url` está ausente. Lança `WaConnectorError('INVALID_INPUT', ...)` apenas quando nem `url` nem `base64` são informados. |
 | `messages.sendReaction` | `POST /message/react` | Ver seção "Reações" abaixo. |
+| `messages.edit` | `POST /message/edit` | Ver seção "Edição e exclusão de mensagem" abaixo. |
+| `messages.delete` | `POST /message/delete` | Ver seção "Edição e exclusão de mensagem" abaixo. |
 | `groups.create` | `POST /group/create` | Ver seção "Grupos (núcleo)" abaixo. |
 | `groups.getInfo` | `POST /group/info` | Ver seção "Grupos (núcleo)" abaixo. |
 | `groups.list` | `GET /group/list` | Ver seção "Grupos (núcleo)" abaixo. |
@@ -93,6 +95,9 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 | `contacts.block` | `POST /user/block` | Ver seção "Contatos" abaixo. |
 | `contacts.unblock` | `POST /user/unblock` | Ver seção "Contatos" abaixo. |
 | `contacts.listBlocked` | `GET /user/blocklist` | Ver seção "Contatos" abaixo. |
+| `chats.archive` | `POST /chat/archive` | Ver seção "Conversas (`chats.*`)" abaixo. |
+| `chats.mute` | `POST /chat/mute` | Ver seção "Conversas (`chats.*`)" abaixo. |
+| `chats.pin` / `chats.unpin` | `POST /chat/pin` / `POST /chat/unpin` | Ver seção "Conversas (`chats.*`)" abaixo. |
 
 ## Reações
 
@@ -126,6 +131,51 @@ Terminologia do provider: **"instance"** (documentação em português usa "inst
 - Funciona tanto para reagir a mensagens recebidas quanto enviadas pela própria instância (via
   `fromMe`), em chats individuais e em grupos (via `participant`) — nenhuma limitação direcional
   documentada pelo provider em si; as limitações acima são do adapter, não da API.
+
+## Edição e exclusão de mensagem
+
+Ver ADR-0012. Ambas confirmadas com **confiança Alta** via pesquisa dedicada de capabilities novas
+(2026-07-12), desta vez a partir dos arquivos OpenAPI oficiais que a própria plataforma expõe
+(`docs.evolutionfoundation.com.br/llms.txt` → `api-reference/openapi/Evolution-Go/evo-go-message.yaml`),
+não só código-fonte Go — mesmo padrão de confiança já usado no resto deste dossiê quando o site
+"concorda com o código-fonte".
+
+### `messages.edit` — `POST /message/edit`
+
+- Fonte: `evo-go-message.yaml`, schema `EditMessage`. Corpo: `{chat: string, message: string,
+  messageId: string}`. **Atenção de nomenclatura**: o novo texto vai no campo `message`, não
+  `text` (diferente de `/send/text`) nem `caption` — o adapter traduz `EditMessageInput.text` →
+  `message`.
+- Resposta: `{"message":"success","data":{"messageId":"3EB0000000000000000002","timestamp":
+  "0001-01-01 00:00:00 +0000 UTC"}}` — um envelope **próprio** (`data.messageId`/`data.timestamp`
+  minúsculos), diferente do `{data:{Info:{ID,ServerID,Timestamp}}}` usado por
+  `/send/text`/`/send/media`/`/message/react` (`toSentMessage`) — por isso o adapter usa um
+  mapeamento dedicado para `messages.edit`, sem reaproveitar `toSentMessage`. O próprio exemplo do
+  provider usa um timestamp zero-value (`0001-01-01...`), então `SentMessage.timestamp` pode ficar
+  `undefined` na prática se o provider não popular um valor real — comportamento seguro
+  (`timestamp` é opcional no contrato canônico).
+- **Sem janela de tempo documentada**: o spec não valida nenhum prazo para editar (o WhatsApp real
+  tipicamente restringe edição a mensagens recentes, ~15min, mas essa regra é decidida do lado
+  cliente/servidor do próprio WhatsApp, fora do spec do provider) — um eventual limite só se
+  manifestaria como erro `400`/`404`/`500` em runtime, nunca validado localmente por este adapter.
+- Erros documentados: `400` (payload inválido), `404` (mensagem não encontrada), `500`.
+
+### `messages.delete` — `POST /message/delete`
+
+- Fonte: `evo-go-message.yaml`, schema `Message: {chat: string, messageId: string}` (nome de
+  schema próprio — não confundir com o objeto de evento de webhook `Message`, nem com o schema
+  `ReactStruct` usado por `sendReaction`). Corpo: `{chat, messageId}`.
+- A descrição do endpoint no OpenAPI é literalmente **"Delete a message for everyone"** — ou seja,
+  esta operação **é sempre revogação para todos os participantes**, nunca um "apagar só
+  localmente"; não existe uma variante de escopo documentada. Isso é coerente com o contrato
+  canônico (`DeleteMessageInput` não carrega nenhum campo de escopo/`onlyLocal` — ver ADR-0012) e
+  com o nome do handler Go correspondente (`DeleteMessageEveryone`, já citado na seção "Reações"
+  acima ao diferenciar o campo `id`/`messageId`).
+- Resposta (exemplo real do OpenAPI): `{"message":"success","data":{"messageId":"...",
+  "timestamp":"0001-01-01 00:00:00 +0000 UTC"}}` — mesmo formato de `messages.edit` (`data`
+  presente). A operação canônica retorna `Promise<void>`, então o adapter ignora o corpo da
+  resposta deliberadamente; o shape exato de `data` é irrelevante ao comportamento.
+- Mesma ausência de janela de tempo documentada que em `messages.edit`.
 
 ## Grupos (núcleo)
 
@@ -360,6 +410,50 @@ campos do `Contact` mais completos. Os campos que o endpoint mais próximo não 
   listagem de bloqueados e por isso não declaram `contacts.listBlocked` — ver ADR-0010, mesmo
   padrão de omissão seletiva de capability já usado para `contacts.getAbout` na uazapi).
 
+## Conversas (`chats.*`)
+
+Namespace inteiramente novo (ver ADR-0012), confirmado via OpenAPI oficial `evo-go-chat.yaml`
+(pesquisa dedicada de 2026-07-12). Os 4 endpoints documentados ali compartilham exatamente o mesmo
+schema `ChatBody: {number: string}` — mesmo formato do campo `number` de `/send/text` (dígitos
+crus ou JID completo).
+
+### `chats.archive` — `POST /chat/archive`
+
+- **Confiança Alta.** Corpo `{number}`. Resposta (exemplo real do OpenAPI): `{"message":"success",
+  "data":{"timestamp":"0001-01-01 00:00:00 +0000 UTC"}}` — ignorada pelo adapter (`Promise<void>`).
+- **Não existe `POST /chat/unarchive`** no spec oficial — só a ação de arquivar está documentada.
+  Este adapter, portanto, **não declara `chats.unarchive`** (não é possível confirmar se chamar
+  `/chat/archive` de novo funciona como toggle, e inventar esse comportamento sem confirmação
+  violaria o mesmo princípio já usado em ADR-0010 para não popular campos não confirmados).
+
+### `chats.mute` — `POST /chat/mute`
+
+- **Confiança Alta.** Corpo `{number}` — **sem nenhum campo de duração** (nem `duration`, nem
+  `until`, nem `hours`). Diferente de outros providers do waconector que suportam "mutar por
+  8h/1 semana/sempre", aqui o schema só identifica o chat — sugere mute permanente/indefinido até
+  uma ação de desmutar. Como nenhum formato de duração converge entre os providers pesquisados
+  (ver ADR-0012), o contrato canônico `ChatsApi.mute` também não tem parâmetro de duração, então
+  isso não é uma limitação própria deste adapter.
+- **Não existe `POST /chat/unmute`** no spec oficial — mesma ausência de `archive`/`unarchive`.
+  Este adapter **não declara `chats.unmute`** pelo mesmo motivo.
+
+### `chats.pin` / `chats.unpin` — `POST /chat/pin` / `POST /chat/unpin`
+
+- **Confiança Alta** para os dois. Corpo `{number}` em ambos. **Diferente** de `archive`/`mute`,
+  este é o único par de `chats.*` **completo** (as duas direções existem no spec oficial) — por
+  isso é o único par simétrico implementado por este adapter.
+
+### `chats.markRead` / `chats.markUnread` — fora de escopo deste adapter (nesta fase)
+
+Nenhum endpoint de "marcar conversa inteira como lida/não lida" foi encontrado em `evo-go-chat.yaml`.
+O único endpoint de "marcar como lida" confirmado na pesquisa é `POST /message/markread`
+(`evo-go-message.yaml`, schema `MarkRead: {id: string[], number: string}`) — que opera por uma
+**lista de `messageId`**, não pelo chat inteiro. Por definição do próprio ADR-0012 (`chats.markRead`/
+`markUnread` são operações de nível de CHAT, distintas de um eventual `messages.markRead` por
+mensagem), esse endpoint mapeia para uma capability diferente (`messages.markRead`, fora do escopo
+desta ADR) — **não** para `chats.markRead`. Sem um endpoint de nível de chat confirmado, este
+adapter não declara nem `chats.markRead` nem `chats.markUnread`.
+
 ## Webhooks
 
 Duas camadas independentes e simultâneas: (a) global via env `WEBHOOK_URL` do servidor (todas as
@@ -558,3 +652,19 @@ Todas marcadas como **RECONSTRUÍDAS** (mesmo aviso de confiança acima):
   webhooks, não os envia), citado apenas para contexto.
 - `instance.pairingCode` **não implementado** nesta fase apesar de confirmado no provider —
   fora do escopo declarado para F1 deste adapter.
+- `chats.unarchive`/`chats.unmute`/`chats.markRead`/`chats.markUnread` **não implementados**: sem
+  endpoint confirmado no OpenAPI oficial (`evo-go-chat.yaml` só documenta `archive`/`mute`/`pin`/
+  `unpin`, não os inversos de `archive`/`mute`; e o único "marcar como lida" confirmado,
+  `POST /message/markread`, opera por mensagem, não por chat inteiro) — ver seção "Conversas
+  (`chats.*`)" acima.
+- `messages.edit`/`messages.delete` não validam nenhuma janela de tempo localmente — o spec do
+  provider não documenta um prazo, então um eventual limite (ex.: ~15min do WhatsApp real) só se
+  manifestaria como erro HTTP em runtime, nunca antecipado por este adapter.
+- Outras capabilities candidatas confirmadas na mesma pesquisa dedicada de 2026-07-12 mas
+  **deliberadamente fora do escopo** desta rodada (ADR-0012 cobre só `messages.edit`/`delete` e o
+  núcleo de `chats.*`): `messages.markRead` (nível de mensagem, batch de IDs), `messages.getStatus`,
+  `messages.downloadMedia` (bug de rate-limit 429 autodocumentado pelo próprio provider),
+  `chats.setPresence`, `messages.sendLocation`/`sendContact`/`sendPoll`/`sendLink`/`sendSticker`,
+  os namespaces `labels.*`/`newsletters.*`/`community.*` inteiros, `contacts.getPrivacySettings`,
+  `instance.setProfilePicture` e `instance.disconnect` — candidatos a ADRs/fases futuras, não
+  perdidos, apenas não fazem parte desta mudança.

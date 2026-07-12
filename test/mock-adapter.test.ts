@@ -88,6 +88,106 @@ describe('MockAdapter: outbox', () => {
       emoji: '👍',
     });
   });
+
+  it('messages.edit devolve um SentMessage ecoando o messageId original quando conectado', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const edited = await wa.messages.edit({
+      to: '5585999999999',
+      messageId: 'msg-1',
+      text: 'texto editado',
+    });
+
+    expect(edited.id).toBe('msg-1');
+    expect(edited.chatId).toBe('5585999999999');
+  });
+
+  it('messages.delete resolve sem erro quando conectado', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.messages.delete({ to: '5585999999999', messageId: 'msg-1' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('messages.edit/delete exigem instância conectada (INSTANCE_DISCONNECTED)', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+
+    const editFailure = await reject(
+      wa.messages.edit({ to: '5585999999999', messageId: 'msg-1', text: 'x' }),
+    );
+    expect(isWaConnectorError(editFailure) && editFailure.code === 'INSTANCE_DISCONNECTED').toBe(
+      true,
+    );
+
+    const deleteFailure = await reject(
+      wa.messages.delete({ to: '5585999999999', messageId: 'msg-1' }),
+    );
+    expect(
+      isWaConnectorError(deleteFailure) && deleteFailure.code === 'INSTANCE_DISCONNECTED',
+    ).toBe(true);
+  });
+});
+
+describe('MockAdapter: chats', () => {
+  it('archive/unarchive alternam o estado consultável via isChatArchived', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    expect(adapter.isChatArchived('5585999999999')).toBe(false);
+    await wa.chats.archive('5585999999999');
+    expect(adapter.isChatArchived('5585999999999')).toBe(true);
+    await wa.chats.unarchive('5585999999999');
+    expect(adapter.isChatArchived('5585999999999')).toBe(false);
+  });
+
+  it('mute/unmute alternam o estado consultável via isChatMuted', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    await wa.chats.mute('5585999999999');
+    expect(adapter.isChatMuted('5585999999999')).toBe(true);
+    await wa.chats.unmute('5585999999999');
+    expect(adapter.isChatMuted('5585999999999')).toBe(false);
+  });
+
+  it('pin/unpin alternam o estado consultável via isChatPinned', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    await wa.chats.pin('5585999999999');
+    expect(adapter.isChatPinned('5585999999999')).toBe(true);
+    await wa.chats.unpin('5585999999999');
+    expect(adapter.isChatPinned('5585999999999')).toBe(false);
+  });
+
+  it('markUnread/markRead alternam o estado consultável via isChatUnread', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    expect(adapter.isChatUnread('5585999999999')).toBe(false);
+    await wa.chats.markUnread('5585999999999');
+    expect(adapter.isChatUnread('5585999999999')).toBe(true);
+    await wa.chats.markRead('5585999999999');
+    expect(adapter.isChatUnread('5585999999999')).toBe(false);
+  });
+
+  it('todo método de chats.* exige instância conectada (INSTANCE_DISCONNECTED)', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.chats.archive('5585999999999'));
+    expect(isWaConnectorError(failure) && failure.code === 'INSTANCE_DISCONNECTED').toBe(true);
+  });
 });
 
 describe('MockAdapter: groups', () => {

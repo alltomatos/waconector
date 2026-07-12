@@ -1,4 +1,5 @@
 import type {
+  ChatsApi,
   ContactsApi,
   GroupsApi,
   InstanceApi,
@@ -24,6 +25,8 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  DeleteMessageInput,
+  EditMessageInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -96,6 +99,8 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendText',
   'messages.sendMedia',
   'messages.sendReaction',
+  'messages.edit',
+  'messages.delete',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -118,6 +123,8 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'contacts.block',
   'contacts.unblock',
   'contacts.listBlocked',
+  'chats.archive',
+  'chats.unarchive',
   'webhooks.parse',
 ];
 
@@ -144,6 +151,8 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     sendText: (input) => sendText(http, input),
     sendMedia: (input) => sendMedia(http, input),
     sendReaction: (input) => sendReaction(http, input),
+    edit: (input) => editMessage(http, input),
+    delete: (input) => deleteMessage(http, input),
   };
 
   const groups: GroupsApi = {
@@ -174,6 +183,37 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     listBlocked: () => listBlockedContacts(http),
   };
 
+  /**
+   * Ver ADR-0012. Cobertura real de `chats.*` no Wuzapi, verificada diretamente contra o
+   * código-fonte de `asternic/wuzapi` (`routes.go`/`handlers.go`, branch `main`, 2026-07-12 — o
+   * relatório de pesquisa dedicado desta rodada não estava disponível para este provider, então a
+   * verificação foi feita direto no repositório público em vez de a partir desse relatório):
+   *
+   * - **`archive`/`unarchive`**: implementados — MESMO endpoint `POST /chat/archive`, variando só
+   *   o booleano `archive` (ver `setChatArchived`). Confirma e ao mesmo tempo corrige uma leitura
+   *   mais estrita do achado registrado em ADR-0012 ("Wuzapi não tem nenhuma [operação] exceto
+   *   archive"): o endpoint real já cobre as duas direções via um único parâmetro, não é um
+   *   `archive` sem `unarchive` (diferente do caso do Evolution GO, citado na mesma ADR).
+   * - **`mute`/`unmute`/`pin`/`unpin`**: **não implementados** — busca exaustiva em `routes.go`
+   *   (todas as ~90 rotas registradas em `s.router.Handle(...)`) não encontra nenhum handler
+   *   equivalente a mutar/fixar uma conversa. Confirma o achado da ADR-0012 para este subconjunto.
+   * - **`markRead`/`markUnread`**: **não implementados**, apesar de `POST /chat/markread` EXISTIR
+   *   (`handlers.go`, func `MarkRead`) — achado que a ADR-0012 não previu para este provider. O
+   *   endpoint não serve ao contrato canônico `chats.markRead(chatId)`: seu corpo exige `Id`
+   *   (array de ids de MENSAGEM, `len(t.Id) < 1` rejeitado com 400), além de `ChatPhone`, não
+   *   aceita marcar a conversa inteira só por `chatId`. Ou seja, é a operação de NÍVEL DE MENSAGEM
+   *   que a própria ADR-0012 já reserva para um eventual `messages.markRead` futuro, distinto de
+   *   `chats.markRead` (nível de chat) — implementar aqui exigiria inventar/buscar ids de mensagem
+   *   não lidas (uma chamada extra a `/chat/history`), violando a regra de uma única chamada por
+   *   operação canônica (mesmo critério do ADR-0010). Não existe `markUnread` nenhum no código.
+   *
+   * Ver docs/providers/wuzapi.md, seção "Conversas (chats.*)".
+   */
+  const chats: ChatsApi = {
+    archive: (chatId) => setChatArchived(http, chatId, true),
+    unarchive: (chatId) => setChatArchived(http, chatId, false),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WUZAPI_CAPABILITIES,
@@ -181,6 +221,7 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     messages,
     groups,
     contacts,
+    chats,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -420,6 +461,53 @@ function mapSentMessage(response: WuzapiEnvelope, requestedPhone: string): SentM
   const id = asString(data?.Id) ?? `wuzapi-${Date.now()}`;
   const timestamp = secondsToEpochMs(data?.Timestamp);
   return { id, chatId: requestedPhone, timestamp, raw: response };
+}
+
+/**
+ * `POST /chat/send/edit` — confirmado diretamente no código-fonte de `asternic/wuzapi` (branch
+ * `main`, verificado em 2026-07-12; func `SendEditMessage`, `handlers.go`). O relatório de pesquisa
+ * dedicado desta rodada não estava disponível para este provider (ver docs/providers/wuzapi.md,
+ * nota no topo da seção "Edição e exclusão de mensagem"), então a verificação foi feita direto no
+ * repositório público em vez de a partir desse relatório.
+ *
+ * Corpo: `{Phone, Body, Id}` — `Body` é o NOVO texto (mesmo nome de campo de `sendText`/
+ * `sendReaction`), `Id` é o id da mensagem original a editar. O handler monta um
+ * `ExtendedTextMessage` internamente e chama `BuildEdit` do whatsmeow — sem nenhuma validação de
+ * janela de tempo no código (um eventual limite de ~15min do WhatsApp real, se existir, só se
+ * manifestaria como erro HTTP em runtime).
+ *
+ * Resposta confirmada: MESMO envelope `{Details,Timestamp,Id}` de `sendText`/`sendReaction` — `Id`
+ * aqui é o ECO do id requisitado (editar não gera um novo id de mensagem), por isso reaproveita
+ * `mapSentMessage` sem alteração.
+ */
+async function editMessage(http: HttpClient, input: EditMessageInput): Promise<SentMessage> {
+  const phone = toWuzapiPhone(input.to);
+  const response = await http.request<WuzapiEnvelope>({
+    method: 'POST',
+    path: '/chat/send/edit',
+    body: { Phone: phone, Body: input.text, Id: input.messageId },
+  });
+  return mapSentMessage(response, phone);
+}
+
+/**
+ * `POST /chat/delete` — confirmado diretamente no código-fonte (func `DeleteMessage`,
+ * `handlers.go`; mesma ressalva de verificação direta citada em `editMessage`). Corpo: `{Phone,
+ * Id}`. Internamente o handler chama `BuildRevoke(recipient, types.EmptyJID, msgid)` do whatsmeow
+ * — o segundo parâmetro vazio (`types.EmptyJID`) é a convenção do whatsmeow para "revogar mensagem
+ * própria" (só é possível revogar mensagens que a própria sessão enviou) — **sempre revogação para
+ * todos os participantes**, nunca um "apagar só localmente" (coerente com `DeleteMessageInput` do
+ * contrato canônico, que não carrega campo de escopo — ver ADR-0012).
+ *
+ * Resposta confirmada: `{Details:"Deleted",Timestamp,Id}` (`Id` = eco do id requisitado) —
+ * ignorada, contrato retorna `Promise<void>`.
+ */
+async function deleteMessage(http: HttpClient, input: DeleteMessageInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/chat/delete',
+    body: { Phone: toWuzapiPhone(input.to), Id: input.messageId },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -888,6 +976,55 @@ function firstRecordValue(record: Record<string, unknown>): Record<string, unkno
     return asRecord(value);
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// chats.*
+// ---------------------------------------------------------------------------
+
+/**
+ * Converte o chatId canônico para o formato exigido especificamente por `POST /chat/archive`.
+ *
+ * Diferente de TODO outro endpoint deste adapter — que reaproveitam, do lado do servidor, o
+ * helper interno lenient `parseJID` do Wuzapi (aceita dígitos crus, completando com
+ * `@s.whatsapp.net` quando a string não contém `@`) — o handler `ArchiveChat` (`handlers.go`)
+ * chama `types.ParseJID` (função CRUA da lib `whatsmeow`) diretamente sobre o campo `jid`, sem
+ * passar pelo wrapper lenient. `types.ParseJID` EXIGE um `@` na própria string (retorna erro "no
+ * server specified" quando ausente — confirmado no código-fonte, é o mesmo texto de erro que o
+ * wrapper lenient repassa quando delega para essa mesma função no ramo "com @"): ou seja, ao
+ * contrário de `Phone` em `sendText`/`sendReaction`/`chat/delete`/`chat/send/edit`, um chatId em
+ * dígitos crus (sem `@`) FALHARIA neste endpoint específico se repassado como está. Este adapter
+ * completa o sufixo `@s.whatsapp.net` quando o chatId não contém `@`, para que
+ * `chats.archive`/`chats.unarchive` aceitem o mesmo formato de entrada (dígitos ou JID explícito)
+ * que todo o resto do adapter — ver docs/providers/wuzapi.md.
+ */
+function toWuzapiChatJid(chatId: string): string {
+  return chatId.includes('@') ? chatId : `${chatId}@s.whatsapp.net`;
+}
+
+/**
+ * `POST /chat/archive` — confirmado diretamente no código-fonte de `asternic/wuzapi` (branch
+ * `main`, verificado em 2026-07-12; func `ArchiveChat`, `handlers.go` — o relatório de pesquisa
+ * dedicado desta rodada não estava disponível para este provider, ver nota em
+ * docs/providers/wuzapi.md). Corpo: `{jid, archive}` — **atenção**: tags JSON minúsculas
+ * (`jid`/`archive`), diferente da maioria dos outros endpoints deste provider (mesma exceção já
+ * documentada em `groups.create`, que também usa tags minúsculas).
+ *
+ * `archive` é um booleano: o MESMO endpoint cobre `chats.archive` (`archive: true`) E
+ * `chats.unarchive` (`archive: false`) — mesmo padrão de endpoint único reaproveitado por
+ * parâmetro já usado neste adapter em `getInviteLink`/`revokeInviteLink` (parâmetro `reset`) e em
+ * `addParticipants`/`removeParticipants`/`promoteParticipants`/`demoteParticipants` (parâmetro
+ * `Action`).
+ *
+ * Resposta confirmada: `{success: true, message: "Chat archived"|"Chat unarchived"}` — ignorada,
+ * contrato retorna `Promise<void>` para as duas operações.
+ */
+async function setChatArchived(http: HttpClient, chatId: string, archive: boolean): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/chat/archive',
+    body: { jid: toWuzapiChatJid(chatId), archive },
+  });
 }
 
 // ---------------------------------------------------------------------------
