@@ -401,7 +401,34 @@ pesquisa já produzidos na Epic 7 (`scratchpad/provider-reports/`), sem repetir 
       rodada) — resolvido mantendo o lado `develop` (superset estrito do conteúdo de `main` em
       todos os hunks, exceto `docs/capabilities.md`, regenerado do zero via
       `npm run docs:capabilities`).
-- [ ] `labels.*` (ADR-0016).
+- [x] **`labels.*`** (ADR-0016, [PR #39](https://github.com/alltomatos/waconector/pull/39)) —
+      segundo namespace inteiramente novo desta rodada (`WaAdapter.labels?`, mesmo padrão opcional
+      de `chats?`/`presence?`): CRUD de etiquetas estilo WhatsApp Business + associação/
+      desassociação a uma conversa. Cobertura por adapter: WAHA 4/6 (declina `addToChat`/
+      `removeFromChat` — endpoint nativo é bulk-replace, exigiria round-trip para emular add/
+      remove), Evolution GO 6/6 (`list` achado ao vivo — a pesquisa original não tinha encontrado
+      `GET /label/list`; `create`/`update`/`delete` convergem no mesmo `POST /label/edit`, `create`
+      gera um `labelId` via `randomUUID()` já que o handler exige um id escolhido pelo chamador),
+      uazapi 6/6 (`create` descobre o id atribuído pelo servidor por DIFF entre `GET /labels` antes/
+      depois, já que `/label/edit` com `labelid:"new"` não devolve o id criado), Z-API 1/6 (só
+      `list`, confiança baixa para o resto — só nome no índice da doc), Wuzapi 0/6 (busca negativa
+      confirmada, sem nenhuma rota de etiquetas), Whapi 6/6 (`update` é rename-only, sem mudar cor;
+      `create` escolhe o menor `labelId` numérico livre em 0-19 por causa do formato estrito do
+      provider), QuePasa 6/6 (único provider onde `create` devolve o label criado com id sem
+      round-trip extra; `update` sobrescreve `color` incondicionalmente — caveat documentado, não
+      resolvido por design), WPPConnect 5/6 (sem `update`, sem endpoint de edição; `create`
+      descobre o id por diff, igual à uazapi, já que o wrapper do provider tem um bug conhecido que
+      não devolve o label criado). `color` é opaco por provider (6 vocabulários incompatíveis:
+      índice numérico, hex, inteiro, enum nomeado, string livre, ARGB); `UpdateLabelInput.name` é
+      sempre obrigatório (protege contra apagar o nome num update parcial, motivado por um
+      comportamento real do QuePasa). Enum de capabilities cresce de 52 para 58. Implementado sem
+      `Workflow`/`Agent`. QA gate completo verde: 816 testes, cobertura
+      91.03%/68.33%/99.44%/92.53% (acima dos thresholds 77/60/90/80). Merge da PR exigiu reconciliar
+      o MESMO tipo de conflito com `main` do PR #38 (squash-merge diverge `develop` de `main`) —
+      resolvido da mesma forma verificada (superset estrito do `develop` em todos os hunks exceto
+      `docs/capabilities.md`, regenerado via `npm run docs:capabilities`; e um hunk não-vazio em
+      `ORCHESTRATOR-ROADMAP.md` onde o lado `main` era só um placeholder desatualizado do mesmo item
+      já completo em `develop`).
 - [ ] `channels.*`/`newsletters.*` (ADR-0017).
 - [ ] `business.*` (ADR-0018).
 - [ ] `calls.*` (ADR-0019).
