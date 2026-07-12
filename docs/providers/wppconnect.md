@@ -545,6 +545,20 @@ escopo). **Achado relevante**: a lib `@wppconnect/wa-js` subjacente TEM `follow.
 do servidor, não da biblioteca subjacente nem deste adapter (que só pode chamar o que o servidor
 expõe via REST).
 
+## Perfil comercial (`business.updateProfile`, ADR-0018)
+
+Cobertura 1/2 — só `updateProfile`, achado ao vivo em `routes.ts` (seção `// Business`, não
+investigada pelo relatório original).
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `business.updateProfile` | `POST /api/{session}/edit-business-profile` (`SessionController.editBusinessProfile`) | Body `{adress?, email?, categories?, websites?}` — **`adress` é a grafia INCORRETA real do provider** (confirmado no exemplo `#swagger.parameters` do controller), não um erro deste adapter. **Sem campo `description`**: o endpoint não aceita esse campo — `UpdateBusinessProfileInput.description` é silenciosamente ignorado quando fornecido pelo chamador. Resposta é o resultado bruto de `client.editBusinessProfile`, shape não confirmado com confiança — ignorada pelo adapter (contrato exige `Promise<void>`). |
+
+**Sem `business.getProfile`** — a seção `// Business` de `routes.ts` só registra 3 rotas:
+`edit-business-profile` (usada acima), `get-business-profiles-products` e
+`get-order-by-messageId/:messageId` — as duas últimas são de CATÁLOGO/PEDIDOS (fora do escopo desta
+ADR), nenhuma rota de leitura de perfil comercial existe.
+
 ## Grupos
 
 14 operações confirmadas com endpoint. Todos POST/GET, nenhum PUT/PATCH/DELETE (confirmado em

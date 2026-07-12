@@ -269,6 +269,22 @@ individual foi aberta para confirmar payload/schema. Confiança Baixa demais par
 rodada — mesmo critério de "declarar só o que o relatório confirma com payload real" já aplicado a
 `labels.*`/`presence.*` deste adapter.
 
+## Perfil comercial — NÃO implementado (ADR-0018)
+
+**`business.getProfile` deliberadamente NÃO implementado** — existe um endpoint candidato
+(`GET /instances/{id}/token/{token}/business/profile?phone=...`, payload real capturado no
+dossiê original: `{description, address, email, websites, categories, businessHours,
+hasCoverPhoto}`), mas o parâmetro `phone` **exige o alvo da consulta**, mesmo padrão já usado por
+`contacts.getProfilePicture`/`getAbout` DESTE MESMO adapter (que recebem `chatId`) — ou seja, é
+provavelmente uma consulta ao perfil comercial de UM CONTATO específico, não "meu próprio perfil"
+(o que `BusinessApi.getProfile()` modela, sem nenhum parâmetro). Este adapter não implementa
+`instance.getDevice`/`GET /device` (que teria o telefone da própria instância conectada) nem
+qualquer outro meio barato de obter o "próprio número" para testar a hipótese de auto-consulta —
+descasamento de FORMA de capability, não gap de confiança no payload (ver ADR-0018, Contexto/
+Alternativas). Candidata para uma futura `contacts.getBusinessProfile(chatId)`, não para esta ADR.
+Sem endpoint de edição (`PUT`/`POST`) encontrado no índice pesquisado — `business.updateProfile`
+também não implementado.
+
 ## Grupos (núcleo)
 
 Fonte primária: `developer.z-api.io/group/*` (páginas `create-group`, `group-metadata`,

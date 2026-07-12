@@ -1,6 +1,7 @@
 import type { CapabilitySet } from './capabilities';
 import type { CanonicalEvent } from './events';
 import type {
+  BusinessProfile,
   ChannelInfo,
   CheckExistsResult,
   ConnectResult,
@@ -32,6 +33,7 @@ import type {
   SentMessage,
   SetTypingInput,
   StarMessageInput,
+  UpdateBusinessProfileInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -202,6 +204,17 @@ export interface ChannelsApi {
 }
 
 /**
+ * Namespace novo (ADR-0018), inteiramente OPCIONAL — mesmo padrão de `chats?`/`presence?`/
+ * `labels?`/`channels?`. Perfil comercial WhatsApp Business (endereço, categoria, site, e-mail) —
+ * distinto do perfil PESSOAL do WhatsApp (fora de escopo do core atual).
+ */
+export interface BusinessApi {
+  getProfile?(): Promise<BusinessProfile>;
+  /** Sempre reenvia só os campos alterados — ver caveat do 207 parcial da uazapi em ADR-0018. */
+  updateProfile?(input: UpdateBusinessProfileInput): Promise<void>;
+}
+
+/**
  * Contrato que todo adapter de provider implementa.
  *
  * O adapter é "burro" de propósito: apenas traduz o modelo canônico de/para o
@@ -228,5 +241,7 @@ export interface WaAdapter {
   readonly labels?: LabelsApi;
   /** Namespace OPCIONAL (ADR-0017) — mesmo critério de `chats?` acima. */
   readonly channels?: ChannelsApi;
+  /** Namespace OPCIONAL (ADR-0018) — mesmo critério de `chats?` acima. */
+  readonly business?: BusinessApi;
   parseWebhook(input: WebhookInput): CanonicalEvent[];
 }

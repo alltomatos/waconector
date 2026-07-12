@@ -1,4 +1,5 @@
 import type {
+  BusinessApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -16,6 +17,7 @@ import { isWaConnectorError, WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  BusinessProfile,
   ChannelInfo,
   CheckExistsResult,
   ConnectResult,
@@ -53,6 +55,7 @@ import type {
   SentMessage,
   SetTypingInput,
   StarMessageInput,
+  UpdateBusinessProfileInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -164,6 +167,8 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'channels.delete',
   'channels.follow',
   'channels.unfollow',
+  'business.getProfile',
+  'business.updateProfile',
   'webhooks.parse',
 ];
 
@@ -270,6 +275,15 @@ export function whapi(options: WhapiOptions): WaAdapter {
     unfollow: (channelId) => setChannelSubscribed(http, channelId, false),
   };
 
+  /**
+   * Namespace `business.*` (ADR-0018). Cobertura 2/2, confiança Alta — achado ao vivo corrige o
+   * relatório original: o método real de `updateProfile` é `POST /business`, não `PATCH /business`.
+   */
+  const business: BusinessApi = {
+    getProfile: () => getBusinessProfile(http),
+    updateProfile: (input) => updateBusinessProfile(http, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WHAPI_CAPABILITIES,
@@ -281,6 +295,7 @@ export function whapi(options: WhapiOptions): WaAdapter {
     presence,
     labels,
     channels,
+    business,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1439,6 +1454,53 @@ function mapWhapiChannel(
     name: (record ? asString(record.name) : undefined) ?? fallback.name ?? '',
     description: (record ? asString(record.description) : undefined) ?? fallback.description,
     subscribersCount: record ? asNumber(record.subscribers_count) : undefined,
+    raw: body,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// business.* (ver ADR-0018)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /business` (`operationId: getBusinessProfile`, confiança Alta). Schema de resposta
+ * `BusinessProfile` (`allOf` de `BusinessProfileCustom` + `id`) **não tem campo `categories`**
+ * (diferente de uazapi) — `BusinessProfile.categories` fica sempre `undefined` neste adapter.
+ */
+async function getBusinessProfile(http: HttpClient): Promise<BusinessProfile> {
+  const body = await http.request<unknown>({ method: 'GET', path: '/business' });
+  return mapWhapiBusinessProfile(body);
+}
+
+/**
+ * `POST /business` (`operationId: editBusinessProfile`, confiança Alta — achado ao vivo que
+ * corrige o relatório original, que documentava `PATCH /business`; o `openapi.yaml` real usa
+ * `post:` para esse `operationId`). Body `BusinessProfileCustom` — só `description`/`address`/
+ * `email` expostos pelo contrato canônico (`hours`/`websites` ficam fora, ver ADR-0018). Resposta
+ * é um ack genérico (`Success`/`ResponseSuccess`), sem corpo útil — ignorada.
+ */
+async function updateBusinessProfile(
+  http: HttpClient,
+  input: UpdateBusinessProfileInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/business',
+    body: { description: input.description, address: input.address, email: input.email },
+  });
+}
+
+/** Mapeia `BusinessProfile`/`BusinessProfileCustom` do Whapi (campos FLAT) para `BusinessProfile` canônico. */
+function mapWhapiBusinessProfile(body: unknown): BusinessProfile {
+  const record = asRecord(body);
+  const websitesRaw = record && Array.isArray(record.websites) ? record.websites : [];
+  const websites = websitesRaw.filter((item): item is string => typeof item === 'string');
+  return {
+    description: record ? asString(record.description) : undefined,
+    address: record ? asString(record.address) : undefined,
+    email: record ? asString(record.email) : undefined,
+    websites: websites.length > 0 ? websites : undefined,
+    categories: undefined,
     raw: body,
   };
 }

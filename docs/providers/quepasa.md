@@ -724,6 +724,13 @@ seguir/deletar). Limitação real do provider, não gap de pesquisa — mesmo pa
 explícita, documentada em vez de omitida" já usado para `labels.*` da Wuzapi (ADR-0016) e
 `contacts.getAbout` da uazapi.
 
+## Perfil comercial — NÃO implementado (ADR-0018)
+
+**Busca negativa, 0/2**: nenhuma menção a perfil comercial WhatsApp Business em nenhum dos
+relatórios/código consultados para este provider. Consistente com o restante do dossiê (foco em
+mensageria básica + grupos limitados, ver seção acima) — limitação real, não gap de pesquisa.
+`WaAdapter.business` não implementado.
+
 ## Grupos
 
 **Escopo muito limitado, confiança alta**: o único endpoint de grupo em todo o código é `GET

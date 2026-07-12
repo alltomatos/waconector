@@ -472,6 +472,11 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(201, { idJid: '111111111111111111@newsletter' });
     }
 
+    // business.updateProfile (ADR-0018): POST /edit-business-profile — resposta bruta, ignorada.
+    if (method === 'POST' && suffix === '/edit-business-profile') {
+      return jsonResponse(201, { status: 'success' });
+    }
+
     throw new Error(`fetchStub (wppconnect): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1907,6 +1912,51 @@ describe('wppconnect adapter: comportamento específico do provider', () => {
         expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
       }
     }
+  });
+
+  it('business.updateProfile chama POST /edit-business-profile com {adress, email} (sem description) e resolve void', async () => {
+    const calls: Array<{ method: string; body: unknown }> = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          const suffix = url.pathname.slice(API_PREFIX.length);
+          if (suffix === '/edit-business-profile') {
+            calls.push({
+              method: (init?.method ?? 'GET').toUpperCase(),
+              body: init?.body ? JSON.parse(String(init.body)) : undefined,
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.business.updateProfile({
+        description: 'Descrição ignorada por este provider',
+        address: 'Rua Contrato, 1',
+        email: 'contrato@exemplo.com',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([
+      {
+        method: 'POST',
+        body: { adress: 'Rua Contrato, 1', email: 'contrato@exemplo.com' },
+      },
+    ]);
+  });
+
+  it('não declara "business.getProfile" (sem rota de leitura exposta pelo servidor) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('business.getProfile');
+    expect(adapter.business?.getProfile).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const failure = await wa.business.getProfile().catch((error: unknown) => error);
+    expect(isWaConnectorError(failure) && failure.code === 'UNSUPPORTED_CAPABILITY').toBe(true);
   });
 
   it('chats.archive envia { phone, isGroup, value: true } para POST /archive-chat', async () => {

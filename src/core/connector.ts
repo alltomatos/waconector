@@ -1,4 +1,5 @@
 import type {
+  BusinessApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -15,6 +16,7 @@ import { normalizeChatId, normalizeInviteLink } from './chat-id';
 import { UnsupportedCapabilityError, WaConnectorError } from './errors';
 import type { CanonicalEvent, CanonicalEventType, EventOf, UnknownEvent } from './events';
 import type {
+  BusinessProfile,
   ChannelInfo,
   CheckExistsResult,
   Contact,
@@ -46,6 +48,7 @@ import type {
   SetTypingInput,
   StarMessageInput,
   TypingState,
+  UpdateBusinessProfileInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -185,6 +188,16 @@ export interface ConnectorChannelsApi {
 }
 
 /**
+ * `BusinessApi` exposta pelo conector: todo método sempre presente (diferente da interface do
+ * adapter, onde o NAMESPACE INTEIRO é opcional — ver ADR-0018, mesmo critério de `ChatsApi`/
+ * `PresenceApi`/`LabelsApi`/`ChannelsApi`).
+ */
+export interface ConnectorBusinessApi {
+  getProfile(): Promise<BusinessProfile>;
+  updateProfile(input: UpdateBusinessProfileInput): Promise<void>;
+}
+
+/**
  * Camada de ergonomia e política sobre um adapter: checagem de capabilities,
  * validação e normalização de entrada, eventos e parsing seguro de webhooks.
  */
@@ -200,6 +213,7 @@ export class WaConnector {
   readonly presence: ConnectorPresenceApi;
   readonly labels: ConnectorLabelsApi;
   readonly channels: ConnectorChannelsApi;
+  readonly business: ConnectorBusinessApi;
   readonly webhooks: WebhooksApi;
 
   private readonly listeners = new Map<string, Set<AnyListener>>();
@@ -441,6 +455,14 @@ export class WaConnector {
       unfollow: (channelId) =>
         this.callChannelsMethod('unfollow', 'channels.unfollow', (fn) =>
           fn(this.requireChannelId(channelId)),
+        ),
+    };
+
+    this.business = {
+      getProfile: () => this.callBusinessMethod('getProfile', 'business.getProfile', (fn) => fn()),
+      updateProfile: (input) =>
+        this.callBusinessMethod('updateProfile', 'business.updateProfile', (fn) =>
+          fn(this.prepareUpdateBusinessProfile(input)),
         ),
     };
 
@@ -723,6 +745,24 @@ export class WaConnector {
     return channelId;
   }
 
+  /** Ao menos 1 campo é obrigatório (ver `UpdateBusinessProfileInput`/ADR-0018) — nenhum provider confirmado aceita update vazio. */
+  private prepareUpdateBusinessProfile(
+    input: UpdateBusinessProfileInput,
+  ): UpdateBusinessProfileInput {
+    if (
+      input.description === undefined &&
+      input.address === undefined &&
+      input.email === undefined
+    ) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'business.updateProfile exige ao menos 1 campo ("description", "address" ou "email").',
+        { provider: this.provider },
+      );
+    }
+    return input;
+  }
+
   /**
    * Guard-rail comum aos métodos opcionais de `MessagesApi` (`sendReaction`/`edit`/`delete`/
    * `forward`/`star`/`unstar`/`pin`/`unpin`/`markRead`/`sendLocation`/`sendContactCard`/
@@ -882,6 +922,28 @@ export class WaConnector {
       );
     }
     return invoke(fn as NonNullable<ChannelsApi[K]>);
+  }
+
+  /**
+   * Guard-rail de `business.*` — mesmo padrão de `callChannelsMethod`/`callLabelsMethod`
+   * (namespace inteiro opcional no adapter, ver ADR-0018).
+   */
+  private async callBusinessMethod<K extends keyof BusinessApi, R>(
+    method: K,
+    capability: Capability,
+    invoke: (fn: NonNullable<BusinessApi[K]>) => Promise<R>,
+  ): Promise<R> {
+    this.assertCapability(capability);
+    const fn = this.adapter.business?.[method];
+    if (!fn) {
+      throw new WaConnectorError(
+        'PROVIDER_ERROR',
+        `Adapter "${this.provider}" declara a capability "${capability}" mas não implementa ` +
+          `business.${String(method)} — isso é um bug no adapter, não uma entrada inválida.`,
+        { provider: this.provider },
+      );
+    }
+    return invoke(fn as NonNullable<BusinessApi[K]>);
   }
 
   /**

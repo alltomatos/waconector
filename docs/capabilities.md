@@ -13,14 +13,14 @@ Nenhuma linha aqui é escrita à mão.
 
 ## Resumo por provider
 
-- **waha**: 56/64
-- **evolution**: 50/64
-- **uazapi**: 58/64
-- **zapi**: 47/64
-- **wuzapi**: 41/64
-- **whapi**: 63/64
-- **quepasa**: 24/64
-- **wppconnect**: 55/64
+- **waha**: 56/66
+- **evolution**: 50/66
+- **uazapi**: 60/66
+- **zapi**: 47/66
+- **wuzapi**: 41/66
+- **whapi**: 65/66
+- **quepasa**: 24/66
+- **wppconnect**: 56/66
 
 ## Detalhe por namespace
 
@@ -126,6 +126,13 @@ Nenhuma linha aqui é escrita à mão.
 | `channels.delete` | ✅ | — | ✅ | — | — | ✅ | — | ✅ |
 | `channels.follow` | ✅ | ✅ | ✅ | — | — | ✅ | — | — |
 | `channels.unfollow` | ✅ | — | ✅ | — | — | ✅ | — | — |
+
+### `business.*`
+
+| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `business.getProfile` | — | — | ✅ | — | — | ✅ | — | — |
+| `business.updateProfile` | — | — | ✅ | — | — | ✅ | — | ✅ |
 
 ### `webhooks.*`
 

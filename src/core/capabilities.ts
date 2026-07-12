@@ -70,6 +70,8 @@ export const CAPABILITIES = [
   'channels.delete',
   'channels.follow',
   'channels.unfollow',
+  'business.getProfile',
+  'business.updateProfile',
   'webhooks.parse',
 ] as const;
 

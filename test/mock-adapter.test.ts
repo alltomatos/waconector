@@ -490,6 +490,35 @@ describe('MockAdapter: channels', () => {
   });
 });
 
+describe('MockAdapter: business', () => {
+  it('getProfile começa vazio e updateProfile aplica um patch parcial preservado entre chamadas', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const initial = await wa.business.getProfile();
+    expect(initial.description).toBeUndefined();
+    expect(initial.address).toBeUndefined();
+    expect(initial.email).toBeUndefined();
+
+    await wa.business.updateProfile({ description: 'Loja de exemplo' });
+    expect(await wa.business.getProfile()).toMatchObject({ description: 'Loja de exemplo' });
+
+    await wa.business.updateProfile({ address: 'Rua Exemplo, 123' });
+    const profile = await wa.business.getProfile();
+    expect(profile.description).toBe('Loja de exemplo');
+    expect(profile.address).toBe('Rua Exemplo, 123');
+  });
+
+  it('todo método de business.* exige instância conectada (INSTANCE_DISCONNECTED)', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.business.getProfile());
+    expect(isWaConnectorError(failure) && failure.code === 'INSTANCE_DISCONNECTED').toBe(true);
+  });
+});
+
 describe('MockAdapter: groups', () => {
   it('cria um grupo e permite consultá-lo via getInfo/list', async () => {
     const adapter = new MockAdapter();

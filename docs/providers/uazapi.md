@@ -516,6 +516,26 @@ tratar `newsletters.*` "como fase própria" dada a extensão): `updateName`/`upd
 (mensagens DENTRO do canal), `admin.*` (gestão de administradores), `transferOwnership`, `search`
 (descoberta de canais públicos), `getUpdates`/`getViewed` (métricas), `getSettings`.
 
+## Perfil comercial (`business.*`, ADR-0018)
+
+Cobertura 2/2, confiança Alta — a MELHOR cobertura desta ADR, empatada com Whapi.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `business.getProfile` | `POST /business/get/profile` | Body vazio (perfil da própria instância). Resposta `{response: {tag, description, address, email, websites, categories: [{id, localized_display_name}]}}`. `categories` normalizado para `string[]` (só `localized_display_name`, ver ADR-0018). |
+| `business.updateProfile` | `POST /business/update/profile` | Body `{description?, address?, email?}`, ao menos 1 obrigatório ("at least one field... is required", 400 documentado). |
+
+**Nuance de resposta parcial (`207 Multi-Status`)**: único endpoint do spec inteiro que usa esse
+código — quando parte dos campos falha, a resposta traz `{updated, failed}` com detalhe por campo
+em `response.<campo>.status`/`.error`. Como `Response.ok` do `fetch` trata `207` como sucesso (range
+200-299), `HttpClient` não lança automaticamente; este adapter inspeciona o corpo e lança
+`PROVIDER_ERROR` se qualquer campo tiver `.error` preenchido — sucesso parcial é tratado como falha
+total pelo contrato canônico (`updateProfile` continua "tudo ou nada" para o chamador).
+
+**Fora de escopo desta ADR** (ver `business.catalog.*` em "Limites e particularidades" abaixo):
+`business.catalog.list/info/hide/show/delete` (visibilidade de produtos do catálogo — sem endpoint
+de criação; feature de e-commerce, fora do foco de mensageria deste pacote).
+
 ## Chats (gestão de estado da conversa)
 
 Namespace `chats.*` introduzido pelo ADR-0012 — distinto de `contacts.*` (sobre a pessoa/JID) e de

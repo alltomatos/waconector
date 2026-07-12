@@ -256,6 +256,30 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { response: 'success' });
     }
 
+    // business.getProfile (ADR-0018): POST /business/get/profile.
+    if (method === 'POST' && pathname === '/business/get/profile') {
+      return jsonResponse(200, {
+        response: {
+          description: 'Loja de contrato',
+          address: 'Rua Contrato, 1',
+          email: 'contrato@exemplo.com',
+          websites: ['https://exemplo.com'],
+          categories: [{ id: '1', localized_display_name: 'Comércio' }],
+        },
+      });
+    }
+
+    // business.updateProfile (ADR-0018): POST /business/update/profile.
+    if (method === 'POST' && pathname === '/business/update/profile') {
+      const parsed = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+      if (parsed.description === 'força-207') {
+        return jsonResponse(207, {
+          response: { description: { status: 'error', error: 'algo falhou' } },
+        });
+      }
+      return jsonResponse(200, { response: 'success' });
+    }
+
     if (method === 'POST' && pathname === '/group/create') {
       return jsonResponse(200, {
         JID: '120363000000000000@g.us',
@@ -2202,6 +2226,58 @@ describe('uazapi adapter: comportamento específico do provider', () => {
       { path: '/newsletter/follow', body: { jid: '111111111111111111@newsletter' } },
       { path: '/newsletter/unfollow', body: { jid: '111111111111111111@newsletter' } },
     ]);
+  });
+
+  it('business.getProfile chama POST /business/get/profile e normaliza categories/websites', async () => {
+    const adapter = uazapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+
+    const profile = await wa.business.getProfile();
+
+    expect(profile).toEqual({
+      description: 'Loja de contrato',
+      address: 'Rua Contrato, 1',
+      email: 'contrato@exemplo.com',
+      websites: ['https://exemplo.com'],
+      categories: ['Comércio'],
+      raw: expect.anything(),
+    });
+  });
+
+  it('business.updateProfile chama POST /business/update/profile com o patch e resolve void', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/business/update/profile') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.business.updateProfile({ description: 'Nova descrição' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([
+      { description: 'Nova descrição', address: undefined, email: undefined },
+    ]);
+  });
+
+  it('business.updateProfile lança PROVIDER_ERROR quando o 207 Multi-Status indica falha parcial', async () => {
+    const adapter = uazapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+
+    const failure = await wa.business.updateProfile({ description: 'força-207' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
 
   it('declara todas as 8 operações de chats.* em capabilities', () => {

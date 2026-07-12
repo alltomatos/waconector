@@ -1,4 +1,5 @@
 import type {
+  BusinessApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -16,6 +17,7 @@ import { WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, ConnectionUpdateEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  BusinessProfile,
   ChannelInfo,
   CheckExistsResult,
   ConnectResult,
@@ -50,6 +52,7 @@ import type {
   SendTextInput,
   SentMessage,
   SetTypingInput,
+  UpdateBusinessProfileInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -151,6 +154,8 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'channels.delete',
   'channels.follow',
   'channels.unfollow',
+  'business.getProfile',
+  'business.updateProfile',
   'webhooks.parse',
 ];
 
@@ -260,6 +265,12 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     unfollow: (channelId) => setChannelFollowed(http, channelId, false),
   };
 
+  /** Namespace `business.*` (ADR-0018). Cobertura 2/2 — confiança Alta para os 2 endpoints. */
+  const business: BusinessApi = {
+    getProfile: () => getBusinessProfile(http),
+    updateProfile: (input) => updateBusinessProfile(http, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: UAZAPI_CAPABILITIES,
@@ -271,6 +282,7 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     presence,
     labels,
     channels,
+    business,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1364,6 +1376,84 @@ function mapUazapiChannel(
         ? asNumber(record.subscribersCount)
         : undefined;
   return { id, name, description, subscribersCount, raw: body };
+}
+
+// ---------------------------------------------------------------------------
+// business.* (ver ADR-0018)
+// ---------------------------------------------------------------------------
+
+/** `POST /business/get/profile` — corpo vazio (perfil da própria instância). Resposta `{response: {...}}`. */
+async function getBusinessProfile(http: HttpClient): Promise<BusinessProfile> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/business/get/profile',
+    body: {},
+  });
+  const record = asRecord(body);
+  const data = record ? asRecord(record.response) : undefined;
+  return mapUazapiBusinessProfile(data ?? body);
+}
+
+/**
+ * `POST /business/update/profile` — body `{description?, address?, email?}`, ao menos 1
+ * obrigatório (validado no conector). **Nuance de resposta parcial**: o endpoint pode devolver
+ * `207 Multi-Status` quando parte dos campos falha (detalhe por campo em `response.<campo>.error`)
+ * — `fetch`'s `Response.ok` trata `207` como sucesso (range 200-299), então `HttpClient` não lança
+ * nesse caso; este adapter inspeciona o corpo e lança `PROVIDER_ERROR` se qualquer campo tiver
+ * `.error` preenchido, tratando sucesso parcial como falha total (ver ADR-0018).
+ */
+async function updateBusinessProfile(
+  http: HttpClient,
+  input: UpdateBusinessProfileInput,
+): Promise<void> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/business/update/profile',
+    body: { description: input.description, address: input.address, email: input.email },
+  });
+  const record = asRecord(body);
+  const scope = (record ? asRecord(record.response) : undefined) ?? record;
+  if (scope && hasUazapiPartialFailure(scope)) {
+    throw new WaConnectorError(
+      'PROVIDER_ERROR',
+      'uazapi: business.updateProfile retornou sucesso parcial (207 Multi-Status) — ao menos 1 ' +
+        'campo falhou; verifique o corpo bruto da resposta para o detalhe por campo.',
+      { provider: PROVIDER },
+    );
+  }
+}
+
+/** Detecta o padrão `{<campo>: {status, error}}` de sucesso parcial documentado no `207`. */
+function hasUazapiPartialFailure(scope: Record<string, unknown>): boolean {
+  return Object.values(scope).some((value) => {
+    const fieldRecord = asRecord(value);
+    return (
+      fieldRecord !== undefined && fieldRecord.error !== undefined && fieldRecord.error !== null
+    );
+  });
+}
+
+/**
+ * Mapeia a resposta de `business.getProfile` para `BusinessProfile`. `categories` é normalizado
+ * para `string[]` (só `localized_display_name`) — ver ADR-0018.
+ */
+function mapUazapiBusinessProfile(body: unknown): BusinessProfile {
+  const record = asRecord(body);
+  const categoriesRaw = record && Array.isArray(record.categories) ? record.categories : [];
+  const categories = categoriesRaw
+    .map((item) => asRecord(item))
+    .map((item) => (item ? asString(item.localized_display_name) : undefined))
+    .filter((name): name is string => name !== undefined);
+  const websitesRaw = record && Array.isArray(record.websites) ? record.websites : [];
+  const websites = websitesRaw.filter((item): item is string => typeof item === 'string');
+  return {
+    description: record ? asString(record.description) : undefined,
+    address: record ? asString(record.address) : undefined,
+    email: record ? asString(record.email) : undefined,
+    websites: websites.length > 0 ? websites : undefined,
+    categories: categories.length > 0 ? categories : undefined,
+    raw: body,
+  };
 }
 
 // ---------------------------------------------------------------------------

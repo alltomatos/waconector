@@ -342,6 +342,14 @@ convite, ou outro identificador; ambiguidade não resolvida pela doc disponível
 `channels.getMessages` (`POST /newsletter/messages`, histórico de posts do canal — capability de
 conteúdo, não de gestão do canal em si).
 
+## Perfil comercial (`business.*`, ADR-0018) — NÃO implementado
+
+Busca negativa confirmada ao vivo: `user_service.go` (fonte já cacheada nesta sessão) só tem um
+campo `BusinessName` no perfil de UM CONTATO (indicando se esse contato é uma conta Business) —
+nenhum endpoint para ler/editar o PRÓPRIO perfil comercial da instância. Limitação real de
+plataforma (mesma raiz whatsmeow do Wuzapi, ver dossiê desse provider), não gap de pesquisa.
+`WaAdapter.business` não implementado.
+
 ## Grupos (núcleo)
 
 As 14 operações de `groups.*` (ver ADR-0009) são suportadas por este adapter. **Nenhuma das 4

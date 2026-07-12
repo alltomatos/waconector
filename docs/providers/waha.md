@@ -513,6 +513,13 @@ só no schema OpenAPI, sem prosa dedicada — confiança Média); `channels.sear
 de `messageId` específica para canais (`{fromMe}_{id}@newsletter_{serverID}_{clientID}`) — ver seção
 "Reações" acima.
 
+## Perfil comercial (`business.*`, ADR-0018) — NÃO implementado
+
+Busca negativa confirmada: nenhuma menção a perfil comercial WhatsApp Business (leitura ou edição)
+no `openapi.json` oficial consultado — o WAHA é fundamentalmente um wrapper de WhatsApp Web
+genérico (engines NOWEB/WEBJS/GOWS), sem integração dedicada com a API oficial de Business.
+Limitação real de plataforma, não gap de pesquisa. `WaAdapter.business` não implementado.
+
 ## Conversas (`chats.*`, retrofit ADR-0012)
 
 Namespace novo (ADR-0012) de gestão de estado de conversa. Cobertura real na pesquisa de
