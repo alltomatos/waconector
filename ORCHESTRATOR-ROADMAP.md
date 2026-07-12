@@ -223,7 +223,9 @@ Estado: **done**
 - [x] **v1.0.0 publicado no npm** — changeset `major` (semver de verdade: `0.4.0` → `1.0.0`).
       `README.md`/`CONTRIBUTING.md`/`docs/CONTEXT.md` atualizados para retirar a linguagem
       "pré-1.0: breaking changes em minors" — a partir de agora, breaking changes exigem bump
-      major + issue de discussão prévia.
+      major + issue de discussão prévia. Mergeado via
+      [PR #31](https://github.com/alltomatos/waconector/pull/31), publicado no npm confirmado via
+      `npm view waconector version`.
 
 ---
 
