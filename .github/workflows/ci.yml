@@ -52,6 +52,13 @@ jobs:
       - run: npm run test:coverage
       - run: npm run build
       - run: npm run smoke
+      - name: Falhar se a matriz de capabilities commitada ficou desatualizada
+        # Depende de dist/ (mesma ordem de dependência do smoke acima) — roda só 1x, não precisa
+        # repetir na matrix Node 20/22.
+        if: matrix.node-version == 22
+        run: |
+          npm run docs:capabilities
+          git diff --exit-code -- docs/capabilities.md
       - name: Publicar relatório de cobertura
         if: matrix.node-version == 22
         uses: actions/upload-artifact@v4
@@ -59,6 +66,20 @@ jobs:
           name: coverage-report
           path: coverage/
           retention-days: 14
+
+  docs-build:
+    # Feedback rápido sobre o site de documentação (VitePress) em todo push/PR, sem deploy — não
+    # depende de dist/ (docs/capabilities.md já vem commitado; a checagem de que está atualizado é
+    # feita no job "ci" acima). O deploy de fato mora em docs-deploy.yml, só em main.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run docs:build
 
   ci-required:
     # Jobs com matrix nunca reportam um check chamado exatamente "ci" — o GitHub sempre sufixa
