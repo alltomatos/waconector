@@ -3,7 +3,9 @@ dist/
 coverage/
 docs/.vitepress/dist
 docs/.vitepress/cache
+.next/
 *.log
 .DS_Store
 .env
 .env.*
+!.env.example

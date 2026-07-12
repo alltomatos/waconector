@@ -81,6 +81,33 @@ jobs:
       - run: npm ci
       - run: npm run docs:build
 
+  examples-smoke:
+    # Feedback rápido de que os exemplos em examples/ ainda instalam e sobem com o MockAdapter.
+    # Cada exemplo declara "waconector" como dependência normal do npm registry (mesma experiência
+    # de quem copia o exemplo) — não depende de dist/ local. Mesmo espírito do job "docs-build":
+    # informativo, não entra em ci-required.
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example: [express, nextjs]
+    defaults:
+      run:
+        working-directory: examples/${{ matrix.example }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Sanity check (Express)
+        if: matrix.example == 'express'
+        run: |
+          node --check server.mjs
+          node selftest.mjs
+      - name: Build (Next.js)
+        if: matrix.example == 'nextjs'
+        run: npm run build
+
   ci-required:
     # Jobs com matrix nunca reportam um check chamado exatamente "ci" — o GitHub sempre sufixa
     # com o valor da matrix ("ci (20)", "ci (22)"). Como a branch ruleset exige um check chamado

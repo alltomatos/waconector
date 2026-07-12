@@ -6,7 +6,9 @@
  * estenda ADAPTER_SUBPATHS em scripts/adapter-subpaths.mjs em vez de duplicar o bloco de asserções.
  */
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { ADAPTER_SUBPATHS } from './adapter-subpaths.mjs';
 
 const { createConnector, isWaConnectorError } = await import('../dist/index.js');
@@ -60,6 +62,27 @@ assert.ok(
 
 const unknownEvents = wa.webhooks.parse({ body: 'payload qualquer' });
 assert.equal(unknownEvents[0]?.type, 'unknown', 'payload lixo deveria virar evento unknown');
+
+// CLI (bin "waconector"): checagem de ponta a ponta via subprocess real — confirma que o
+// shebang/banner do tsup e o parsing de argv realmente funcionam no dist/ empacotado, algo que os
+// testes unitários de src/cli/doctor.ts sozinhos não cobrem (ver vitest.config.ts:
+// coverage.exclude de src/cli/index.ts).
+const cliPath = fileURLToPath(new URL('../dist/cli/index.js', import.meta.url));
+
+const helpOutput = execFileSync(process.execPath, [cliPath, '--help'], { encoding: 'utf8' });
+assert.match(helpOutput, /waconector — CLI de diagnóstico/, 'CLI --help com saída inesperada');
+
+let unknownProviderExitCode = 0;
+try {
+  execFileSync(process.execPath, [cliPath, 'doctor', '--provider', 'bogus'], { encoding: 'utf8' });
+} catch (error) {
+  unknownProviderExitCode = error.status;
+}
+assert.equal(
+  unknownProviderExitCode,
+  1,
+  'CLI deveria sair com código 1 para provider desconhecido',
+);
 
 console.log(
   `smoke ok: exports ESM + CJS (raiz, ./testing, ${ADAPTER_SUBPATHS.map((a) => `./${a.name}`).join(', ')}) e fluxo completo do MockAdapter`,

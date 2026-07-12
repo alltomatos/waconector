@@ -131,7 +131,7 @@ tratado como incremento futuro separado, não uma pendência desta Epic.
 
 ## Epic 4 — F3 do produto: profundidade e DX
 
-Estado: **in_progress**
+Estado: **done**
 
 - [x] Adapter Whapi.Cloud (SaaS) — dossiê (pesquisa em 3 frentes: auth/instância, mensagens,
       webhooks), implementação das capabilities núcleo (`instance.connect/status/logout`,
@@ -186,7 +186,19 @@ Estado: **in_progress**
       independente; deploy novo (`docs-deploy.yml`) só em push para `main`, usando
       `GITHUB_TOKEN`/OIDC nativo (sem secret novo). Pré-requisito manual do usuário: habilitar
       GitHub Pages nas configurações do repositório (Settings → Pages → Source: GitHub Actions).
-- [ ] Exemplos de bot (Express/Next), `npx waconector doctor`
+- [x] CLI `npx waconector doctor --provider <nome>` (ADR-0011) — diagnóstico de conectividade/auth
+      via variáveis `WACONECTOR_*` (mapeadas a partir dos campos string reais de cada `XxxOptions`,
+      verificados um a um contra o código de todos os 8 adapters). Só chama `instance.status()`
+      (leitura) — nunca `connect()`, que é side-effecting em alguns providers (WPPConnect,
+      QuePasa). Implementado como entry point ESM-only próprio (`src/cli/`, build separado via
+      `tsup` com `banner` de shebang — achado durante a implementação: colocar o shebang também no
+      código-fonte gera uma segunda linha `#!/usr/bin/env node`, que quebra o parse), usando
+      `node:util.parseArgs` (zero dependência de runtime nova, ADR-0004). `test/cli/doctor.test.ts`
+      cobre a lógica pura; `scripts/smoke.mjs` estendido com checagem de subprocess real do
+      binário compilado (shebang/argv de ponta a ponta). Exemplos executáveis em `examples/express`
+      e `examples/nextjs` (App Router), usando `MockAdapter` por padrão (`npm install && npm
+      start`/`npm run dev` sem nenhuma credencial), com job de CI `examples-smoke` (informativo,
+      fora de `ci-required`). **Fecha o último item pendente da F3 — Epic 4 completa.**
 
 ## Epic 5 — v1.0
 
