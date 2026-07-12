@@ -71,6 +71,35 @@ sintéticos (`buildIncomingText`, `buildAck`, `buildConnectionUpdate`). Seu bot 
 em memória. Use `simulateConnected()` para pular direto ao estado `connected`, ou
 `simulateState(state)` para forçar qualquer outro estado do ciclo de vida (ex.: `'qr'`).
 
+## Exemplos
+
+Bots mínimos e executáveis em [`examples/`](examples/), usando `MockAdapter` por padrão — zero
+credenciais reais:
+
+- [`examples/express`](examples/express) — webhook + envio via Express: `npm install && npm start`.
+- [`examples/nextjs`](examples/nextjs) — webhook via API route do Next.js (App Router):
+  `npm install && npm run dev`.
+
+Cada exemplo tem seu próprio `README.md` com instruções para trocar o `MockAdapter` por um
+provider real via variáveis `WACONECTOR_*` (o mesmo esquema usado por `npx waconector doctor`,
+abaixo).
+
+## CLI: `npx waconector doctor`
+
+Diagnóstico de conectividade/auth contra um provider real, configurado via variáveis de ambiente:
+
+```bash
+WACONECTOR_BASE_URL=http://localhost:3000 WACONECTOR_API_KEY=sua-chave \
+  npx waconector doctor --provider waha
+```
+
+`--provider` (ou `-p`) escolhe o adapter (`waha`, `evolution`, `uazapi`, `zapi`, `wuzapi`, `whapi`,
+`quepasa`, `wppconnect`); as demais opções vêm de variáveis `WACONECTOR_*` específicas do provider
+— rode sem elas definidas para ver exatamente quais são exigidas. `doctor` só chama
+`instance.status()` (checagem de leitura) — nunca `connect()`, então é seguro rodar quantas vezes
+quiser sem alterar o estado da instância no provider. Sai com código `0` em caso de sucesso, `1`
+em qualquer falha (útil em scripts/CI).
+
 ## Providers
 
 | Provider | Status | | Provider | Status |
