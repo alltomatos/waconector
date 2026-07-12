@@ -123,9 +123,10 @@ required check).
 - Se sua mudança afeta o pacote publicado (qualquer coisa em `src/`, `package.json` de forma
   relevante), adicione um changeset: `npx changeset`. Descreva o impacto do ponto de vista de quem
   consome o pacote, não a implementação interna.
-- Mudanças de contrato central (`src/core/`) que quebram compatibilidade merecem uma issue de
-  discussão antes do PR — pré-1.0 elas ainda são aceitáveis, mas devem ser conscientes e
-  documentadas (ver [docs/adr/](docs/adr/)).
+- Mudanças de contrato central (`src/core/`) que quebram compatibilidade exigem uma issue de
+  discussão antes do PR e um changeset `major` — desde o v1.0, a API pública é estável e essas
+  mudanças não são mais "aceitáveis em minors" como na fase 0.x. Documente a decisão em
+  [docs/adr/](docs/adr/).
 
 ## Reportando bugs e propondo features
 

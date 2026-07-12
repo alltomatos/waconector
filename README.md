@@ -9,10 +9,11 @@
 [![npm](https://img.shields.io/npm/v/waconector)](https://www.npmjs.com/package/waconector)
 [![Docs](https://img.shields.io/badge/docs-site-blue)](https://alltomatos.github.io/waconector/)
 
-**Status: em desenvolvimento (v0.x).** Core de contratos, conector, eventos canônicos, `MockAdapter`
-e suite de contrato prontos; adapters **WAHA**, **Evolution GO** (F1), **uazapi**, **Z-API**,
-**Wuzapi** (F2), **Whapi**, **QuePasa** (F3, capabilities núcleo) e **WPPConnect** (F3, capabilities
-amplas) implementados e verificados. A API pública pode mudar entre minors até a v1.0.
+**Status: v1.0 — API pública estável.** Core de contratos, conector, eventos canônicos,
+`MockAdapter` e suite de contrato prontos; 8 adapters (**WAHA**, **Evolution GO**, **uazapi**,
+**Z-API**, **Wuzapi**, **Whapi**, **QuePasa**, **WPPConnect**) implementados e verificados,
+passando 100% da suite de contrato compartilhada. Mudanças que quebram compatibilidade agora
+exigem um bump major (semver de verdade), não mais "aceitáveis em minors" como na fase 0.x.
 
 ## O problema
 

@@ -1,5 +1,25 @@
 # waconector
 
+## 1.0.0
+
+### Major Changes
+
+- Primeira versão estável (v1.0.0). Critérios atingidos:
+
+  - **8 adapters** (WAHA, Evolution GO, uazapi, Z-API, Wuzapi, Whapi, QuePasa, WPPConnect) passando
+    100% da suite de contrato compartilhada (`test/contract/adapter-contract.ts`), muito acima do
+    piso original de "3+ adapters".
+  - **API pública estável**: desde o `v0.1.0`, houve exatamente 1 breaking change em toda a história
+    do projeto (`ConnectResult.raw`/`InstanceStatus.raw` obrigatórios), ocorrida antes de existir
+    qualquer adapter além de WAHA/Evolution GO. Todas as releases seguintes (`v0.2.0` a `v0.4.0` —
+    6 adapters novos, `groups.*`/`contacts.*`/`messages.sendReaction`, CLI `doctor`, exemplos) foram
+    100% aditivas, sem alterar os formatos centrais (`WaMessage`, `SendTextInput`, `SendMediaInput`,
+    `InstanceStatus`, `ConnectResult`).
+
+  A partir desta versão, mudanças que quebram compatibilidade exigem um bump **major** (semver de
+  verdade) e uma issue de discussão prévia — não são mais "aceitáveis em minors" como na fase 0.x
+  (ver `CONTRIBUTING.md`).
+
 ## 0.4.0
 
 ### Minor Changes
