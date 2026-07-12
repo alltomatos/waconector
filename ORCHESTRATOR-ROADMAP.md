@@ -119,6 +119,13 @@ tratado como incremento futuro separado, não uma pendência desta Epic.
 - [x] **v0.1.0** publicado no npm (2026-07-10/11) — F1 completa (WAHA + Evolution GO)
 - [x] **v0.2.0** publicado no npm (2026-07-11) — uazapi + Z-API + Wuzapi (F2) —
       [PR #14](https://github.com/alltomatos/waconector/pull/14)
+- [x] **v0.3.0** publicado no npm (2026-07-11) — Whapi + QuePasa + WPPConnect Server (F3),
+      `groups.*`/`contacts.*` completos e `messages.sendReaction` — [PR #27](https://github.com/alltomatos/waconector/pull/27).
+      Workflow `release.yml` não conseguiu abrir a PR de versão automaticamente (permissão
+      "Allow GitHub Actions to create and approve pull requests" desabilitada + `guard-main-source`
+      só aceita PRs de `develop`) — versão aplicada manualmente em `develop` (mesmo padrão de
+      v0.1.0/v0.2.0). Publicação também bloqueada inicialmente por falta do secret `NPM_TOKEN`;
+      usuário adicionou o secret e o workflow foi re-rodado com sucesso.
 
 ## Epic 4 — F3 do produto: profundidade e DX
 
