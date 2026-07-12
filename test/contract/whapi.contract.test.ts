@@ -136,7 +136,39 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { success: true });
     }
 
+    // messages.star/unstar (ADR-0013): PUT /messages/{MessageID}/star. Checado ANTES do
+    // messageIdMatch genérico abaixo (mesmo prefixo de path).
+    const starMatch = pathname.match(/^\/messages\/(.+)\/star$/);
+    if (method === 'PUT' && starMatch) {
+      return jsonResponse(200, { success: true });
+    }
+
+    // messages.pin/unpin (ADR-0013): POST/DELETE /messages/{MessageID}/pin.
+    const pinMatch = pathname.match(/^\/messages\/(.+)\/pin$/);
+    if ((method === 'POST' || method === 'DELETE') && pinMatch) {
+      return jsonResponse(200, { success: true });
+    }
+
+    // messages.forward (ADR-0013): POST /messages/{MessageID}, corpo {to}. Resposta reaproveita o
+    // mesmo shape de sendText/edit.
     const messageIdMatch = pathname.match(/^\/messages\/([^/]+)$/);
+    if (method === 'POST' && messageIdMatch) {
+      return jsonResponse(200, {
+        sent: true,
+        message: {
+          id: 'whapi-fake-forward',
+          chat_id: `${RECIPIENT}@s.whatsapp.net`,
+          timestamp: 1712995400,
+        },
+      });
+    }
+
+    // messages.markRead (ADR-0013, nível de MENSAGEM): PUT /messages/{MessageID}, sem corpo —
+    // distinto de chats.markRead (PATCH /chats/{ChatID}, nível de conversa, ADR-0012).
+    if (method === 'PUT' && messageIdMatch) {
+      return jsonResponse(200, { success: true });
+    }
+
     if (method === 'DELETE' && messageIdMatch) {
       return jsonResponse(200, { success: true });
     }
@@ -1063,6 +1095,108 @@ describe('whapi adapter: comportamento específico do provider', () => {
     ).resolves.toBeUndefined();
 
     expect(capturedMethod).toBe('DELETE');
+    expect(capturedBody).toBeUndefined();
+  });
+
+  it('messages.forward chama POST /messages/{MessageID} com {to}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/messages/CONTRATO_MSG_ORIGINAL' && init?.method === 'POST') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const forwarded = await wa.messages.forward({
+      to: RECIPIENT,
+      messageId: 'CONTRATO_MSG_ORIGINAL',
+    });
+
+    expect(capturedBody).toEqual({ to: RECIPIENT });
+    expect(forwarded.id).toBe('whapi-fake-forward');
+    expect(forwarded.chatId).toBe(`${RECIPIENT}@s.whatsapp.net`);
+  });
+
+  it('messages.star/unstar chamam PUT /messages/{MessageID}/star com {starred: boolean}', async () => {
+    const hits: unknown[] = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/messages/CONTRATO_MSG_1/star') {
+            hits.push(JSON.parse(String(init?.body)));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.star({ to: RECIPIENT, messageId: 'CONTRATO_MSG_1' }),
+    ).resolves.toBeUndefined();
+    await expect(
+      wa.messages.unstar({ to: RECIPIENT, messageId: 'CONTRATO_MSG_1' }),
+    ).resolves.toBeUndefined();
+
+    expect(hits).toEqual([{ starred: true }, { starred: false }]);
+  });
+
+  it('messages.pin chama POST /messages/{MessageID}/pin com {time:"day"}; messages.unpin chama DELETE sem corpo', async () => {
+    const hits: Array<{ method: string; body: string | undefined }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/messages/CONTRATO_MSG_1/pin') {
+            hits.push({
+              method: (init?.method ?? 'GET').toUpperCase(),
+              body: init?.body === undefined ? undefined : String(init.body),
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.pin({ to: RECIPIENT, messageId: 'CONTRATO_MSG_1' }),
+    ).resolves.toBeUndefined();
+    await expect(
+      wa.messages.unpin({ to: RECIPIENT, messageId: 'CONTRATO_MSG_1' }),
+    ).resolves.toBeUndefined();
+
+    expect(hits).toEqual([
+      { method: 'POST', body: JSON.stringify({ time: 'day' }) },
+      { method: 'DELETE', body: undefined },
+    ]);
+  });
+
+  it('messages.markRead chama PUT /messages/{MessageID} sem corpo', async () => {
+    let capturedMethod: string | undefined;
+    let capturedBody: string | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/messages/CONTRATO_MSG_1') {
+            capturedMethod = (init?.method ?? 'GET').toUpperCase();
+            capturedBody = init?.body === undefined ? undefined : String(init.body);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.markRead({ to: RECIPIENT, messageId: 'CONTRATO_MSG_1' }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedMethod).toBe('PUT');
     expect(capturedBody).toBeUndefined();
   });
 

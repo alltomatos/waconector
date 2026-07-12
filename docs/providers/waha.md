@@ -114,6 +114,13 @@ páginas `docs/how-to/`) confirmou, com confiança **Alta**, endpoints para `mes
 (distinto de fixar uma MENSAGEM dentro do chat, que existe e é discutido abaixo). Suportado: ver
 seções "Edição e exclusão de mensagem" e "Conversas (`chats.*`)" abaixo.
 
+## Capabilities adicionais: `messages.forward`/`star`/`unstar`/`pin`/`unpin`/`markRead` (ADR-0013)
+
+Continuação da pesquisa acima, cobrindo o restante da fila de capabilities novas pós-Epic 7. Todas
+as 6 confirmadas com confiança **Alta** (mesmas fontes: `openapi.json` oficial + páginas
+`docs/how-to/`). Ver seção "Ações sobre mensagem (`messages.forward`/`star`/`unstar`/`pin`/`unpin`/
+`markRead`, ADR-0013)" abaixo.
+
 ## Operações core
 
 | Operação canônica | Endpoint | Observações |
@@ -394,6 +401,22 @@ messageId with %40"), o que `encodeURIComponent` já cobre para os dois.
   QuePasa confirmam em código que é sempre revogação). `DeleteMessageInput` do contrato canônico
   não carrega campo de escopo (ver ADR-0012), então esta ambiguidade não afeta a assinatura do
   adapter, só o comportamento real em runtime (a confirmar).
+
+## Ações sobre mensagem (`messages.forward`/`star`/`unstar`/`pin`/`unpin`/`markRead`, ADR-0013)
+
+Continuação da pesquisa de `messages.edit`/`delete` acima. Confiança **Alta** para as 6, mesmas
+fontes (`openapi.json` oficial + páginas `docs/how-to/`).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.forward` | `POST /api/forwardMessage` | Confirmado no `openapi.json` (operationId `ChattingController_forwardMessage`, schema `MessageForwardRequest`). Body: `{chatId, messageId, session}` — `chatId` é o DESTINO (`input.to`); a origem é resolvida pelo próprio `messageId` (formato `{fromMe}_{chat}_{id}` autoidentifica o chat de origem), então `ForwardMessageInput.fromChatId` (opcional no contrato canônico, ADR-0013) nunca é enviado por este adapter. Resposta `201`: `WAMessage` completo, mesmo shape de `mapSentMessage`. **Nuance documentada verbatim**: "You can forward a message to another chat (that you chatted before, otherwise it may fail)" — encaminhar para um chat nunca contatado pode falhar (limitação do protocolo, não bug do adapter). |
+| `messages.star` / `messages.unstar` | `PUT /api/star` | Confirmado no `openapi.json` (operationId `ChattingController_setStar`, schema `MessageStarRequest`) e na página dedicada "Star and unstar message". Body: `{messageId, chatId, star, session}` — diferente de `sendReaction` (que resolve o chat só pelo `messageId`), aqui `chatId` é campo obrigatório separado. Um único endpoint com flag booleana `star` cobre as duas direções; as 2 capabilities canônicas (ADR-0013) mapeiam para `star: true`/`star: false`. Resposta `200` sem schema — ignorada, `Promise<void>`. Doc não documenta limite de mensagens favoritáveis por chat (o app oficial tem um teto de 1.000 na conta) — não confirmado. |
+| `messages.pin` / `messages.unpin` | `POST .../messages/{messageId}/pin` \| `.../unpin` | Confirmado na doc (schema `PinMessageRequest`, confiança Alta para request, Média para o schema de resposta — gap doc-vs-`openapi.json`, mesma classe já vista em `groups.updatePicture`). `pin` exige `duration` em SEGUNDOS — só 3 valores nativos do WhatsApp: `86400` (24h), `604800` (7 dias), `2592000` (30 dias). `PinMessageInput` do contrato canônico não expõe duração (ADR-0013 — nenhum formato converge entre providers); este adapter usa **`86400` (24h) como default**, decisão própria documentada no código, não um default do provider. `unpin` não tem body. Resposta (segundo a doc): `{success: true}` — ignorada. É fixação de MENSAGEM dentro do chat, distinto de "pin chat" no topo da lista (`chats.pin`, não suportado por este provider — busca não encontrou `POST /chats/{chatId}/pin`). |
+| `messages.markRead` | `POST /api/sendSeen` | Confirmado no `openapi.json` (operationId `ChattingController_sendSeen`, schema `SendSeenRequest`). Nível de MENSAGEM, distinto de `chats.markRead` (nível de conversa, `.../chats/{chatId}/messages/read`, ADR-0012). Body: `{chatId, messageIds: [messageId], session}` — `messageId` singular existe no schema mas está `deprecated: true`; este adapter sempre usa o array com 1 elemento. `participant` (obrigatório só para grupos em engines NOWEB/GOWS) não é enviado — `MarkMessageReadInput` não carrega esse campo; pode ser necessário para marcar mensagem de terceiro em grupo, não confirmado contra instância real. |
+
+`{chatId}`/`{messageId}` seguem o mesmo mapeamento/escape já usado por `messages.edit`/`delete`
+(`toWahaChatId`/`encodeURIComponent`, função `messagePath` estendida com um `suffix` opcional para
+`pin`/`unpin`).
 
 ## Conversas (`chats.*`, retrofit ADR-0012)
 

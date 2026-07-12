@@ -34,6 +34,7 @@ import type {
   InstanceState,
   InstanceStatus,
   JoinGroupInviteInput,
+  MarkMessageReadInput,
   MediaRef,
   MessageAck,
   MessageKind,
@@ -90,6 +91,7 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'messages.sendReaction',
   'messages.edit',
   'messages.delete',
+  'messages.markRead',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -143,6 +145,7 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     sendReaction: (input) => sendReaction(http, input),
     edit: (input) => editMessage(http, input),
     delete: (input) => deleteMessage(http, input),
+    markRead: (input) => markMessageRead(http, input),
   };
 
   const groups: GroupsApi = {
@@ -453,6 +456,22 @@ async function deleteMessage(http: HttpClient, input: DeleteMessageInput): Promi
       chat: toProviderNumber(input.to),
       messageId: input.messageId,
     },
+  });
+}
+
+/**
+ * `POST /message/markread` (ADR-0013, nível de MENSAGEM; confirmado via `evo-go-message.yaml`,
+ * schema `MarkRead: {id: string[], number: string}`, confiança Alta). `id` é array — permite
+ * marcar várias mensagens de uma vez; este adapter sempre envia um array com 1 elemento. Distinto
+ * de um eventual `chats.markRead` (nível de conversa) — não confirmado para este provider (busca
+ * na pesquisa original de capabilities novas não encontrou endpoint de "marcar CHAT INTEIRO").
+ * Resposta ignorada, `Promise<void>`.
+ */
+async function markMessageRead(http: HttpClient, input: MarkMessageReadInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/message/markread',
+    body: { id: [input.messageId], number: toProviderNumber(input.to) },
   });
 }
 

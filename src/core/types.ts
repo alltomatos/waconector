@@ -139,6 +139,42 @@ export interface DeleteMessageInput {
   messageId: string;
 }
 
+/** Ver ADR-0013. */
+export interface ForwardMessageInput {
+  /** Chat de DESTINO do encaminhamento. */
+  to: string;
+  /** ID da mensagem a ser encaminhada. */
+  messageId: string;
+  /**
+   * Chat de ORIGEM da mensagem — só necessário para providers que não conseguem resolver a
+   * origem sozinhos a partir do `messageId` (a maioria resolve, já que o formato do id costuma
+   * autoidentificar o chat de origem). Ausente = o adapter usa só `messageId`.
+   */
+  fromChatId?: string;
+}
+
+/** Ver ADR-0013. Usado por `MessagesApi.star`/`unstar` (mesma forma para as duas direções). */
+export interface StarMessageInput {
+  to: string;
+  messageId: string;
+}
+
+/**
+ * Ver ADR-0013. Usado por `MessagesApi.pin`/`unpin` (mesma forma para as duas direções). Sem
+ * campo de duração — nenhum formato converge entre os providers pesquisados (mesmo critério já
+ * usado para `chats.mute`, ADR-0012); cada adapter decide seu próprio default/sentinela.
+ */
+export interface PinMessageInput {
+  to: string;
+  messageId: string;
+}
+
+/** Ver ADR-0013. Nível de MENSAGEM — distinto de `chats.markRead` (nível de conversa, ADR-0012). */
+export interface MarkMessageReadInput {
+  to: string;
+  messageId: string;
+}
+
 /** Participante de um grupo, normalizado. Ver ADR-0009. */
 export interface GroupParticipant {
   /** Telefone E.164 sem `+` ou JID explícito — mesma convenção de chatId de mensagem. */

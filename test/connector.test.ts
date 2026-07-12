@@ -118,6 +118,37 @@ describe('capabilities no conector', () => {
     expect(markReadFailure).toBeInstanceOf(UnsupportedCapabilityError);
     const markUnreadFailure = await reject(wa.chats.markUnread('5585999999999'));
     expect(markUnreadFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const forwardFailure = await reject(
+      wa.messages.forward({ to: '5585999999999', messageId: 'm1' }),
+    );
+    expect(forwardFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const starFailure = await reject(wa.messages.star({ to: '5585999999999', messageId: 'm1' }));
+    expect(starFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const unstarFailure = await reject(
+      wa.messages.unstar({ to: '5585999999999', messageId: 'm1' }),
+    );
+    expect(unstarFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const pinMsgFailure = await reject(wa.messages.pin({ to: '5585999999999', messageId: 'm1' }));
+    expect(pinMsgFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const unpinMsgFailure = await reject(
+      wa.messages.unpin({ to: '5585999999999', messageId: 'm1' }),
+    );
+    expect(unpinMsgFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const markReadMsgFailure = await reject(
+      wa.messages.markRead({ to: '5585999999999', messageId: 'm1' }),
+    );
+    expect(markReadMsgFailure).toBeInstanceOf(UnsupportedCapabilityError);
+  });
+
+  it('adapter que declara messages.forward sem implementar o método falha com PROVIDER_ERROR', async () => {
+    const adapter = new MockAdapter({ capabilities: ['messages.forward', 'webhooks.parse'] });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (capability declarada sem método) para testar o guard-rail do conector.
+    (adapter.messages as any).forward = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.messages.forward({ to: '5585999999999', messageId: 'm1' }));
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
 
   it('adapter que declara messages.edit sem implementar o método falha com PROVIDER_ERROR', async () => {
@@ -422,6 +453,58 @@ describe('validação e normalização de messages.edit/delete', () => {
     await expect(
       wa.messages.delete({ to: '+55 (85) 99999-9999', messageId: 'm1' }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('validação e normalização de messages.forward/star/pin/markRead', () => {
+  it('rejeita messageId vazio em forward/star/unstar/pin/unpin/markRead com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () => wa.messages.forward({ to: '5585999999999', messageId: '' }),
+      () => wa.messages.star({ to: '5585999999999', messageId: '' }),
+      () => wa.messages.unstar({ to: '5585999999999', messageId: '' }),
+      () => wa.messages.pin({ to: '5585999999999', messageId: '' }),
+      () => wa.messages.unpin({ to: '5585999999999', messageId: '' }),
+      () => wa.messages.markRead({ to: '5585999999999', messageId: '' }),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+    }
+  });
+
+  it('normaliza "to" e "fromChatId" antes de entregar ao adapter, em messages.forward', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const forwarded = await wa.messages.forward({
+      to: '+55 (85) 99999-9999',
+      messageId: 'm1',
+      fromChatId: '+55 (85) 98888-8888',
+    });
+    expect(forwarded.chatId).toBe('5585999999999');
+  });
+
+  it('normaliza "to" antes de entregar ao adapter, em star/unstar/pin/unpin/markRead', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    await wa.messages.star({ to: '+55 (85) 99999-9999', messageId: 'm1' });
+    expect(adapter.isMessageStarred('m1')).toBe(true);
+    await wa.messages.unstar({ to: '+55 (85) 99999-9999', messageId: 'm1' });
+    expect(adapter.isMessageStarred('m1')).toBe(false);
+
+    await wa.messages.pin({ to: '+55 (85) 99999-9999', messageId: 'm1' });
+    expect(adapter.isMessagePinned('m1')).toBe(true);
+    await wa.messages.unpin({ to: '+55 (85) 99999-9999', messageId: 'm1' });
+    expect(adapter.isMessagePinned('m1')).toBe(false);
+
+    await wa.messages.markRead({ to: '+55 (85) 99999-9999', messageId: 'm1' });
+    expect(adapter.isMessageRead('m1')).toBe(true);
   });
 });
 

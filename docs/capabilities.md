@@ -13,14 +13,14 @@ Nenhuma linha aqui é escrita à mão.
 
 ## Resumo por provider
 
-- **waha**: 34/40
-- **evolution**: 35/40
-- **uazapi**: 38/40
-- **zapi**: 38/40
-- **wuzapi**: 33/40
-- **whapi**: 39/40
-- **quepasa**: 13/40
-- **wppconnect**: 39/40
+- **waha**: 40/46
+- **evolution**: 36/46
+- **uazapi**: 41/46
+- **zapi**: 42/46
+- **wuzapi**: 34/46
+- **whapi**: 45/46
+- **quepasa**: 14/46
+- **wppconnect**: 42/46
 
 ## Detalhe por namespace
 
@@ -42,6 +42,12 @@ Nenhuma linha aqui é escrita à mão.
 | `messages.sendReaction` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | `messages.edit` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `messages.delete` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `messages.forward` | ✅ | — | — | ✅ | — | ✅ | — | ✅ |
+| `messages.star` | ✅ | — | — | — | — | ✅ | — | ✅ |
+| `messages.unstar` | ✅ | — | — | — | — | ✅ | — | ✅ |
+| `messages.pin` | ✅ | — | ✅ | ✅ | — | ✅ | — | — |
+| `messages.unpin` | ✅ | — | ✅ | ✅ | — | ✅ | — | — |
+| `messages.markRead` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 
 ### `groups.*`
 

@@ -247,10 +247,11 @@ func (conn *WhatsmeowConnection) Delete() (err error) {
 sessão ativa de fato — um efeito real, só que num grau mais fraco do que "logout" normalmente
 implica. `logoutInstance()` chama `GET /command?action=stop`.
 
-## Capabilities implementadas nesta fase (ADR-0012: edição/exclusão de mensagem + `chats.*`)
+## Capabilities implementadas nesta fase (ADR-0012: edição/exclusão de mensagem + `chats.*`; ADR-0013: ações sobre mensagem)
 
 `messages.edit`, `messages.delete`, `chats.archive`, `chats.unarchive`, `chats.markRead`,
-`chats.markUnread`.
+`chats.markUnread` (ADR-0012); `messages.markRead` (ADR-0013 — sem `messages.forward`/`star`/
+`pin`/`unpin`, nenhuma rota legacy equivalente encontrada, ver "Operações core" abaixo).
 
 **Achado estrutural que muda o cálculo de risco em relação ao restante deste dossiê**: TODAS as
 seis operações acima vivem na família de rotas **legacy** (`legacy.RegisterAPIControllers`, aliases
@@ -453,6 +454,7 @@ documentado como real e aberto (não resolvido no snapshot pesquisado).
 | `messages.sendMedia` | `POST /v3/bot/{token}/sendurl` (`media.url`) ou `POST /v3/bot/{token}/sendencoded` (`media.base64`) | Sem endpoint por tipo — servidor auto-detecta pelo mimetype. Ver seção dedicada abaixo. |
 | `messages.edit` | `PUT /edit` | Rota legacy (não `/v3/bot/{token}/...`). Body `{messageId, content}`. Ver "Edição e exclusão de mensagem" acima. |
 | `messages.delete` | `DELETE /message/{messageid}` | Rota legacy. Sempre revoke ("apagar para todos"). Ver "Edição e exclusão de mensagem" acima. |
+| `messages.markRead` (ADR-0013) | `POST /read` | Rota legacy. Body: array de strings `["id"]` (formato alternativo aceito: `[{"id":"id"}]`, não usado por este adapter). Nível de MENSAGEM — distinto de `chats.markRead` (`/chat/markread`, nível de conversa, ADR-0012). Envia um read receipt de verdade via whatsmeow (`whatsmeow_connection.go:314-337`, `types.ReceiptTypeRead` hardcoded). **Sem `messages.forward`/`star`/`pin`/`unpin`**: busca em `legacy/routes.go` não encontrou nenhuma rota equivalente — limitação real (ou pelo menos ausência confirmada na família legacy), não gap de pesquisa. |
 | `groups.getInviteLink` | `GET /v3/bot/{token}/invite/{chatid}` | Único endpoint de grupo confirmado. |
 | `chats.archive`/`chats.unarchive` | `POST /chat/archive` | Rota legacy. Body `{chatid, archive}` (tag minúscula). Ver "Conversas (`chats.*`)" acima. |
 | `chats.markRead`/`chats.markUnread` | `POST /chat/markread` / `POST /chat/markunread` | Rota legacy. Body `{chatid}`. Ver "Conversas (`chats.*`)" acima. |

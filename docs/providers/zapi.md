@@ -71,6 +71,8 @@ presa permanentemente a um número). Não há conceito de "sessão" separado do 
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
 `messages.sendMedia`, `messages.sendReaction`, `messages.edit`, `messages.delete`,
+`messages.forward`, `messages.pin`, `messages.unpin`, `messages.markRead` (ADR-0013 — sem
+`messages.star`/`unstar`, ver seção dedicada abaixo),
 `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
@@ -149,7 +151,7 @@ anteriores — índice `llms.txt` + páginas `developer.z-api.io/<seção>/<pág
 
 A doc afirma explicitamente: **"É necessário configurar o webhook antes de editar"** — sem um
 webhook de recebimento configurado na instância, a edição não é aplicada (mesmo requisito
-documentado para `messages.forward`, candidata fora do escopo desta ADR). O adapter não valida
+documentado para `messages.forward`, ver seção dedicada abaixo). O adapter não valida
 esse pré-requisito (não há como checar de dentro de uma chamada HTTP isolada) — se a instância não
 tiver webhook configurado, a chamada provavelmente é aceita (`200`) mas sem efeito real no
 WhatsApp, **não confirmado contra uma instância real**. Também não confirmado: se a Z-API preserva
@@ -170,6 +172,21 @@ revogar uma mensagem que a própria conta enviou — apagar uma mensagem recebid
 chamada mostrar comportamento diferente para mensagens com `fromMe: false`, revisitar esta decisão.
 Também não há janela de tempo documentada (o WhatsApp oficial limita edição/exclusão-para-todos a
 ~15min–2 dias dependendo da versão; a Z-API não menciona limite algum).
+
+## Ações sobre mensagem (`messages.forward`/`pin`/`unpin`/`markRead`, ADR-0013)
+
+Continuação da pesquisa acima. **Sem `messages.star`/`unstar`** — não há rota `*star*` em nenhuma
+página consultada (índice `llms.txt` completo); busca negativa confirmada, não gap de pesquisa.
+
+| Operação canônica | Endpoint | Confiança | Observações |
+| --- | --- | --- | --- |
+| `messages.forward` | `POST /forward-message` | Média-Alta | Body `{phone, messageId, messagePhone}` — `phone` é o DESTINO (`input.to`); `messagePhone` é a ORIGEM da mensagem (`ForwardMessageInput.fromChatId`), **obrigatório para este provider especificamente** (diferente de outros adapters, a Z-API não resolve a origem sozinha a partir do `messageId`). Quando `fromChatId` está ausente, este adapter usa `phone` (destino) também como origem — best-effort, **não confirmado contra instância real**. Resposta: `{zaapId}` só — **não** o trio completo `{zaapId, messageId, id}` de `send-text`/`send-media`; `mapSentMessage` cai no fallback de id sintético. Mesmo pré-requisito de webhook configurado que `messages.edit` (ver acima). |
+| `messages.pin` / `messages.unpin` | `POST /pin-message` | Média-Alta | Body `{phone, messageId, messageAction: "pin"\|"unpin", pinMessageDuration}`. A doc afirma explicitamente que `pinMessageDuration` **"does not have effect in the case of unfixing a message"** — enviado sempre (mesmo em `unpin`), ignorado pelo provider nesse caso. Valores documentados: `"24_hours"`, `"7_days"`, `"30_days"` (mesmas 3 opções do recurso oficial do WhatsApp). `PinMessageInput` não expõe duração (ADR-0013); este adapter usa **`"24_hours"`** como default, decisão própria. Fixa a MENSAGEM dentro do chat — distinto de `chats.pin` (conversa inteira, endpoint `/modify-chat`, ADR-0012). Não confirmado se a Z-API replica algum limite de mensagens fixadas simultâneas do app oficial. |
+| `messages.markRead` | `POST /read-message` | Alta | Body `{phone, messageId}`. Resposta `204` vazia. Marca UMA mensagem específica como lida (envia o "azulzinho" de leitura ao remetente) — distinto de `chats.markRead` (chat inteiro, `/modify-chat` com `action: "read"`, ADR-0012). |
+
+`phone`/`messagePhone` em todas as 3 operações passam por `toZapiPhone`, mesma conversão de
+`messages.sendText`/`contacts.*` — não o tratamento sintético de `groupId` (ver seção "Grupos"
+acima).
 
 ### Mapeamento de status → `InstanceState`
 

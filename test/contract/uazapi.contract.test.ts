@@ -108,6 +108,24 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    // messages.pin/unpin (ADR-0013): POST /message/pin.
+    if (method === 'POST' && pathname === '/message/pin') {
+      return jsonResponse(200, {
+        chatid: '5511999999999@s.whatsapp.net',
+        messageType: 'PinInChatMessage',
+        targetMessageID: '3EB0FAKE0000000000PIN',
+        pinned: true,
+      });
+    }
+
+    // messages.markRead (ADR-0013, nível de MENSAGEM): POST /message/markread — distinto de
+    // chats.markRead (/chat/read, nível de conversa, ADR-0012).
+    if (method === 'POST' && pathname === '/message/markread') {
+      return jsonResponse(200, {
+        results: [{ message_id: '3EB0FAKE0000000000READ', status: 'success' }],
+      });
+    }
+
     if (method === 'POST' && pathname === '/chat/archive') {
       return jsonResponse(200, { response: 'Chat updated successfully' });
     }
@@ -1526,6 +1544,62 @@ describe('uazapi adapter: comportamento específico do provider', () => {
     ).resolves.toBeUndefined();
 
     expect(capturedBody).toEqual({ id: '3EB0FAKE0000000000ORIGINAL' });
+  });
+
+  it('messages.pin/unpin enviam { id, pin: boolean } para POST /message/pin (sem "duration", usa o default 30 do provider)', async () => {
+    const hits: unknown[] = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/message/pin') {
+            hits.push(JSON.parse(String(init?.body)));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.pin({ to: '5511999999999', messageId: '3EB0FAKE0000000000PIN' }),
+    ).resolves.toBeUndefined();
+    await expect(
+      wa.messages.unpin({ to: '5511999999999', messageId: '3EB0FAKE0000000000PIN' }),
+    ).resolves.toBeUndefined();
+
+    expect(hits).toEqual([
+      { id: '3EB0FAKE0000000000PIN', pin: true },
+      { id: '3EB0FAKE0000000000PIN', pin: false },
+    ]);
+  });
+
+  it('messages.markRead envia { id: [messageId] } (array) para POST /message/markread', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/message/markread') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.markRead({ to: '5511999999999', messageId: '3EB0FAKE0000000000READ' }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ id: ['3EB0FAKE0000000000READ'] });
+  });
+
+  it('não declara messages.forward/star/unstar (busca exaustiva não encontrou endpoint)', () => {
+    const adapter = uazapi(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('messages.forward');
+    expect(adapter.capabilities).not.toContain('messages.star');
+    expect(adapter.capabilities).not.toContain('messages.unstar');
+    expect(adapter.messages.forward).toBeUndefined();
   });
 
   it('declara messages.edit/messages.delete em capabilities', () => {

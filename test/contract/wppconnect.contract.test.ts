@@ -134,6 +134,23 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, envelope({ message: 'Message deleted' }));
     }
 
+    // messages.forward (ADR-0013): POST /forward-messages, envelope padrão.
+    if (method === 'POST' && suffix === '/forward-messages') {
+      return jsonResponse(
+        200,
+        envelope({
+          id: 'true_5511999999999@c.us_3EB0FAKEFORWARD',
+          chatId: '5511999999999@c.us',
+          t: 1751000030,
+        }),
+      );
+    }
+
+    // messages.star/unstar (ADR-0013): POST /star-message, envelope padrão.
+    if (method === 'POST' && suffix === '/star-message') {
+      return jsonResponse(200, envelope(2));
+    }
+
     if (method === 'POST' && suffix === '/archive-chat') {
       return jsonResponse(200, envelope({ wid: '5511999999999@c.us', archive: true }));
     }
@@ -1324,6 +1341,67 @@ describe('wppconnect adapter: comportamento específico do provider', () => {
       messageId: 'true_5511999999999@c.us_3EB0FAKECONTRATOTXT',
       onlyLocal: false,
     });
+  });
+
+  it('messages.forward envia { phone, isGroup, messageId } para POST /forward-messages', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/forward-messages`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const forwarded = await wa.messages.forward({
+      to: '5511999999999',
+      messageId: 'true_5511988887777@c.us_3EB0FAKEORIGINAL',
+    });
+
+    expect(capturedBody).toEqual({
+      phone: '5511999999999',
+      isGroup: false,
+      messageId: 'true_5511988887777@c.us_3EB0FAKEORIGINAL',
+    });
+    expect(forwarded.chatId).toBe('5511999999999@c.us');
+  });
+
+  it('messages.star/unstar chamam POST /star-message com {messageId, star: boolean} (sem phone/isGroup)', async () => {
+    const hits: unknown[] = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/star-message`) {
+            hits.push(JSON.parse(String(init?.body)));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.star({ to: '5511999999999', messageId: 'true_5511999999999@c.us_MOCKSTAR' }),
+    ).resolves.toBeUndefined();
+    await expect(
+      wa.messages.unstar({ to: '5511999999999', messageId: 'true_5511999999999@c.us_MOCKSTAR' }),
+    ).resolves.toBeUndefined();
+
+    expect(hits).toEqual([
+      { messageId: 'true_5511999999999@c.us_MOCKSTAR', star: true },
+      { messageId: 'true_5511999999999@c.us_MOCKSTAR', star: false },
+    ]);
+  });
+
+  it('não declara messages.pin/unpin/markRead (nível de mensagem — só /pin-chat e mark-unseen/send-seen de nível de conversa existem)', () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('messages.pin');
+    expect(adapter.capabilities).not.toContain('messages.markRead');
+    expect(adapter.messages.pin).toBeUndefined();
   });
 
   it('chats.archive envia { phone, isGroup, value: true } para POST /archive-chat', async () => {

@@ -129,13 +129,14 @@ Reaproveitado tanto por `instance.status()` (`GET /health`) quanto pelo webhook 
 ## Capabilities implementadas
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
-`messages.sendMedia`, `messages.sendReaction`, `messages.edit`, `messages.delete`, as 14 operações
-de `groups.*` (`create`, `getInfo`, `list`, `addParticipants`, `removeParticipants`,
-`promoteParticipants`, `demoteParticipants`, `updateSubject`, `updateDescription`, `updatePicture`,
-`getInviteLink`, `revokeInviteLink`, `joinViaInviteLink`, `leaveGroup`), as 8 de `contacts.*`
-(`list`, `get`, `checkExists`, `getProfilePicture`, `getAbout`, `block`, `unblock`, `listBlocked`),
-as 8 de `chats.*` (`archive`, `unarchive`, `mute`, `unmute`, `pin`, `unpin`, `markRead`,
-`markUnread`) e `webhooks.parse`.
+`messages.sendMedia`, `messages.sendReaction`, `messages.edit`, `messages.delete`,
+`messages.forward`, `messages.star`, `messages.unstar`, `messages.pin`, `messages.unpin`,
+`messages.markRead` (ADR-0013), as 14 operações de `groups.*` (`create`, `getInfo`, `list`,
+`addParticipants`, `removeParticipants`, `promoteParticipants`, `demoteParticipants`,
+`updateSubject`, `updateDescription`, `updatePicture`, `getInviteLink`, `revokeInviteLink`,
+`joinViaInviteLink`, `leaveGroup`), as 8 de `contacts.*` (`list`, `get`, `checkExists`,
+`getProfilePicture`, `getAbout`, `block`, `unblock`, `listBlocked`), as 8 de `chats.*` (`archive`,
+`unarchive`, `mute`, `unmute`, `pin`, `unpin`, `markRead`, `markUnread`) e `webhooks.parse`.
 
 Só `instance.pairingCode` **não** foi declarada — ver "Capabilities confirmadas mas não
 implementadas" ao final (obstáculo estrutural do contrato `InstanceApi.connect()`, não do
@@ -348,6 +349,18 @@ O path param dos endpoints `/blacklist/*` (`ContactIdOrLid`) usa um schema DIFER
 (`get`/`getProfilePicture`/`getAbout`/`checkExists`, pattern
 `^([\d]{7,15})?(@lid|@s.whatsapp.net)?$`). `block`/`unblock` removem esse sufixo quando presente
 antes de montar o path; `@lid` (já aceito pelo pattern) e dígitos crus passam intactos.
+
+## Ações sobre mensagem (`messages.forward`/`star`/`unstar`/`pin`/`unpin`/`markRead`, ADR-0013)
+
+Continuação da pesquisa de `messages.edit`/`delete` acima. Todas as 6 confiança **Alta**, mesmas
+fontes (`openapi.yaml` oficial).
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.forward` | `POST /messages/{MessageID}` (`operationId: forwardMessage`, `openapi.yaml:2334-2387`) | Corpo `ForwardMessage` (`:8865-8877`): `to` obrigatório (destino) + `force` opcional (boolean, não exposto pelo contrato canônico). `ForwardMessageInput.fromChatId` nunca é enviado — o `messageId` no path já identifica a origem. **401 dedicado** "Need channel authorization for forward message" — sugere que forward pode exigir plano/permissão extra. Resposta reaproveita o mesmo shape de `sendText`/`edit`. |
+| `messages.star` / `messages.unstar` | `PUT /messages/{MessageID}/star` (`operationId: starMessage`, `:2541-2579`) | Corpo `Star {starred: boolean}` (`:8885-8892`) — permanente (favoritar), sem duração, ao contrário do pin. Um único endpoint com flag booleana cobre as duas direções. Resposta ignorada, `Promise<void>`. |
+| `messages.pin` / `messages.unpin` | `POST` / `DELETE /messages/{MessageID}/pin` (`operationId: pinMessage`/`unpinMessage`, `:2580-2649`) | Corpo `Pin {time}` só no `POST` (`:8893-8904`) — enum `day`\|`week`\|`month` (fixação COM prazo, diferente do star permanente). Nota de spec: o `example` do campo (`2592000`, segundos) é inconsistente com o próprio enum de strings — possível erro de doc do provider. `PinMessageInput` não expõe duração (ADR-0013); este adapter usa **`'day'`** como default para `pin` (decisão própria, valor mais conservador do enum). `unpin` é `DELETE`, sem corpo. |
+| `messages.markRead` | `PUT /messages/{MessageID}` (`operationId: markMessageAsRead`, `:2388-2418`) | Sem corpo. Marca UMA mensagem específica (e, por extensão de protocolo, a conversa até ali) como lida — distinto de `chats.markRead` (`PATCH /chats/{ChatID}` com `mark_unread: false`, ADR-0012), que atua no nível do chat inteiro. |
 
 ## Conversas (`chats.*`, ADR-0012)
 

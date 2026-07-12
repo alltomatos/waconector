@@ -64,6 +64,9 @@ export class MockAdapter implements WaAdapter {
   private readonly mutedChatIds = new Set<string>();
   private readonly pinnedChatIds = new Set<string>();
   private readonly unreadChatIds = new Set<string>();
+  private readonly starredMessageIds = new Set<string>();
+  private readonly pinnedMessageIds = new Set<string>();
+  private readonly readMessageIds = new Set<string>();
 
   constructor(options: MockAdapterOptions = {}) {
     this.provider = options.provider ?? 'mock';
@@ -97,6 +100,35 @@ export class MockAdapter implements WaAdapter {
       delete: async (input) => {
         this.assertConnected();
         void input;
+      },
+      forward: async (input) => {
+        this.assertConnected();
+        return {
+          id: `mock-${++this.seq}`,
+          chatId: input.to,
+          timestamp: Date.now(),
+          raw: { mock: true, input },
+        };
+      },
+      star: async (input) => {
+        this.assertConnected();
+        this.starredMessageIds.add(input.messageId);
+      },
+      unstar: async (input) => {
+        this.assertConnected();
+        this.starredMessageIds.delete(input.messageId);
+      },
+      pin: async (input) => {
+        this.assertConnected();
+        this.pinnedMessageIds.add(input.messageId);
+      },
+      unpin: async (input) => {
+        this.assertConnected();
+        this.pinnedMessageIds.delete(input.messageId);
+      },
+      markRead: async (input) => {
+        this.assertConnected();
+        this.readMessageIds.add(input.messageId);
       },
     };
 
@@ -292,6 +324,21 @@ export class MockAdapter implements WaAdapter {
   /** Consulta de estado só para testes (não faz parte do contrato `ChatsApi`). */
   isChatUnread(chatId: string): boolean {
     return this.unreadChatIds.has(chatId);
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `MessagesApi`). Ver ADR-0013. */
+  isMessageStarred(messageId: string): boolean {
+    return this.starredMessageIds.has(messageId);
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `MessagesApi`). Ver ADR-0013. */
+  isMessagePinned(messageId: string): boolean {
+    return this.pinnedMessageIds.has(messageId);
+  }
+
+  /** Consulta de estado só para testes (não faz parte do contrato `MessagesApi`). Ver ADR-0013. */
+  isMessageRead(messageId: string): boolean {
+    return this.readMessageIds.has(messageId);
   }
 
   simulateConnected(): void {

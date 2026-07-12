@@ -20,6 +20,7 @@ import type {
   GroupInviteLink,
   InstanceState,
   InstanceStatus,
+  MarkMessageReadInput,
   MediaKind,
   MediaRef,
   MessageAck,
@@ -125,6 +126,7 @@ const QUEPASA_CAPABILITIES: CapabilitySet = [
   'messages.sendMedia',
   'messages.edit',
   'messages.delete',
+  'messages.markRead',
   'groups.getInviteLink',
   'contacts.getProfilePicture',
   'chats.archive',
@@ -161,6 +163,7 @@ export function quepasa(options: QuepasaOptions): WaAdapter {
     sendMedia: (input) => sendMedia(http, options.token, input),
     edit: (input) => editMessage(http, input),
     delete: (input) => deleteMessage(http, input),
+    markRead: (input) => markMessageRead(http, input),
   };
 
   // Só o único endpoint de grupo confirmado pela pesquisa (ver QUEPASA_CAPABILITIES acima).
@@ -503,6 +506,21 @@ async function deleteMessage(http: HttpClient, input: DeleteMessageInput): Promi
     method: 'DELETE',
     path: `/message/${encodeURIComponent(input.messageId)}`,
   });
+}
+
+/**
+ * `POST /read` (ADR-0013, legacy — mesma família de rotas de `/scan`/`/command`/`/edit`, já
+ * confiável para este adapter; distinta da v5 canonical bloqueada por JWT que a Epic 6 recusou
+ * para `groups.*`/`contacts.*`). Body aceito em dois formatos por conveniência
+ * (`api_handlers+MessageController.go`, `MarkReadController`): array de strings (`["id1","id2"]`)
+ * ou array de objetos (`[{"id":"id1"}]`); este adapter usa o formato mais simples, array de
+ * strings, com 1 elemento. Internamente (`whatsmeow_connection.go:314-337`) envia um read receipt
+ * de verdade via whatsmeow (`types.ReceiptTypeRead`, hardcoded). Nível de MENSAGEM — distinto de
+ * `chats.markRead` (`/chat/markread`, nível de conversa, ADR-0012). Resposta ignorada,
+ * `Promise<void>`.
+ */
+async function markMessageRead(http: HttpClient, input: MarkMessageReadInput): Promise<void> {
+  await http.request({ method: 'POST', path: '/read', body: [input.messageId] });
 }
 
 // ---------------------------------------------------------------------------

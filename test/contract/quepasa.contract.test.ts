@@ -140,6 +140,12 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { success: true, message: `chat ${RECIPIENT_JID} marked as read` });
     }
 
+    // messages.markRead (ADR-0013, nível de MENSAGEM, rota legacy): POST /read — distinto de
+    // chats.markRead (/chat/markread, nível de conversa, ADR-0012).
+    if (method === 'POST' && pathname === '/read') {
+      return jsonResponse(200, { success: true });
+    }
+
     throw new Error(`fetchStub (quepasa): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -513,6 +519,34 @@ describe('quepasa adapter: comportamento específico do provider', () => {
     expect(requestedMethod).toBe('DELETE');
     expect(requestedUrl?.pathname).toBe('/message/quepasa-msg-apagada');
     expect(result).toBeUndefined();
+  });
+
+  it('messages.markRead envia [messageId] (array de strings) para POST /read (rota legacy, nível de MENSAGEM)', async () => {
+    let requestedBody: unknown;
+    const adapter = quepasa(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/read') {
+            requestedBody = JSON.parse(String(init?.body));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.markRead({ to: RECIPIENT, messageId: 'quepasa-msg-lida' }),
+    ).resolves.toBeUndefined();
+
+    expect(requestedBody).toEqual(['quepasa-msg-lida']);
+  });
+
+  it('não declara messages.forward/star/unstar/pin/unpin (rotas legacy não têm esses endpoints)', () => {
+    const adapter = quepasa(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('messages.forward');
+    expect(adapter.capabilities).not.toContain('messages.pin');
+    expect(adapter.messages.forward).toBeUndefined();
   });
 
   it('chats.archive envia {chatid, archive: true} (tag minúscula, distinta de "chatId" de sendtext) para POST /chat/archive (rota legacy)', async () => {

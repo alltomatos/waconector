@@ -164,6 +164,7 @@ com `phone`), não em um "connect" de uma sessão já existente.
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
 `messages.sendMedia`, `messages.sendReaction`, `messages.edit`, `messages.delete`,
+`messages.forward`, `messages.star`, `messages.unstar` (ADR-0013),
 `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
@@ -172,7 +173,10 @@ com `phone`), não em um "connect" de uma sessão já existente.
 `contacts.checkExists`, `contacts.getProfilePicture`, `contacts.getAbout`, `contacts.block`,
 `contacts.unblock`, `contacts.listBlocked`, `chats.archive`, `chats.unarchive`, `chats.mute`,
 `chats.unmute`, `chats.pin`, `chats.unpin`, `chats.markRead`, `chats.markUnread`,
-`webhooks.parse` — 39 de 40 capabilities (enum `CAPABILITIES` cresceu com o retrofit ADR-0012).
+`webhooks.parse` — 42 de 46 capabilities. **Sem `messages.pin`/`unpin`/`markRead`** (nível de
+MENSAGEM) — busca em `src/routes/index.ts` só encontra `/pin-chat` (nível de conversa, já
+implementado) e `unread-messages`/`all-unread-messages` (consulta, não ação de marcar) — nenhum
+endpoint de nível de mensagem equivalente. Limitação real confirmada, não gap de pesquisa.
 
 **Deliberadamente de fora** (obstáculo estrutural, não falta de pesquisa):
 
@@ -456,6 +460,18 @@ sucesso, o controller faz `res.status(200).json(...)` e, **sem `return`**, cai n
 segundo `.json()` sempre é alcançado e dispararia erro do Express por headers já enviados; não afeta
 o adapter (o primeiro response de 200 já foi totalmente escrito antes do erro), mas é um cheiro de
 código real do provider, não hipotético.
+
+## Ações sobre mensagem (`messages.forward`/`star`/`unstar`, ADR-0013)
+
+Continuação da pesquisa de `messages.edit`/`delete` acima (`wppconnect-server@f09e2fed`,
+`DeviceController.forwardMessages`/`starMessage`). Confiança **Alta** para os dois. **Sem
+`messages.pin`/`unpin`/`markRead`** (nível de MENSAGEM) — ver nota no resumo de capabilities
+acima.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.forward` | `POST /forward-messages` | `DeviceController.forwardMessages`. Body confirmado pelo Swagger real: `{phone, isGroup, messageId}` — o handler faz `phone[0]` (reescrito para array pelo middleware `statusConnection`, mesmo mecanismo de `sendText`/`sendMedia`) e chama `forwardMessagesV2(phone[0], messageId)` da lib. `ForwardMessageInput.fromChatId` nunca é enviado — a implementação usa só o `messageId` da mensagem original. **Bug real confirmado**: o `if (!isGroup) {...} else {...}` do controller (`deviceController.ts:968-1021`) tem os DOIS ramos chamando exatamente a mesma linha — `isGroup` não tem efeito real no comportamento, apesar de aceito no schema. Resposta segue o envelope padrão (`{status:'success', response}`) — diferente de `list-chats`, este endpoint passa pelo `returnSucess` normal. |
+| `messages.star` / `messages.unstar` | `POST /star-message` | `DeviceController.starMessage`. Body: `{messageId, star: boolean}` — SEM `phone`/`isGroup`: o `messageId` sozinho identifica a mensagem (`client.starMessage(messageId, star)` da lib). Um único endpoint com flag booleana cobre as duas direções. Resposta segue o envelope padrão. |
 
 ## Grupos
 

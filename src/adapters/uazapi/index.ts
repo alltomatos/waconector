@@ -27,10 +27,12 @@ import type {
   InstanceState,
   InstanceStatus,
   JoinGroupInviteInput,
+  MarkMessageReadInput,
   MediaKind,
   MediaRef,
   MessageAck,
   MessageKind,
+  PinMessageInput,
   SendMediaInput,
   SendReactionInput,
   SendTextInput,
@@ -86,6 +88,9 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendReaction',
   'messages.edit',
   'messages.delete',
+  'messages.pin',
+  'messages.unpin',
+  'messages.markRead',
   'chats.archive',
   'chats.unarchive',
   'chats.mute',
@@ -143,6 +148,9 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     sendReaction: (input) => sendReaction(http, input),
     edit: (input) => editMessage(http, input),
     delete: (input) => deleteMessage(http, input),
+    pin: (input) => setMessagePinned(http, input, true),
+    unpin: (input) => setMessagePinned(http, input, false),
+    markRead: (input) => markMessageRead(http, input),
   };
 
   const chats: ChatsApi = {
@@ -451,6 +459,40 @@ async function editMessage(http: HttpClient, input: EditMessageInput): Promise<S
  */
 async function deleteMessage(http: HttpClient, input: DeleteMessageInput): Promise<void> {
   await http.request({ method: 'POST', path: '/message/delete', body: { id: input.messageId } });
+}
+
+/**
+ * `POST /message/pin` (ADR-0013, confiança Alta): body `{id, pin?: boolean (default true),
+ * duration?: integer (default 30)}`. **Nuance documentada explicitamente**: `duration` só aceita
+ * `1`, `7` ou `30` (dias) — qualquer outro valor cai silenciosamente para 30
+ * (`pinMessageFallback30Days`, exemplo dedicado no spec com `duration: 99` → 30). `PinMessageInput`
+ * do contrato canônico não expõe duração (ADR-0013 — nenhum formato converge entre providers);
+ * este adapter usa o **default do próprio provider** (omite `duration`, que já vale 30). Em
+ * grupos, a permissão depende da config do WhatsApp do grupo — "o backend não valida localmente
+ * se a instância é admin; a decisão final é do WhatsApp". Resposta rica (`messageType:
+ * "PinInChatMessage"`, `pinned: boolean`) — ignorada, contrato retorna `Promise<void>`.
+ */
+async function setMessagePinned(
+  http: HttpClient,
+  input: PinMessageInput,
+  pin: boolean,
+): Promise<void> {
+  await http.request({ method: 'POST', path: '/message/pin', body: { id: input.messageId, pin } });
+}
+
+/**
+ * `POST /message/markread` (ADR-0013, nível de MENSAGEM, confiança Alta): body `{id: string[]}` —
+ * lista de IDs, marca várias mensagens de uma vez; este adapter sempre envia um array com 1
+ * elemento. Resposta `{results: [{message_id, status, error?}]}` (por item, não all-or-nothing) —
+ * ignorada, contrato retorna `Promise<void>`. Distinto de `chats.markRead` (`/chat/read`, nível de
+ * conversa, ADR-0012).
+ */
+async function markMessageRead(http: HttpClient, input: MarkMessageReadInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/message/markread',
+    body: { id: [input.messageId] },
+  });
 }
 
 // ---------------------------------------------------------------------------
