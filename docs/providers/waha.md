@@ -431,6 +431,26 @@ Cobertura 3/3 — mesma fonte (`openapi.json` oficial + páginas `docs/how-to/se
 Resposta `201` das 3 operações: `WAMessage` completo, mesmo shape reaproveitado por
 `mapSentMessage` (mesmo padrão de `sendText`/`sendMedia`/`forward`).
 
+## Presença (`presence.*`, ADR-0015)
+
+Cobertura 3/3, confiança Alta — página dedicada bem detalhada, incluindo FAQ operacional.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `presence.setTyping` | `POST /api/{session}/presence` | Confirmado no `openapi.json` (operationId `PresenceController_setPresence`, schema `WAHASessionPresence`). Body: `{chatId, presence}` — `session` vai no PATH aqui (diferente de `sendText`/`sendMedia`/etc., que usam `session` no body) porque `presence` é um controller distinto (`PresenceController`), com convenção de path própria. `chatId` OBRIGATÓRIO para este caso. `TypingState.composing` mapeia para o literal `typing` do provider (`recording`/`paused` batem 1:1). |
+| `presence.set` | `POST /api/{session}/presence` | MESMO endpoint de `setTyping`, mas `chatId` deve ser OMITIDO — confirmado na descrição do campo: "Required for chat-related presence statuses; omit for ONLINE/OFFLINE". `PresenceState` (`online`/`offline`) mapeia direto para o enum do provider. |
+| `presence.subscribe` | `POST /api/{session}/presence/{chatId}/subscribe` | Confirmado (operationId `PresenceController_subscribe`). Sem body. Necessário chamar antes de receber `presence.update` de um contato específico via webhook — `GET /api/{session}/presence/{chatId}` já auto-subscreve como efeito colateral, mas este adapter não implementa `presence.get` nesta fase (ver ADR-0015, cobertura insuficiente para unificar com confiança). |
+
+**Nuances operacionais documentadas** (não são bugs, comportamento nativo do WhatsApp Web
+multi-device): manter a sessão sempre "online" via `presence.set('online')` suprime notificações
+push no celular do usuário ("WhatsApp doesn't send push notifications to the device if a web client
+is active") — a doc recomenda enviar `offline` explicitamente quando a automação terminar. Variáveis
+de ambiente do servidor (`WAHA_PRESENCE_AUTO_ONLINE`, `WAHA_PRESENCE_AUTO_ONLINE_DURATION_SECONDS`)
+controlam um comportamento automático de marcar a sessão como online por N segundos após qualquer
+request — configuração do servidor, não deste adapter. `POST /startTyping`/`POST /stopTyping`
+(atalhos documentados para `presence` com `typing`/`paused`) não são usados por este adapter —
+`presence.setTyping` já cobre os dois via o enum.
+
 ## Conversas (`chats.*`, retrofit ADR-0012)
 
 Namespace novo (ADR-0012) de gestão de estado de conversa. Cobertura real na pesquisa de

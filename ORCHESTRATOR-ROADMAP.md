@@ -370,7 +370,20 @@ pesquisa já produzidos na Epic 7 (`scratchpad/provider-reports/`), sem repetir 
       nenhuma fonte primária (OpenAPI oficial, busca exaustiva em `handlers.go`, e rotas legacy,
       respectivamente). Implementado sem `Workflow`/`Agent` (diretamente, um provider por vez, a
       pedido do usuário). QA gate completo verde: 703 testes, cobertura acima dos thresholds.
-- [ ] `messages.sendLocation`/`sendContactCard`/`sendPoll` (ADR-0014).
+- [x] **`messages.sendLocation`/`sendContactCard`/`sendPoll`** (ADR-0014,
+      [PR #37](https://github.com/alltomatos/waconector/pull/37)) — fecha o par ENVIO do que
+      `MessageKind` já classifica na recepção (`location`/`contact`/`poll`) desde a F1. Melhor
+      cobertura da fila até agora: **3/3 nos 8 adapters** (49/49 no total, enum cresceu de 46 para
+      49) — todos confirmam as 3 capabilities, com shapes de request heterogêneos entre si
+      (`sendContactCard` ora aceita campos soltos — Evolution/uazapi/Z-API/QuePasa —, ora exige
+      vCard já montado pelo adapter — Whapi/Wuzapi/WAHA/WPPConnect; `sendPoll` do Wuzapi é sempre
+      escolha única, hardcoded no servidor). Gap-fix achado durante a pesquisa (não uma capability
+      nova): `messages.sendMedia` do QuePasa agora envia `kind: 'sticker'` de verdade via
+      `POST /send` (campo dedicado `sticker: {url|content}`, conversão para WebP via FFmpeg no
+      servidor) em vez de lançar `INVALID_INPUT` — o caminho anterior (`/sendurl`/`/sendencoded`)
+      de fato não suporta sticker, mas existe um endpoint irmão que sim. Implementado sem
+      `Workflow`/`Agent`. QA gate completo verde: 737 testes, cobertura 90.19%/68.23%/99.36%/91.81%
+      (acima dos thresholds 77/60/90/80).
 - [ ] `presence.*` (ADR-0015).
 - [ ] `labels.*` (ADR-0016).
 - [ ] `channels.*`/`newsletters.*` (ADR-0017).

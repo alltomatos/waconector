@@ -492,6 +492,20 @@ Resposta das 3: reaproveita `mapSentMessageFromMessage` (mesma função de `send
 — fallback de id sintético se a resposta não ecoar `id`/`chatId`, robusto o suficiente para cobrir
 tanto o caso array quanto o bare confirmados acima).
 
+## Presença (`presence.*`, ADR-0015)
+
+Cobertura 3/3, confiança Alta — **segunda melhor cobertura da fila**, atrás só de WAHA/Wuzapi/Whapi
+(3/3 também, mas WPPConnect tem uma arquitetura de endpoint mais fragmentada — ver abaixo). Não
+coberto pelo relatório de pesquisa original (que só tinha encontrado o webhook `onPresenceChanged`,
+sem endpoint de ENVIO) — confirmado via `gh api` contra `wppconnect-server@f09e2fed`, lendo
+`routes.ts`/`sessionController.ts`/`deviceController.ts`.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `presence.setTyping` | `POST /typing` (`DeviceController.setTyping`) ou `POST /recording` (`DeviceController.setRecording`) | **Único adapter da ADR-0015 que usa DOIS endpoints separados** em vez de um único endpoint com enum de estado. `/typing` body `{phone, isGroup, value}` (`value: true` → `startTyping`, `false` → `stopTyping`); `/recording` body `{phone, isGroup, duration?, value}` (idem para `startRecording`/`stopRecording`, `duration` não exposto por `SetTypingInput`). Mapeamento: `composing` → `/typing {value: true}`; `recording` → `/recording {value: true}`; **`paused`** (decisão própria, não há um terceiro endpoint "parar qualquer indicador") → `/typing {value: false}` — `stopTyping` como o par semântico mais direto de "encerrar o indicador". |
+| `presence.set` | `POST /set-online-presence` (`SessionController.setOnlinePresence`) | Body: `{isOnline: boolean}` — `PresenceState` mapeia direto (`online` → `true`, `offline` → `false`). Presença GLOBAL da conta. |
+| `presence.subscribe` | `POST /subscribe-presence` (`SessionController.subscribePresence`) | Body: `{phone, isGroup, all}` — este adapter sempre envia `all: false` (inscrição num contato específico); `all: true` inscreveria em todos os contatos/grupos (resolvido internamente via `getAllContacts`/`getAllGroups`), fora do escopo de `chatId` único do contrato canônico. |
+
 ## Grupos
 
 14 operações confirmadas com endpoint. Todos POST/GET, nenhum PUT/PATCH/DELETE (confirmado em

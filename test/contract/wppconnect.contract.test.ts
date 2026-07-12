@@ -413,6 +413,21 @@ function createFetchStub(): typeof globalThis.fetch {
       );
     }
 
+    // presence.setTyping (ADR-0015): POST /typing (composing/paused) ou /recording (recording).
+    if (method === 'POST' && (suffix === '/typing' || suffix === '/recording')) {
+      return jsonResponse(200, envelope({ message: 'ok' }));
+    }
+
+    // presence.set (ADR-0015): POST /set-online-presence.
+    if (method === 'POST' && suffix === '/set-online-presence') {
+      return jsonResponse(200, envelope({ message: 'Set Online Presence Successfully' }));
+    }
+
+    // presence.subscribe (ADR-0015): POST /subscribe-presence.
+    if (method === 'POST' && suffix === '/subscribe-presence') {
+      return jsonResponse(200, envelope({ message: 'Subscribe presence executed' }));
+    }
+
     throw new Error(`fetchStub (wppconnect): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1541,6 +1556,87 @@ describe('wppconnect adapter: comportamento específico do provider', () => {
     expect(adapter.capabilities).not.toContain('messages.pin');
     expect(adapter.capabilities).not.toContain('messages.markRead');
     expect(adapter.messages.pin).toBeUndefined();
+  });
+
+  it('presence.setTyping roteia composing/paused para POST /typing e recording para POST /recording, com {phone, isGroup, value}', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (
+            url.pathname === `${API_PREFIX}/typing` ||
+            url.pathname === `${API_PREFIX}/recording`
+          ) {
+            calls.push({
+              path: url.pathname,
+              body: JSON.parse(String(init?.body)),
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.presence.setTyping({ to: '5511999999999', state: 'composing' });
+    await wa.presence.setTyping({ to: '5511999999999', state: 'recording' });
+    await wa.presence.setTyping({ to: '5511999999999', state: 'paused' });
+
+    expect(calls).toEqual([
+      {
+        path: `${API_PREFIX}/typing`,
+        body: { phone: '5511999999999', isGroup: false, value: true },
+      },
+      {
+        path: `${API_PREFIX}/recording`,
+        body: { phone: '5511999999999', isGroup: false, value: true },
+      },
+      {
+        path: `${API_PREFIX}/typing`,
+        body: { phone: '5511999999999', isGroup: false, value: false },
+      },
+    ]);
+  });
+
+  it('presence.set envia {isOnline} para POST /set-online-presence', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/set-online-presence`) {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.presence.set('online');
+    await wa.presence.set('offline');
+
+    expect(capturedBodies).toEqual([{ isOnline: true }, { isOnline: false }]);
+  });
+
+  it('presence.subscribe envia {phone, isGroup, all: false} para POST /subscribe-presence', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/subscribe-presence`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.presence.subscribe('5511999999999')).resolves.toBeUndefined();
+    expect(capturedBody).toEqual({ phone: '5511999999999', isGroup: false, all: false });
   });
 
   it('chats.archive envia { phone, isGroup, value: true } para POST /archive-chat', async () => {

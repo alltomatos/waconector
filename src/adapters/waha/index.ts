@@ -5,6 +5,7 @@ import type {
   GroupsApi,
   InstanceApi,
   MessagesApi,
+  PresenceApi,
   WaAdapter,
   WebhookInput,
 } from '../../core/adapter';
@@ -116,6 +117,9 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'chats.unarchive',
   'chats.markRead',
   'chats.markUnread',
+  'presence.setTyping',
+  'presence.set',
+  'presence.subscribe',
   'webhooks.parse',
 ];
 
@@ -724,6 +728,46 @@ export function waha(options: WahaOptions): WaAdapter {
     },
   };
 
+  const presence: PresenceApi = {
+    /**
+     * `POST /api/{session}/presence` (ADR-0015; `operationId PresenceController_setPresence`,
+     * schema `WAHASessionPresence` — confiança Alta). Body: `{chatId, presence}` — **`session` vai
+     * no PATH aqui, não no body** (diferente de `sendText`/`sendMedia`/etc., que usam `/api/<op>`
+     * com `session` no body — `presence` é um controller distinto, `PresenceController`, com
+     * convenção de path própria). `chatId` OBRIGATÓRIO para `typing`/`recording`/`paused`, mas deve
+     * ser OMITIDO para `online`/`offline` (presença global da conta) — confirmado na descrição do
+     * campo: "Required for chat-related presence statuses; omit for ONLINE/OFFLINE".
+     * `TypingState.composing` mapeia para o literal `typing` do provider (único desalinhamento de
+     * nome).
+     */
+    setTyping: async (input) => {
+      const chatId = toWahaChatId(input.to);
+      await http.request({
+        method: 'POST',
+        path: `/api/${encodeURIComponent(session)}/presence`,
+        body: { chatId, presence: input.state === 'composing' ? 'typing' : input.state },
+      });
+    },
+    set: async (state) => {
+      await http.request({
+        method: 'POST',
+        path: `/api/${encodeURIComponent(session)}/presence`,
+        body: { presence: state },
+      });
+    },
+    /**
+     * `POST /api/{session}/presence/{chatId}/subscribe` (ADR-0015; `operationId
+     * PresenceController_subscribe` — confiança Alta). Sem body. Necessário chamar antes de
+     * receber `presence.update` de um contato específico via webhook.
+     */
+    subscribe: async (chatId) => {
+      await http.request({
+        method: 'POST',
+        path: `/api/${encodeURIComponent(session)}/presence/${encodeURIComponent(toWahaChatId(chatId))}/subscribe`,
+      });
+    },
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WAHA_CAPABILITIES,
@@ -732,6 +776,7 @@ export function waha(options: WahaOptions): WaAdapter {
     groups,
     contacts,
     chats,
+    presence,
     parseWebhook: (input) => parseWahaWebhook(input, session, options.webhookHmacKey),
   };
 }

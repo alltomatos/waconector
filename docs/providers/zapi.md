@@ -200,6 +200,18 @@ vivo (`developer.z-api.io` + mirror GitHub raw da doc) durante a implementação
 | `messages.sendContactCard` | `POST /send-contact` | Alta (verificação ao vivo) | Body `{phone, contactName, contactPhone}` — campos soltos, **sem vCard**: diferente de Whapi/Wuzapi, este provider aceita nome/telefone diretamente e monta a mensagem de contato internamente (não precisa de um helper `buildVcard` como os outros dois). |
 | `messages.sendPoll` | `POST /send-poll` | Média-Alta | Body `{phone, message, poll: [{name}], pollMaxOptions}` — `question` mapeia para `message`; `options` mapeia para um array de OBJETOS `{name}` (não strings soltas, diferente da maioria dos outros adapters pesquisados). `pollMaxOptions: 1` é a forma documentada de simular escolha única; a doc afirma que sem esse campo o padrão parece ser múltipla escolha — este adapter sempre envia o valor explícito (`options.length` para múltipla escolha) em vez de depender desse default implícito não confirmado contra instância real. Endpoint irmão `POST /send-poll-vote` existe para a própria instância votar (`{phone, pollMessageId, pollVote: [{name}]}`) — fora do escopo desta ADR (só ENVIO). |
 
+## Presença — NÃO implementado (ADR-0015)
+
+**Busca negativa confirmada, 0/3**: este é o único adapter da fila sem nenhuma das 3 capabilities
+de `presence.*`. Só existe `delayTyping` (1-15s) como parâmetro de `send-text` — atrasa a
+*entrega* mostrando "digitando…" durante o delay, não é um controle de presença independente do
+envio de uma mensagem real — e um webhook de *recepção* (`PresenceChatCallback`, configurável via
+`PUT /instances/{id}/token/{token}/update-webhook-chat-presence`, payload `{type:
+"PresenceChatCallback", phone, status, lastSeen, instanceId}` com `status` em `UNAVAILABLE|
+AVAILABLE|COMPOSING|PAUSED|RECORDING`). Nenhum endpoint de *envio* de indicador de digitação/
+gravação nem de presença global (online/offline) foi encontrado no índice completo da doc
+(`llms.txt`) nem nas páginas de mensagem — limitação real do provider, não gap de pesquisa.
+
 ### Mapeamento de status → `InstanceState`
 
 | Z-API `connected` | `InstanceState` |

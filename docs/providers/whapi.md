@@ -372,6 +372,21 @@ Cobertura 3/3, confiança **Alta** para as 3, mesma fonte (`openapi.yaml` oficia
 | `messages.sendContactCard` | `POST /messages/contact` (`operationId: sendMessageContact`, `:1417`) | Corpo `SenderContact`/`VCard`: `name`/`vcard` obrigatórios — cartão de contato único em vCard CRU, sem normalização de telefone pelo Whapi. **Este provider não monta o vCard a partir de campos soltos** (diferente de Evolution/uazapi/Z-API); `SendContactCardInput` só expõe `contactName`/`contactPhone` — este adapter monta a string vCard mínima localmente (`buildVcard`: `FN:{name}` + `TEL;type=CELL;type=VOICE;waid={phone}:+{phone}`, mesmo formato que a Evolution confirma gerar server-side). |
 | `messages.sendPoll` | `POST /messages/poll` (`operationId: sendMessagePoll`, `:1560`) | Corpo `MessagePropsPoll` (`:12652-12674`): `title`/`options` (2-12 itens) obrigatórios; `count` **inverte a convenção intuitiva** — `0` permite múltipla escolha, `1` restringe a uma só. `SendPollInput.allowMultipleAnswers` mapeia para `count: 0`/`count: 1`. |
 
+## Presença (`presence.*`, ADR-0015)
+
+Cobertura 3/3, confiança **Alta** para as 3 — a MELHOR cobertura da fila junto com WAHA/Wuzapi.
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `presence.setTyping` | `PUT /presences/{EntryID}` (`operationId: sendPresence`, `openapi.yaml:3484-3523`) | Corpo `SendPresenceRequest` (`:9079-9095`): `presence` enum `typing`\|`recording`\|`pause` (**singular**, não `paused` — único desalinhamento de nome com `TypingState`) + `delay` (segundos, default `0`, não exposto por `SetTypingInput` — omitido). Simula "digitando…"/"gravando áudio…" por N segundos; `pause` encerra manualmente antes do delay expirar. |
+| `presence.set` | `PUT /presences/me` (`operationId: sendMePresence`, `:3366-3404`) | Corpo `SendMePresenceRequest` (`:9068-9078`): `{presence: 'online'\|'offline'}` — mapeia direto de `PresenceState`. Presença GLOBAL da conta, distinta da presença por-chat acima. |
+| `presence.subscribe` | `POST /presences/{EntryID}` (`operationId: subscribePresence`, `:3437-3483`) | Sem body. 409 dedicado "already subscribed", 404 "not found in whatsapp" — inscreve-se para receber updates de presença (online/last-seen) de um contato via webhook. |
+
+**`presence.get` deliberadamente NÃO implementado nesta fase** (ver ADR-0015): existe
+`GET /presences/{EntryID}` (`operationId: getPresence`, `:3405-3436`, confiança Alta, schema
+`Presence` em `:10725`), mas cobertura cross-provider insuficiente (só 2/8) para unificar um shape
+de resposta com confiança — candidata para rodada futura.
+
 ## Conversas (`chats.*`, ADR-0012)
 
 Namespace novo de gestão de ESTADO da conversa (distinto de `messages.*`, que age sobre UMA

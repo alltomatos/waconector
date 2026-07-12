@@ -160,6 +160,15 @@ describe('capabilities no conector', () => {
       }),
     );
     expect(sendPollFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const setTypingFailure = await reject(
+      wa.presence.setTyping({ to: '5585999999999', state: 'composing' }),
+    );
+    expect(setTypingFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const setPresenceFailure = await reject(wa.presence.set('online'));
+    expect(setPresenceFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const subscribePresenceFailure = await reject(wa.presence.subscribe('5585999999999'));
+    expect(subscribePresenceFailure).toBeInstanceOf(UnsupportedCapabilityError);
   });
 
   it('adapter que declara messages.forward sem implementar o método falha com PROVIDER_ERROR', async () => {
@@ -203,6 +212,16 @@ describe('capabilities no conector', () => {
     const wa = createConnector(adapter);
 
     const failure = await reject(wa.chats.archive('5585999999999'));
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('adapter que declara presence.set mas não implementa o namespace presence inteiro falha com PROVIDER_ERROR (nunca TypeError)', async () => {
+    const adapter = new MockAdapter({ capabilities: ['presence.set', 'webhooks.parse'] });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (presence inteiro ausente, mesmo com a capability declarada) para testar o guard-rail do conector.
+    (adapter as any).presence = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.presence.set('online'));
     expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
 
@@ -658,6 +677,57 @@ describe('validação e normalização de chats.*', () => {
 
     await wa.chats.unarchive('+55 (85) 99999-9999');
     expect(adapter.isChatArchived('5585999999999')).toBe(false);
+  });
+});
+
+describe('validação e normalização de presence.*', () => {
+  it('rejeita chatId vazio em setTyping/subscribe com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () => wa.presence.setTyping({ to: '', state: 'composing' }),
+      () => wa.presence.subscribe(''),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+    }
+  });
+
+  it('rejeita state inválido em setTyping com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(
+      // biome-ignore lint/suspicious/noExplicitAny: testa validação de entrada inválida em tempo de execução.
+      wa.presence.setTyping({ to: '5585999999999', state: 'invalid' as any }),
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('normaliza chatId antes de entregar ao adapter, em setTyping/subscribe', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    await wa.presence.setTyping({ to: '+55 (85) 99999-9999', state: 'composing' });
+    expect(adapter.getTypingState('5585999999999')).toBe('composing');
+
+    await wa.presence.subscribe('+55 (85) 99999-9999');
+    expect(adapter.isSubscribedToPresence('5585999999999')).toBe(true);
+  });
+
+  it('presence.set não exige chatId (presença global) e reflete o estado consultável', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    await wa.presence.set('online');
+    expect(adapter.getGlobalPresence()).toBe('online');
+    await wa.presence.set('offline');
+    expect(adapter.getGlobalPresence()).toBe('offline');
   });
 });
 

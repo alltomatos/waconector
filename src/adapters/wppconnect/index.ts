@@ -4,6 +4,7 @@ import type {
   GroupsApi,
   InstanceApi,
   MessagesApi,
+  PresenceApi,
   WaAdapter,
   WebhookInput,
 } from '../../core/adapter';
@@ -39,6 +40,7 @@ import type {
   MediaRef,
   MessageAck,
   MessageKind,
+  PresenceState,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -46,6 +48,7 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  SetTypingInput,
   StarMessageInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
@@ -201,6 +204,9 @@ const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'chats.unpin',
   'chats.markRead',
   'chats.markUnread',
+  'presence.setTyping',
+  'presence.set',
+  'presence.subscribe',
   'webhooks.parse',
 ];
 
@@ -276,6 +282,12 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     markUnread: (chatId) => markChatUnread(http, session, chatId),
   };
 
+  const presence: PresenceApi = {
+    setTyping: (input) => setTyping(http, session, input),
+    set: (state) => setOnlinePresence(http, session, state),
+    subscribe: (chatId) => subscribePresence(http, session, chatId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WPPCONNECT_CAPABILITIES,
@@ -284,6 +296,7 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     groups,
     contacts,
     chats,
+    presence,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1506,6 +1519,66 @@ async function markChatRead(http: HttpClient, session: string, chatId: string): 
     method: 'POST',
     path: sessionPath(session, '/send-seen'),
     body: { phone: recipient.phone, isGroup: recipient.isGroup },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// presence.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `presence.setTyping` (ADR-0015) — WPPConnect divide o indicador em DOIS endpoints separados por
+ * `MediaKind` implícito, diferente de todos os demais adapters desta ADR (que usam um único
+ * endpoint com um enum de estado): `POST /typing` (`DeviceController.setTyping`, body `{phone,
+ * isGroup, value}`) para "digitando…", e `POST /recording` (`DeviceController.setRecording`, body
+ * `{phone, isGroup, duration?, value}`) para "gravando áudio…". `value: true` inicia o indicador
+ * (`startTyping`/`startRecording` da lib), `value: false` encerra (`stopTyping`/`stopRecording`).
+ * Mapeamento: `composing` → `POST /typing {value: true}`; `recording` → `POST /recording {value:
+ * true}` (sem `duration`, não exposto por `SetTypingInput`); **`paused`** (decisão própria deste
+ * adapter, não há um terceiro endpoint "parar qualquer indicador"): roteado para `POST /typing
+ * {value: false}` — `stopTyping` é o par semântico mais direto de "parar de mostrar o indicador"
+ * (mesmo padrão de "encerrar manualmente" que `pause` tem nos demais providers).
+ */
+async function setTyping(http: HttpClient, session: string, input: SetTypingInput): Promise<void> {
+  const recipient = toWppconnectRecipient(input.to);
+  const path = input.state === 'recording' ? '/recording' : '/typing';
+  const value = input.state !== 'paused';
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, path),
+    body: { phone: recipient.phone, isGroup: recipient.isGroup, value },
+  });
+}
+
+/**
+ * `presence.set` (ADR-0015) — `POST /set-online-presence` (`SessionController.setOnlinePresence`,
+ * confirmado em código). Body: `{isOnline: boolean}` — `PresenceState` mapeia direto (`online` →
+ * `true`, `offline` → `false`). Presença GLOBAL da conta, distinta do indicador por-chat acima.
+ */
+async function setOnlinePresence(
+  http: HttpClient,
+  session: string,
+  state: PresenceState,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/set-online-presence'),
+    body: { isOnline: state === 'online' },
+  });
+}
+
+/**
+ * `presence.subscribe` (ADR-0015) — `POST /subscribe-presence`
+ * (`SessionController.subscribePresence`, confirmado em código). Body: `{phone, isGroup, all}` —
+ * este adapter sempre envia `all: false` (inscrição num contato específico; `all: true` inscreveria
+ * em todos os contatos/grupos, fora do escopo de `chatId` único do contrato canônico).
+ */
+async function subscribePresence(http: HttpClient, session: string, chatId: string): Promise<void> {
+  const recipient = toWppconnectRecipient(chatId);
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/subscribe-presence'),
+    body: { phone: recipient.phone, isGroup: recipient.isGroup, all: false },
   });
 }
 

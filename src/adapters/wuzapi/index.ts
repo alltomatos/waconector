@@ -4,6 +4,7 @@ import type {
   GroupsApi,
   InstanceApi,
   MessagesApi,
+  PresenceApi,
   WaAdapter,
   WebhookInput,
 } from '../../core/adapter';
@@ -39,6 +40,7 @@ import type {
   MediaRef,
   MessageAck,
   MessageKind,
+  PresenceState,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -46,6 +48,7 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  SetTypingInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -133,6 +136,9 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'contacts.listBlocked',
   'chats.archive',
   'chats.unarchive',
+  'presence.setTyping',
+  'presence.set',
+  'presence.subscribe',
   'webhooks.parse',
 ];
 
@@ -226,6 +232,12 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     unarchive: (chatId) => setChatArchived(http, chatId, false),
   };
 
+  const presence: PresenceApi = {
+    setTyping: (input) => setTyping(http, input),
+    set: (state) => setPresence(http, state),
+    subscribe: (chatId) => subscribePresence(http, chatId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WUZAPI_CAPABILITIES,
@@ -234,6 +246,7 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     groups,
     contacts,
     chats,
+    presence,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1133,6 +1146,60 @@ async function setChatArchived(http: HttpClient, chatId: string, archive: boolea
     method: 'POST',
     path: '/chat/archive',
     body: { jid: toWuzapiChatJid(chatId), archive },
+  });
+}
+
+/**
+ * `presence.setTyping` (ADR-0015) — `POST /chat/presence`, confiança Alta (documentado no
+ * `API.md` e no código-fonte). Corpo: `{Phone, State, Media}` — **o enum `State` só tem
+ * `"composing"`/`"paused"`** (confirmado na prosa da doc), sem um terceiro valor para "gravando
+ * áudio"; em vez disso, `Media: "audio"` (junto com `State: "composing"`) indica que está gravando
+ * um áudio em vez de digitando texto ("if media is set to 'audio' it will indicate an audio
+ * message is being recorded"). `TypingState.recording` mapeia para `State: "composing"` +
+ * `Media: "audio"`; `composing` mapeia para `State: "composing"` + `Media: ""`; `paused` mapeia
+ * para `State: "paused"` + `Media: ""`.
+ */
+async function setTyping(http: HttpClient, input: SetTypingInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/chat/presence',
+    body: {
+      Phone: toWuzapiPhone(input.to),
+      State: input.state === 'paused' ? 'paused' : 'composing',
+      Media: input.state === 'recording' ? 'audio' : '',
+    },
+  });
+}
+
+/**
+ * `presence.set` (ADR-0015) — `POST /user/presence`, confiança Alta (código confirmado,
+ * `handlers.go:3387-3440`, **não documentado** no `API.md`). Corpo: `{type: "available"|
+ * "unavailable"}` — só esses dois valores são aceitos, qualquer outro retorna 400.
+ * `PresenceState` mapeia direto (`online` → `available`, `offline` → `unavailable`). Presença
+ * GLOBAL da conta, distinta da presença por-chat acima.
+ */
+async function setPresence(http: HttpClient, state: PresenceState): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/user/presence',
+    body: { type: state === 'online' ? 'available' : 'unavailable' },
+  });
+}
+
+/**
+ * `presence.subscribe` (ADR-0015) — `POST /user/presence/subscribe`, confiança Alta (documentado
+ * no `API.md` e no código). Corpo: `{Phone}`. A resposta HTTP síncrona só confirma que a inscrição
+ * foi registrada — o resultado real (status online/offline e, se disponível, `last_seen`) chega
+ * depois, assíncrono, via webhook ("Presence" events) que este adapter não reconhece hoje
+ * (`parseWebhookUnsafe` não tem `case 'Presence'` — cairia em `unknown`). Depende também de a
+ * sessão estar com presença "available" (efeito colateral de `presence.set`) e das configurações
+ * de privacidade do contato.
+ */
+async function subscribePresence(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/user/presence/subscribe',
+    body: { Phone: toWuzapiPhone(chatId) },
   });
 }
 

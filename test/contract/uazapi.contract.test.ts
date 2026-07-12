@@ -169,6 +169,16 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { response: 'Chat updated successfully' });
     }
 
+    // presence.setTyping (ADR-0015): POST /message/presence.
+    if (method === 'POST' && pathname === '/message/presence') {
+      return jsonResponse(200, { response: 'Chat presence sent successfully' });
+    }
+
+    // presence.set (ADR-0015): POST /instance/presence.
+    if (method === 'POST' && pathname === '/instance/presence') {
+      return jsonResponse(200, { response: 'Presence set successfuly' });
+    }
+
     if (method === 'POST' && pathname === '/group/create') {
       return jsonResponse(200, {
         JID: '120363000000000000@g.us',
@@ -1823,6 +1833,55 @@ describe('uazapi adapter: comportamento específico do provider', () => {
       { number: '5511999999999', read: true },
       { number: '5511999999999', read: false },
     ]);
+  });
+
+  it('presence.setTyping envia {number, presence} para POST /message/presence', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/message/presence') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.presence.setTyping({ to: '5511999999999', state: 'recording' }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ number: '5511999999999', presence: 'recording' });
+  });
+
+  it('presence.set envia {presence} para POST /instance/presence (online -> "available", offline -> "unavailable")', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/instance/presence') {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.presence.set('online')).resolves.toBeUndefined();
+    await expect(wa.presence.set('offline')).resolves.toBeUndefined();
+
+    expect(capturedBodies).toEqual([{ presence: 'available' }, { presence: 'unavailable' }]);
+  });
+
+  it('não declara presence.subscribe (sem endpoint equivalente confirmado na pesquisa)', () => {
+    const adapter = uazapi(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('presence.subscribe');
+    expect(adapter.presence?.subscribe).toBeUndefined();
   });
 
   it('declara todas as 8 operações de chats.* em capabilities', () => {

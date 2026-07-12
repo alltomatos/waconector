@@ -13,14 +13,14 @@ Nenhuma linha aqui é escrita à mão.
 
 ## Resumo por provider
 
-- **waha**: 43/49
-- **evolution**: 39/49
-- **uazapi**: 44/49
-- **zapi**: 45/49
-- **wuzapi**: 37/49
-- **whapi**: 48/49
-- **quepasa**: 17/49
-- **wppconnect**: 45/49
+- **waha**: 46/52
+- **evolution**: 40/52
+- **uazapi**: 46/52
+- **zapi**: 45/52
+- **wuzapi**: 40/52
+- **whapi**: 51/52
+- **quepasa**: 18/52
+- **wppconnect**: 48/52
 
 ## Detalhe por namespace
 
@@ -96,6 +96,14 @@ Nenhuma linha aqui é escrita à mão.
 | `chats.unpin` | — | ✅ | ✅ | ✅ | — | ✅ | — | ✅ |
 | `chats.markRead` | ✅ | — | ✅ | ✅ | — | ✅ | ✅ | ✅ |
 | `chats.markUnread` | ✅ | — | ✅ | ✅ | — | ✅ | ✅ | ✅ |
+
+### `presence.*`
+
+| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `presence.setTyping` | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ |
+| `presence.set` | ✅ | — | ✅ | — | ✅ | ✅ | — | ✅ |
+| `presence.subscribe` | ✅ | — | — | — | ✅ | ✅ | — | ✅ |
 
 ### `webhooks.*`
 

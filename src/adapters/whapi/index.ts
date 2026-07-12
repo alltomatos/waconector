@@ -4,6 +4,7 @@ import type {
   GroupsApi,
   InstanceApi,
   MessagesApi,
+  PresenceApi,
   WaAdapter,
   WebhookInput,
 } from '../../core/adapter';
@@ -35,6 +36,7 @@ import type {
   MessageAck,
   MessageKind,
   PinMessageInput,
+  PresenceState,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -42,6 +44,7 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  SetTypingInput,
   StarMessageInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
@@ -138,6 +141,9 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'chats.unpin',
   'chats.markRead',
   'chats.markUnread',
+  'presence.setTyping',
+  'presence.set',
+  'presence.subscribe',
   'webhooks.parse',
 ];
 
@@ -215,6 +221,12 @@ export function whapi(options: WhapiOptions): WaAdapter {
     markUnread: (chatId) => markChatUnread(http, chatId),
   };
 
+  const presence: PresenceApi = {
+    setTyping: (input) => setTyping(http, input),
+    set: (state) => setPresence(http, state),
+    subscribe: (chatId) => subscribePresence(http, chatId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WHAPI_CAPABILITIES,
@@ -223,6 +235,7 @@ export function whapi(options: WhapiOptions): WaAdapter {
     groups,
     contacts,
     chats,
+    presence,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1144,6 +1157,49 @@ async function muteChat(http: HttpClient, chatId: string): Promise<void> {
 
 async function unmuteChat(http: HttpClient, chatId: string): Promise<void> {
   await patchChat(http, chatId, { mute_until: 0 });
+}
+
+// ---------------------------------------------------------------------------
+// presence.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `presence.setTyping` (ADR-0015) — `PUT /presences/{EntryID}` (`operationId: sendPresence`,
+ * `openapi.yaml:3484-3523`, confiança Alta). Corpo `SendPresenceRequest` (`:9079-9095`): `presence`
+ * enum `typing`\|`recording`\|`pause` (**singular**, não `paused` — único desalinhamento de nome
+ * com `TypingState`) + `delay` (segundos, default `0`, não exposto por `SetTypingInput` — omitido).
+ * Simula "digitando…"/"gravando áudio…" por N segundos; `pause` encerra manualmente antes do delay
+ * expirar.
+ */
+async function setTyping(http: HttpClient, input: SetTypingInput): Promise<void> {
+  await http.request({
+    method: 'PUT',
+    path: `/presences/${encodeURIComponent(toWhapiChatId(input.to))}`,
+    body: { presence: input.state === 'paused' ? 'pause' : input.state },
+  });
+}
+
+/**
+ * `presence.set` (ADR-0015) — `PUT /presences/me` (`operationId: sendMePresence`,
+ * `openapi.yaml:3366-3404`, confiança Alta). Corpo `SendMePresenceRequest` (`:9068-9078`):
+ * `{presence: 'online'|'offline'}` — mapeia direto de `PresenceState`. Presença GLOBAL da conta,
+ * distinta da presença por-chat acima.
+ */
+async function setPresence(http: HttpClient, state: PresenceState): Promise<void> {
+  await http.request({ method: 'PUT', path: '/presences/me', body: { presence: state } });
+}
+
+/**
+ * `presence.subscribe` (ADR-0015) — `POST /presences/{EntryID}` (`operationId:
+ * subscribePresence`, `openapi.yaml:3437-3483`, confiança Alta). Sem body. 409 dedicado "already
+ * subscribed", 404 "not found in whatsapp" — inscreve-se para receber updates de presença (online/
+ * last-seen) de um contato via webhook.
+ */
+async function subscribePresence(http: HttpClient, chatId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/presences/${encodeURIComponent(toWhapiChatId(chatId))}`,
+  });
 }
 
 // ---------------------------------------------------------------------------

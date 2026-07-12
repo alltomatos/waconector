@@ -354,6 +354,21 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, ['5511988887777', '5511977776666@lid']);
     }
 
+    // presence.set (ADR-0015): PUT /presences/me.
+    if (method === 'PUT' && pathname === '/presences/me') {
+      return jsonResponse(200, { success: true });
+    }
+
+    // presence.setTyping (ADR-0015): PUT /presences/{EntryID}.
+    if (method === 'PUT' && pathname === `/presences/${RECIPIENT}`) {
+      return jsonResponse(200, { success: true });
+    }
+
+    // presence.subscribe (ADR-0015): POST /presences/{EntryID}.
+    if (method === 'POST' && pathname === `/presences/${RECIPIENT}`) {
+      return jsonResponse(200, { success: true });
+    }
+
     throw new Error(`fetchStub (whapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1327,6 +1342,74 @@ describe('whapi adapter: comportamento específico do provider', () => {
       options: ['Azul', 'Verde'],
       count: 0,
     });
+  });
+
+  it('presence.setTyping envia PUT /presences/{EntryID} com {presence} (paused -> "pause", singular)', async () => {
+    const calls: Array<{ method: string; body: unknown }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/presences/${RECIPIENT}`) {
+            calls.push({
+              method: (init?.method ?? 'GET').toUpperCase(),
+              body: JSON.parse(String(init?.body)),
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.presence.setTyping({ to: RECIPIENT, state: 'recording' });
+    await wa.presence.setTyping({ to: RECIPIENT, state: 'paused' });
+
+    expect(calls).toEqual([
+      { method: 'PUT', body: { presence: 'recording' } },
+      { method: 'PUT', body: { presence: 'pause' } },
+    ]);
+  });
+
+  it('presence.set envia PUT /presences/me com {presence}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/presences/me') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.presence.set('offline')).resolves.toBeUndefined();
+    expect(capturedBody).toEqual({ presence: 'offline' });
+  });
+
+  it('presence.subscribe envia POST /presences/{EntryID} sem corpo', async () => {
+    let capturedMethod: string | undefined;
+    let capturedBody: string | undefined;
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/presences/${RECIPIENT}`) {
+            capturedMethod = (init?.method ?? 'GET').toUpperCase();
+            capturedBody = init?.body === undefined ? undefined : String(init.body);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.presence.subscribe(RECIPIENT)).resolves.toBeUndefined();
+    expect(capturedMethod).toBe('POST');
+    expect(capturedBody).toBeUndefined();
   });
 
   it('chats.archive/unarchive enviam POST /chats/{ChatID} com {archive: boolean}', async () => {

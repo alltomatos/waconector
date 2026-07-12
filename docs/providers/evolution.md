@@ -229,6 +229,21 @@ Cobertura 3/3 — fonte `send-message.yaml`, confiança Alta para as 3.
   opções) quando `true`, `0` quando `false`/ausente. Resposta confirma `Type:
   PollCreationMessage`.
 
+## Presença (`presence.setTyping`, ADR-0015)
+
+Cobertura 1/3 — só `setTyping`. **Sem `presence.set`/`presence.subscribe`**: nenhum endpoint
+equivalente encontrado em `evo-go-message.yaml`/`evo-go-chat.yaml`.
+
+### `presence.setTyping` — `POST /message/presence`
+
+- Schema `ChatPresence`, confiança Alta. Body: `{isAudio, number, state}` — vive fisicamente em
+  `evo-go-message.yaml`, não em `evo-go-chat.yaml` (onde estão archive/mute/pin/unpin) — mesma
+  inconsistência de organização do provider já notada para `sendLocation`/etc.
+- `state` provavelmente aceita os valores whatsmeow padrão (`composing`/`recording`/`paused`), mas
+  os valores exatos não são enumerados no spec — mapeado 1:1 com `TypingState` por analogia.
+- `isAudio` (assunção não confirmada por exemplo literal) é enviado como `true` só quando
+  `state === 'recording'` — best-effort para distinguir "gravando áudio" de "digitando".
+
 ## Grupos (núcleo)
 
 As 14 operações de `groups.*` (ver ADR-0009) são suportadas por este adapter. **Nenhuma das 4
