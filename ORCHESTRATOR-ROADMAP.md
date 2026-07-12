@@ -429,7 +429,34 @@ pesquisa já produzidos na Epic 7 (`scratchpad/provider-reports/`), sem repetir 
       `docs/capabilities.md`, regenerado via `npm run docs:capabilities`; e um hunk não-vazio em
       `ORCHESTRATOR-ROADMAP.md` onde o lado `main` era só um placeholder desatualizado do mesmo item
       já completo em `develop`).
-- [ ] `channels.*`/`newsletters.*` (ADR-0017).
+- [x] **`channels.*`** (ADR-0017, [PR #40](https://github.com/alltomatos/waconector/pull/40)) —
+      terceiro namespace inteiramente novo desta rodada (`WaAdapter.channels?`, mesmo padrão
+      opcional de `chats?`/`presence?`/`labels?`): `list`/`create`/`getInfo`/`delete`/`follow`/
+      `unfollow` de canais do WhatsApp ("WhatsApp Channels"). Nome canônico `channels` (não
+      `newsletters`) escolhido por ser o nome público do produto e o termo literal do WAHA
+      (`/channels`, tag "📢 Channels") e do Whapi renderizado, apesar da maioria dos providers
+      (Evolution GO, uazapi, Z-API, Wuzapi, WPPConnect) usar "newsletter" internamente — herança do
+      protocolo reverso-projetado (whatsmeow/Baileys). `follow`/`unfollow` escolhido sobre
+      `subscribe`/`unsubscribe` por ser o par simétrico e literal do WAHA/uazapi/Whapi (Evolution GO
+      só tem `subscribe`, sem `unsubscribe`). `ChannelInfo.id` é opaco (mesmo critério de
+      `GroupInfo.id`, ADR-0009). Cobertura por adapter: WAHA 6/6, Evolution GO 4/6 (sem `delete`/
+      `unfollow`; achado ao vivo que CORRIGE o research original: o `jid` de newsletter NÃO é objeto
+      estruturado — `tulir/whatsmeow`'s `types.JID` implementa `MarshalText`/`UnmarshalText`,
+      então é serializado como string simples, não decomposto em `{user, server, device, ...}` como
+      o OpenAPI estático sugeria), uazapi 6/6 (confiança média para o shape de resposta, alta para
+      os endpoints — schema `additionalProperties: true`), Z-API 1/6 (só `create`), Wuzapi 1/6 (só
+      `list`, somente leitura), Whapi 6/6, QuePasa 0/6 (busca negativa confirmada ao vivo, nenhuma
+      rota de newsletter/channel no código-fonte), WPPConnect 2/6 (`create`/`delete`, achado ao vivo
+      — o research original não tinha encontrado nenhuma evidência de channels/newsletters no
+      WPPConnect). `CreateChannelInput` deliberadamente sem `picture` (mesmo precedente de
+      `CreateGroupInput`, ADR-0009). Enum de capabilities cresce de 58 para 64. Implementado sem
+      `Workflow`/`Agent`. QA gate completo verde: 854 testes, cobertura
+      91.49%/67.6%/99.47%/92.92% (acima dos thresholds 77/60/90/80). Merge da PR exigiu reconciliar
+      o MESMO tipo de conflito com `main` dos PRs #38/#39 (squash-merge diverge `develop` de `main`)
+      — resolvido da mesma forma verificada (superset estrito do `develop` em 26 dos 28 arquivos
+      conflitantes; `docs/capabilities.md` regenerado via `npm run docs:capabilities`; e um hunk
+      não-vazio em `ORCHESTRATOR-ROADMAP.md` onde o lado `main` era só um placeholder desatualizado
+      do mesmo item já completo em `develop`).
 - [ ] `business.*` (ADR-0018).
 - [ ] `calls.*` (ADR-0019).
 
