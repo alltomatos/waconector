@@ -253,10 +253,17 @@ candidatas ao próximo ADR, seguidas de `chats.*` (archive/mute/pin/markUnread, 
       documentada à regra de "uma chamada por operação"; `checkExists` usa `HEAD` e intercepta
       404 como resultado de domínio válido (único método do adapter que faz isso). Mergeado via
       [PR #32](https://github.com/alltomatos/waconector/pull/32).
-- [ ] WPPConnect (5 capabilities: `groups.list` + `contacts.list/get/getProfilePicture/getAbout` —
-      achado da auditoria: gap veio de profundidade de pesquisa do dossiê original, que parou no
-      controller do server em vez de descer à lib `@wppconnect-team/wppconnect` tipada; não é
-      limitação real do provider).
+- [x] **WPPConnect**: `groups.list` (`POST /list-chats`, substituto do `GET /all-groups`
+      deprecated) + as 4 operações restantes de `contacts.*` (`list`/`get`/`getProfilePicture`/
+      `getAbout`) — 5 capabilities, todas com shape confirmado descendo à lib
+      `@wppconnect-team/wppconnect` (o gap original vinha de profundidade de pesquisa do dossiê
+      anterior, que parou no controller fino do server). Leva o adapter de 24/30 para **29/30** (só
+      `instance.pairingCode` fora, obstáculo estrutural de sempre). Verificação adversarial
+      encontrou e corrigiu uma afirmação errada herdada do dossiê anterior: `POST /list-chats`
+      responde SEM o envelope padrão `{status, response, mapper}` — única exceção confirmada entre
+      todos os endpoints do provider; docstring, dossiê e stub de teste corrigidos para refletir o
+      shape real (array bruto). Mergeado via
+      [PR #33](https://github.com/alltomatos/waconector/pull/33).
 - [ ] QuePasa (até 20 capabilities condicionais — a auditoria encontrou indício, lendo código-fonte,
       de que as rotas v5 de `groups.*`/`contacts.*` antes tidas como bloqueadas por JWT aceitam o
       mesmo token por instância já usado; **não testado contra instância real**, validar antes de
