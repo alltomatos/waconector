@@ -251,7 +251,8 @@ candidatas ao próximo ADR, seguidas de `chats.*` (archive/mute/pin/markUnread, 
       correspondente, para não sobrescrever o outro); `revokeInviteLink` encadeia DELETE+GET (o
       DELETE não devolve o novo código, diferente de outros adapters do pacote) — exceção
       documentada à regra de "uma chamada por operação"; `checkExists` usa `HEAD` e intercepta
-      404 como resultado de domínio válido (único método do adapter que faz isso).
+      404 como resultado de domínio válido (único método do adapter que faz isso). Mergeado via
+      [PR #32](https://github.com/alltomatos/waconector/pull/32).
 - [ ] WPPConnect (5 capabilities: `groups.list` + `contacts.list/get/getProfilePicture/getAbout` —
       achado da auditoria: gap veio de profundidade de pesquisa do dossiê original, que parou no
       controller do server em vez de descer à lib `@wppconnect-team/wppconnect` tipada; não é

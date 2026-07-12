@@ -20,7 +20,7 @@ Nenhuma linha aqui é escrita à mão.
 - **wuzapi**: 29/30
 - **whapi**: 29/30
 - **quepasa**: 7/30
-- **wppconnect**: 24/30
+- **wppconnect**: 29/30
 
 ## Detalhe por namespace
 
@@ -47,7 +47,7 @@ Nenhuma linha aqui é escrita à mão.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `groups.create` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | `groups.getInfo` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
-| `groups.list` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
+| `groups.list` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | `groups.addParticipants` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | `groups.removeParticipants` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | `groups.promoteParticipants` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
@@ -64,11 +64,11 @@ Nenhuma linha aqui é escrita à mão.
 
 | Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `contacts.list` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
-| `contacts.get` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
+| `contacts.list` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| `contacts.get` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | `contacts.checkExists` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
-| `contacts.getProfilePicture` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| `contacts.getAbout` | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
+| `contacts.getProfilePicture` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `contacts.getAbout` | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | ✅ |
 | `contacts.block` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | `contacts.unblock` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | `contacts.listBlocked` | — | ✅ | ✅ | — | ✅ | ✅ | — | ✅ |

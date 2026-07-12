@@ -216,6 +216,97 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, envelope([{ phone: '5511988887777' }]));
     }
 
+    if (method === 'POST' && suffix === '/list-chats') {
+      // Shape real da lib (`Chat[]`, src/api/model/chat.ts) — sem "participants" (ver dossiê).
+      // ATENÇÃO: diferente de todos os outros handlers deste stub, `DeviceController.listChats`
+      // responde com `res.status(200).json(response)` — o array BRUTO, SEM o envelope
+      // `{status, response, mapper}` — confirmado no código-fonte real do wppconnect-server
+      // (commit f09e2fed, src/controller/deviceController.ts). Não envolver em `envelope(...)`
+      // aqui: faria o teste exercitar um shape que o servidor real nunca devolve.
+      return jsonResponse(200, [
+        {
+          id: {
+            server: 'g.us',
+            user: '120363000000000000',
+            _serialized: '120363000000000000@g.us',
+          },
+          name: 'Grupo de teste (list-chats)',
+          isGroup: true,
+          archive: false,
+          pin: false,
+          unreadCount: 0,
+        },
+      ]);
+    }
+
+    if (method === 'GET' && suffix === '/all-contacts') {
+      // Array do MESMO shape de "get-contact.js" (_serializeContactObj) — ver dossiê.
+      return jsonResponse(
+        200,
+        envelope([
+          {
+            id: { server: 'c.us', user: '5511988887777', _serialized: '5511988887777@c.us' },
+            name: 'Contato de teste',
+            pushname: 'Fulano',
+            isWAContact: true,
+            profilePicThumbObj: {
+              eurl: 'https://pps.whatsapp.net/fake-eurl',
+              img: 'https://pps.whatsapp.net/fake-img.jpg',
+              imgFull: 'https://pps.whatsapp.net/fake-img-full.jpg',
+              tag: 'fake-tag',
+            },
+          },
+        ]),
+      );
+    }
+
+    const contactMatch = suffix.match(/^\/contact\/(.+)$/);
+    if (method === 'GET' && contactMatch) {
+      const phone = decodeURIComponent(contactMatch[1] ?? '');
+      return jsonResponse(
+        200,
+        envelope({
+          id: { server: 'c.us', user: phone, _serialized: `${phone}@c.us` },
+          name: 'Contato de teste',
+          pushname: 'Fulano',
+          isWAContact: true,
+          profilePicThumbObj: {
+            eurl: 'https://pps.whatsapp.net/fake-eurl',
+            img: 'https://pps.whatsapp.net/fake-img.jpg',
+            imgFull: 'https://pps.whatsapp.net/fake-img-full.jpg',
+            tag: 'fake-tag',
+          },
+        }),
+      );
+    }
+
+    const profilePicMatch = suffix.match(/^\/profile-pic\/(.+)$/);
+    if (method === 'GET' && profilePicMatch) {
+      const phone = decodeURIComponent(profilePicMatch[1] ?? '');
+      // `ProfilePicThumbObj` (src/api/model/profile-pic-thumb.ts) — ver dossiê.
+      return jsonResponse(
+        200,
+        envelope({
+          eurl: 'https://pps.whatsapp.net/fake-eurl',
+          id: { server: 'c.us', user: phone, _serialized: `${phone}@c.us` },
+          img: 'https://pps.whatsapp.net/fake-img.jpg',
+          imgFull: 'https://pps.whatsapp.net/fake-img-full.jpg',
+          raw: null,
+          tag: 'fake-tag',
+        }),
+      );
+    }
+
+    const profileStatusMatch = suffix.match(/^\/profile-status\/(.+)$/);
+    if (method === 'GET' && profileStatusMatch) {
+      const phone = decodeURIComponent(profileStatusMatch[1] ?? '');
+      // `ContactStatus` (src/api/model/contact-status.ts) — ver dossiê.
+      return jsonResponse(
+        200,
+        envelope({ id: `${phone}@c.us`, status: 'Disponível para contrato de teste' }),
+      );
+    }
+
     throw new Error(`fetchStub (wppconnect): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -916,6 +1007,51 @@ describe('wppconnect adapter: comportamento específico do provider', () => {
     expect(capturedBody).toEqual({ groupId: '120363000000000000@g.us' });
   });
 
+  it('groups.list chama POST /list-chats com {onlyGroups:true} e mapeia Chat[] para GroupInfo[] (participants sempre vazio)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/list-chats`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const groups = await wa.groups.list();
+
+    expect(capturedBody).toEqual({ onlyGroups: true });
+    expect(groups).toEqual([
+      {
+        id: '120363000000000000@g.us',
+        subject: 'Grupo de teste (list-chats)',
+        description: undefined,
+        participants: [],
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
+  it('groups.list devolve [] (em vez de lançar) quando POST /list-chats responde algo que não é array', async () => {
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/list-chats`) {
+            return jsonResponse(200, {});
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.groups.list()).resolves.toEqual([]);
+  });
+
   it('contacts.checkExists mapeia numberExists->exists e id._serialized->chatId', async () => {
     const adapter = wppconnect(buildAdapterOptions());
     const wa = createConnector(adapter);
@@ -924,6 +1060,121 @@ describe('wppconnect adapter: comportamento específico do provider', () => {
     expect(result.exists).toBe(true);
     expect(result.chatId).toBe('5511999999999@c.us');
     expect(result).toHaveProperty('raw');
+  });
+
+  it('contacts.list mapeia o array de _serializeContactObj (GET /all-contacts) para Contact[]', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const list = await wa.contacts.list();
+
+    expect(list).toEqual([
+      {
+        id: '5511988887777@c.us',
+        name: 'Contato de teste',
+        about: undefined,
+        profilePictureUrl: 'https://pps.whatsapp.net/fake-img-full.jpg',
+        hasWhatsApp: true,
+        isBlocked: undefined,
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
+  it('contacts.list devolve [] (em vez de lançar) quando GET /all-contacts responde algo que não é array', async () => {
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${API_PREFIX}/all-contacts`) {
+            return jsonResponse(200, envelope(null));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.contacts.list()).resolves.toEqual([]);
+  });
+
+  it('contacts.get mapeia _serializeContactObj (GET /contact/:phone) e prioriza "name" sobre "pushname"', async () => {
+    let capturedPath: string | undefined;
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.startsWith(`${API_PREFIX}/contact/`)) {
+            capturedPath = url.pathname;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const contact = await wa.contacts.get('5511999999999');
+
+    expect(capturedPath).toBe(`${API_PREFIX}/contact/5511999999999`);
+    expect(contact.id).toBe('5511999999999@c.us');
+    expect(contact.name).toBe('Contato de teste');
+    expect(contact.hasWhatsApp).toBe(true);
+    expect(contact.profilePictureUrl).toBe('https://pps.whatsapp.net/fake-img-full.jpg');
+  });
+
+  it('contacts.getProfilePicture prioriza "imgFull" sobre "img" (GET /profile-pic/:phone)', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const picture = await wa.contacts.getProfilePicture('5511999999999');
+
+    expect(picture.url).toBe('https://pps.whatsapp.net/fake-img-full.jpg');
+    expect(picture).toHaveProperty('raw');
+  });
+
+  it('contacts.getProfilePicture cai para "img" quando "imgFull" está ausente', async () => {
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.startsWith(`${API_PREFIX}/profile-pic/`)) {
+            return jsonResponse(
+              200,
+              envelope({ img: 'https://pps.whatsapp.net/fake-img-so.jpg', imgFull: null }),
+            );
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const picture = await wa.contacts.getProfilePicture('5511999999999');
+
+    expect(picture.url).toBe('https://pps.whatsapp.net/fake-img-so.jpg');
+  });
+
+  it('contacts.getAbout mapeia "status" -> "about" (GET /profile-status/:phone)', async () => {
+    const adapter = wppconnect(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const about = await wa.contacts.getAbout('5511999999999');
+
+    expect(about.about).toBe('Disponível para contrato de teste');
+    expect(about).toHaveProperty('raw');
+  });
+
+  it('contacts.getAbout trata "status" vazio como "about" ausente (nunca string vazia)', async () => {
+    const adapter = wppconnect(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.startsWith(`${API_PREFIX}/profile-status/`)) {
+            return jsonResponse(200, envelope({ id: '5511999999999@c.us', status: '' }));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const about = await wa.contacts.getAbout('5511999999999');
+
+    expect(about.about).toBeUndefined();
   });
 
   it('contacts.block envia { phone } para /block-contact e ignora a resposta', async () => {

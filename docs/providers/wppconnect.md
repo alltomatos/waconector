@@ -16,6 +16,14 @@
 > `src/routes/index.ts`; e da lib subjacente `wppconnect-team/wppconnect@e153ff72`:
 > `src/api/model/`, `src/api/layers/`), não apenas do Swagger renderizado.
 
+> **Revisão de 2026-07-12**: reauditoria de `groups.list`/`contacts.list`/`contacts.get`/
+> `contacts.getProfilePicture`/`contacts.getAbout` (mesmos commits acima, `wppconnect-server@f09e2fed`
+> e `wppconnect@e153ff72`) descendo à LIB (`retriever.layer.ts`, `src/api/model/*.ts`,
+> `src/lib/wapi/functions/*.js`) em vez de só ao controller fino do server — as 5 capabilities antes
+> descartadas por "shape de resposta não confirmado" na verdade têm shape tipado ou visível no
+> script injetado. Nenhuma é limitação real do provider; todas implementadas nesta revisão (ver
+> "Capabilities implementadas nesta fase" abaixo).
+
 > **Arquitetura**: WPPConnect Server é um wrapper REST (Express) em cima da lib
 > `@wppconnect-team/wppconnect`, que controla o WhatsApp Web via Puppeteer (automação de browser,
 > não uma lib de protocolo standalone tipo whatsmeow/wa-js). O termo de domínio usado pela API
@@ -146,28 +154,47 @@ com `phone`), não em um "connect" de uma sessão já existente.
 ## Capabilities implementadas nesta fase
 
 `instance.connect`, `instance.status`, `instance.logout`, `messages.sendText`,
-`messages.sendMedia`, `messages.sendReaction`, `groups.create`, `groups.getInfo`,
+`messages.sendMedia`, `messages.sendReaction`, `groups.create`, `groups.getInfo`, `groups.list`,
 `groups.addParticipants`, `groups.removeParticipants`, `groups.promoteParticipants`,
 `groups.demoteParticipants`, `groups.updateSubject`, `groups.updateDescription`,
 `groups.updatePicture`, `groups.getInviteLink`, `groups.revokeInviteLink`,
-`groups.joinViaInviteLink`, `groups.leaveGroup`, `contacts.checkExists`, `contacts.block`,
-`contacts.unblock`, `contacts.listBlocked`, `webhooks.parse`.
+`groups.joinViaInviteLink`, `groups.leaveGroup`, `contacts.list`, `contacts.get`,
+`contacts.checkExists`, `contacts.getProfilePicture`, `contacts.getAbout`, `contacts.block`,
+`contacts.unblock`, `contacts.listBlocked`, `webhooks.parse` — 29 de 30 capabilities.
 
-**Deliberadamente de fora nesta fase** (endpoint existe, mas faltou confirmação suficiente para
-implementar sem adivinhar):
+**Deliberadamente de fora** (obstáculo estrutural, não falta de pesquisa):
 
-- `instance.pairingCode` — obstáculo estrutural, ver acima.
-- `groups.list` — o único endpoint (`GET /all-groups`) está marcado `#swagger.deprecated` pelo
-  próprio provider ("Deprecated in favor of 'list-chats'", não investigado) e a pesquisa não trouxe
-  o shape de resposta.
-- `contacts.list` (`GET /all-contacts`), `contacts.get` (`GET /contact/:phone`),
-  `contacts.getProfilePicture` (`GET /profile-pic/:phone`), `contacts.getAbout`
-  (`GET /profile-status/:phone`) — os quatro endpoints existem e a pesquisa confirma a
-  transformação do LADO DO REQUEST (`contactToArray`), mas nenhum shape de RESPOSTA foi
-  confirmado. `contacts.checkExists`/`block`/`unblock`/`listBlocked` foram implementadas porque,
-  diferente dos quatro acima, a pesquisa confirma o shape de resposta de cada uma (a primeira via
-  o objeto interno usado pelo middleware `statusConnection`, que chama o mesmo
-  `checkNumberStatus`).
+- `instance.pairingCode` — `InstanceApi.connect()` não recebe telefone como parâmetro, e o
+  WPPConnect só produz pairing code quando `phone` é enviado no body de `start-session` (momento de
+  criação da sessão, distinto de um "connect" de sessão já existente).
+
+**Gap fechado nesta revisão** — `groups.list` e as 4 operações de `contacts.*` abaixo eram
+listadas como fora de escopo por "shape de resposta não confirmado" numa versão anterior deste
+dossiê, que olhou só o controller fino do `wppconnect-server`. Descendo à LIB subjacente
+(`wppconnect-team/wppconnect@e153ff72`, `src/api/model/*.ts`, `src/lib/wapi/functions/*.js`,
+`src/api/layers/retriever.layer.ts`), o shape de resposta de todas está tipado ou visível no script
+injetado — nenhuma é limitação real do provider:
+
+- `groups.list` — `GET /all-groups` (`GroupController.getAllGroups`) segue `#swagger.deprecated`
+  ("Deprecated in favor of 'list-chats'") e não é usado. Substituto: `POST /list-chats`
+  (`DeviceController.listChats` → lib `listChats(options?: ChatListOptions): Promise<Chat[]>`),
+  com `{onlyGroups: true}` no body filtrando só grupos. Resposta tipada em
+  `src/api/model/chat.ts` (`Chat`): `{id: Wid, name, isGroup, archive, pin, unreadCount,
+  ephemeralDuration, ...}` — sem `participants` (ver subseção dedicada abaixo).
+- `contacts.list` (`GET /all-contacts`) e `contacts.get` (`GET /contact/:phone`) — o script
+  injetado real confirma o shape de resposta: `get-all-contacts.js` faz
+  `WPP.whatsapp.ContactStore.map(c => WAPI._serializeContactObj(c))`; `get-contact.js` faz
+  `return window.WAPI._serializeContactObj(found)` — mesmo shape nos dois, consistente com a
+  interface `Contact` da lib (`src/api/model/contact.ts`: `id, name, pushname, shortName, type`).
+  **Confiança média-alta** (script injetado, não a interface TS tipada diretamente).
+- `contacts.getProfilePicture` (`GET /profile-pic/:phone`) — `DeviceController.getProfilePicFromServer`
+  → lib `getProfilePicFromServer(chatId): Promise<ProfilePicThumbObj>` (assinatura TIPADA).
+  `ProfilePicThumbObj` (`src/api/model/profile-pic-thumb.ts`): `{eurl, id, img, imgFull, raw: null,
+  tag}`. Confiança alta.
+- `contacts.getAbout` (`GET /profile-status/:phone`) — `DeviceController.getStatus` → lib
+  `getStatus(contactId): Promise<ContactStatus>`, com a montagem do retorno visível no
+  código-fonte: `return {id: contactId, status: (status as any)?.status || status}`.
+  `ContactStatus` (`src/api/model/contact-status.ts`): `{id, status, stale?}`. Confiança alta.
 
 ## Operações core
 
@@ -294,23 +321,36 @@ internamente confirma o comportamento — não testado contra uma instância rea
 
 ### Envelope de resposta — `{status, response, mapper}`
 
-Confirmado como universal para operações de mensagem/grupo/contato (função `returnSucess` do
-servidor): `{status: 'success'|'error', response: <conteúdo específico da operação>, mapper:
-'return'}`. **Não se aplica** aos endpoints de sessão (`start-session`/`status-session`/
-`logout-session`/`generate-token`), que têm shapes próprios com significado semântico no próprio
-campo `status` (documentado nas seções acima). Este adapter desembrulha `response` (com fallback
-defensivo para o corpo cru se a chave estiver ausente) antes de mapear qualquer operação de
-mensagem/grupo/contato.
+Confirmado como praticamente universal para operações de mensagem/grupo/contato (função
+`returnSucess` do servidor): `{status: 'success'|'error', response: <conteúdo específico da
+operação>, mapper: 'return'}`. **Não se aplica** aos endpoints de sessão (`start-session`/
+`status-session`/`logout-session`/`generate-token`), que têm shapes próprios com significado
+semântico no próprio campo `status` (documentado nas seções acima). Este adapter desembrulha
+`response` (com fallback defensivo para o corpo cru se a chave estiver ausente) antes de mapear
+qualquer operação de mensagem/grupo/contato.
+
+**Segunda exceção confirmada, isolada** (verificação adversarial desta revisão): `POST /list-chats`
+(`groups.list`) TAMBÉM foge do envelope. `DeviceController.listChats` (`f09e2fed`,
+`src/controller/deviceController.ts`) termina com `res.status(200).json(response)` — SEM
+`{status, response, mapper}` ao redor —, diferente de literalmente todos os outros handlers
+verificados neste mesmo arquivo (`getGroupInfo`, `getAllContacts`, `getContact`,
+`getProfilePicFromServer`, `getStatus`, `getBlockList`, `blockContact`, `unblockContact`,
+`checkNumberStatus`, `createGroup`, todos fazem `res.json({status: 'success', response})`).
+Confirmado tanto no commit pinado quanto em HEAD do branch `main` — não é drift de branch. Ver
+subseção `groups.list` abaixo para o detalhe e para por que isso não quebra o adapter hoje
+(`unwrapResponse`/`asRecord` acertam "por acidente").
 
 ## Grupos
 
-13 operações confirmadas com endpoint (`groups.list` de fora, ver "capabilities fora de escopo").
-Todos os endpoints POST/GET, nenhum PUT/PATCH/DELETE (confirmado em `routes/index.ts`).
+14 operações confirmadas com endpoint. Todos POST/GET, nenhum PUT/PATCH/DELETE (confirmado em
+`routes/index.ts`) — exceto `groups.list`, que usa `POST /list-chats` em vez de um endpoint
+dedicado a grupos (ver subseção abaixo).
 
 | Operação canônica | Endpoint | Observações |
 | --- | --- | --- |
 | `groups.create` | `POST /create-group` | Body `{participants, name}`. **Achado crítico** — ver subseção dedicada abaixo. |
 | `groups.getInfo` | `GET /group-info/:groupId` | Resposta rica: `{id, name, description, subject, ..., participants:[{id,isAdmin}]}`. `name`/`subject` coexistem (redundância aparente, não esclarecida) — prioriza `name`. `isSuperAdmin` não confirmado — sempre `false`. |
+| `groups.list` | `POST /list-chats`, body `{onlyGroups: true}` | Substitui o `GET /all-groups` deprecated. **Resposta SEM envelope** (único endpoint deste provider assim) — ver subseção dedicada abaixo. |
 | `groups.addParticipants`/`removeParticipants`/`promoteParticipants`/`demoteParticipants` | `POST /add-participant-group` \| `/remove-participant-group` \| `/promote-participant-group` \| `/demote-participant-group` | Quatro endpoints DISTINTOS (diferente do Wuzapi, que reaproveita um único com `Action`), todos `{groupId, phone}`. Não confirmado se `phone` aceita array — este adapter chama uma vez POR PARTICIPANTE (`Promise.all`). |
 | `groups.updateSubject` | `POST /group-subject` | Body `{groupId, title}` — campo é `title`, não `subject`/`name`. |
 | `groups.updateDescription` | `POST /group-description` | Body `{groupId, description}`. |
@@ -342,6 +382,34 @@ vs. de objeto) — este adapter não tenta parseá-lo; cai sempre nos participan
 (`isAdmin`/`isSuperAdmin` assumidos `false`), mesmo padrão de fallback já usado pelo adapter
 Wuzapi quando a resposta não ecoa todos os campos.
 
+### `groups.list` — via `POST /list-chats`, sem participantes na resposta
+
+`GET /all-groups` (`GroupController.getAllGroups`) está `#swagger.deprecated` ("Deprecated in favor
+of 'list-chats'") — não usado. O substituto confirmado na lib é `listChats(options?:
+ChatListOptions): Promise<Chat[]>` (`DeviceController.listChats` no server), que aceita
+`{id?, count?, direction?, onlyGroups?, onlyUsers?, onlyWithUnreadMessage?, withLabels?}`. Este
+adapter sempre envia `{onlyGroups: true}`, filtrando a listagem para só grupos.
+
+**Resposta SEM envelope — anomalia confirmada e isolada deste único endpoint** (verificação
+adversarial desta revisão, corrigindo uma afirmação anterior errada deste dossiê): o corpo HTTP É o
+array `Chat[]` (`src/api/model/chat.ts`) BRUTO — `{id: Wid, name, isGroup, archive, pin,
+unreadCount, ephemeralDuration, ...}` —, nunca `{status, response, mapper}`.
+`DeviceController.listChats` (`f09e2fed`, `src/controller/deviceController.ts`) responde com
+`res.status(200).json(response)`, diferente de todos os ~10 outros handlers verificados no mesmo
+arquivo, que embrulham com `res.json({status: 'success', response})`. Ver "Envelope de resposta"
+acima. `id` segue o mesmo padrão `Wid` (`{..., _serialized}`) já tratado por `extractChatId` no
+resto do arquivo. **Limitação confirmada**: `Chat` não expõe a lista de participantes — só
+`GET /group-info/:groupId` (`groups.getInfo`) traz isso. Este adapter mapeia
+`GroupInfo.participants: []` para todo item de `groups.list()` (vazio de propósito, nunca
+inventado); consumidores que precisem da lista completa devem encadear `groups.getInfo(id)` por
+grupo depois de listar.
+
+Nota de implementação: `unwrapResponse` (usada por todo o resto do arquivo para desembrulhar o
+envelope padrão) é reaproveitada aqui e "funciona" só por acidente — `asRecord` rejeita arrays e
+cai no `return body` bruto, que por coincidência já é o array cru esperado. Não simplificar essa
+função assumindo que todo endpoint segue `{status, response}` sem revalidar `groups.list`
+especificamente.
+
 ### `groups.getInviteLink`/`revokeInviteLink` — resolvido: `response` é sempre string bare
 
 Resolvido na verificação adversarial: `group.layer.ts` da lib subjacente mostra que
@@ -364,15 +432,38 @@ não há evidência de necessidade de transformação.
 
 ## Contatos
 
-Só 4 das 8 operações canônicas possíveis foram implementadas — ver "capabilities fora de escopo"
-para a justificativa das 4 restantes.
+Todas as 8 operações canônicas possíveis estão implementadas.
 
 | Operação canônica | Endpoint | Observações |
 | --- | --- | --- |
+| `contacts.list` | `GET /all-contacts` | `DeviceController.getAllContacts` → script injetado `get-all-contacts.js`: `WPP.whatsapp.ContactStore.map(c => WAPI._serializeContactObj(c))`. Mesmo shape de `contacts.get` — ver subseção dedicada abaixo. |
+| `contacts.get` | `GET /contact/:phone` | `DeviceController.getContact` → script injetado `get-contact.js`: `return window.WAPI._serializeContactObj(found)`. Confiança média-alta (script injetado, não interface TS tipada diretamente) — ver subseção dedicada abaixo. |
 | `contacts.checkExists` | `GET /check-number-status/:phone` | Shape do objeto interno confirmado via uso do middleware `statusConnection` (mesmo método, `checkNumberStatus`): `{numberExists: boolean, id: {..., _serialized}}`. Assumido que o controller do endpoint standalone embrulha o MESMO objeto no envelope padrão. |
+| `contacts.getProfilePicture` | `GET /profile-pic/:phone` | `DeviceController.getProfilePicFromServer` → lib `getProfilePicFromServer(chatId): Promise<ProfilePicThumbObj>` (assinatura tipada). Resposta: `{eurl, id, img, imgFull, raw: null, tag}` — prioriza `imgFull` sobre `img`. |
+| `contacts.getAbout` | `GET /profile-status/:phone` | `DeviceController.getStatus` → lib `getStatus(contactId): Promise<ContactStatus>`, retorno `{id, status, stale?}`. `status` mapeia para `about`; string vazia vira `undefined`. |
 | `contacts.block` | `POST /block-contact` | Body `{phone}`. Resposta ignorada, `Promise<void>`. |
 | `contacts.unblock` | `POST /unblock-contact` | Body `{phone}`. Resposta ignorada, `Promise<void>`. |
 | `contacts.listBlocked` | `GET /blocklist` | Resposta confirmada: `[{phone: "<dígitos, sem sufixo>"}]` (o controller descarta o JID completo antes de responder). Mapeado para `string[]` de bare digits — ainda um chatId canônico válido. |
+
+### `contacts.list`/`contacts.get` — shape confirmado via script injetado, não a interface TS
+
+Os dois endpoints devolvem o objeto montado por `WAPI._serializeContactObj` (visível nos scripts
+`get-all-contacts.js`/`get-contact.js` da lib): `{...serializeRawObj(obj), formattedName,
+isHighLevelVerified, isMe, isMyContact, isPSA, isUser, isVerified, isWAContact,
+profilePicThumbObj, statusMute, msgs: null}` — consistente com (mas mais rico que) a interface
+`Contact` tipada da lib (`src/api/model/contact.ts`: `id, name, pushname, shortName, type`).
+
+Mapeamento para o `Contact` canônico deste pacote:
+
+- `id` — `Wid._serialized` (mesmo padrão `extractChatId` do resto do arquivo).
+- `name` — prioriza `name` (nome salvo na agenda), caindo para `pushname`/`formattedName`/
+  `shortName` quando ausente.
+- `hasWhatsApp` — `isWAContact`.
+- `profilePictureUrl` — só quando `profilePicThumbObj` vem embutido no próprio objeto de contato;
+  prioriza `imgFull` sobre `img` (mesmo padrão "prefira a versão full" usado por outros adapters
+  deste pacote, ex.: Whapi `profile_pic_full`/`profile_pic`).
+- `about`/`isBlocked` — sempre `undefined` neste payload (endpoints dedicados:
+  `contacts.getAbout`/`contacts.listBlocked` cobrem os dois).
 
 ## Webhooks
 
@@ -498,6 +589,13 @@ que a convenção NÃO é uniforme entre todos os eventos deste provider.
    passthrough, sem transformação.
 7. **Batch de participantes** não confirmado nos 4 endpoints de grupo — este adapter chama uma vez
    por participante.
-8. `contacts.list`/`get`/`getProfilePicture`/`getAbout` e `groups.list` deliberadamente fora de
-   escopo por falta de shape de resposta confirmado (ver seção "Capabilities implementadas nesta
-   fase").
+8. **`groups.list` não devolve participantes** — `Chat` (`POST /list-chats`) não tem esse campo;
+   `GroupInfo.participants` fica `[]` para todo item da listagem, consumidor precisa encadear
+   `groups.getInfo` por grupo se precisar da lista completa.
+9. **`contacts.list`/`contacts.get`** têm confiança média-alta (shape confirmado via script
+   injetado da lib, não via interface TS tipada diretamente) — ver subseção dedicada em
+   "Contatos".
+10. **`groups.list` (`POST /list-chats`) responde SEM o envelope `{status, response, mapper}`** —
+    único endpoint deste provider assim, confirmado no código-fonte real (`f09e2fed`,
+    `DeviceController.listChats`). `unwrapResponse` só acerta por acidente (`asRecord` rejeita
+    arrays) — ver "Envelope de resposta" e a subseção `groups.list` acima.
