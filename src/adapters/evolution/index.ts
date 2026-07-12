@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  ChannelsApi,
   ChatsApi,
   ContactsApi,
   GroupsApi,
@@ -22,11 +23,13 @@ import type {
 } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  ChannelInfo,
   CheckExistsResult,
   ConnectResult,
   Contact,
   ContactAbout,
   ContactProfilePicture,
+  CreateChannelInput,
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
@@ -139,6 +142,10 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'labels.delete',
   'labels.addToChat',
   'labels.removeFromChat',
+  'channels.list',
+  'channels.create',
+  'channels.getInfo',
+  'channels.follow',
   'webhooks.parse',
 ];
 
@@ -238,6 +245,21 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     removeFromChat: (input) => labelChat(http, input, false),
   };
 
+  /**
+   * Namespace `channels.*` (ADR-0017). Cobertura 4/6 — sem `delete` (busca no `newsletter.yaml`
+   * não encontrou `DELETE /newsletter/{id}`) e sem `unfollow` (a doc do provider afirma
+   * explicitamente que não existe endpoint de "sair" de um canal). Ver
+   * docs/providers/evolution.md#canais-channels-adr-0017 para o achado sobre o campo `jid`
+   * (documentado como objeto estruturado no OpenAPI, mas na prática uma string simples — ver
+   * `toEvolutionChannelId`).
+   */
+  const channels: ChannelsApi = {
+    list: () => listChannels(http),
+    create: (input) => createChannel(http, input),
+    getInfo: (channelId) => getChannelInfo(http, channelId),
+    follow: (channelId) => followChannel(http, channelId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: EVOLUTION_CAPABILITIES,
@@ -248,6 +270,7 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     chats,
     presence,
     labels,
+    channels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1293,6 +1316,105 @@ function mapEvolutionLabel(body: unknown): LabelInfo {
     color: record ? asString(record.label_color) : undefined,
     raw: body,
   };
+}
+
+// ---------------------------------------------------------------------------
+// channels.* (ver ADR-0017)
+// ---------------------------------------------------------------------------
+
+/**
+ * O campo `jid` das rotas de newsletter é tipado no OpenAPI estático (`newsletter.yaml`) como um
+ * OBJETO estruturado `{user, server, device, integrator, rawAgent}` — reflexo ingênuo dos campos
+ * Go de `types.JID` (whatsmeow) pelo gerador de spec. **Achado ao vivo que corrige essa leitura**:
+ * `types.JID` implementa `MarshalText`/`UnmarshalText` (`jid.go`, verificado via `gh api` contra
+ * `tulir/whatsmeow`), então `encoding/json` do Go trata o campo inteiro como uma STRING opaca —
+ * `String()` na saída (`"<user>@<server>"`, exatamente o formato canônico já usado pelo resto do
+ * pacote) e `ParseJID(string)` na entrada. Ou seja, o schema documentado no OpenAPI é enganoso; o
+ * formato real de wire é uma string simples. Este adapter envia/recebe `channelId` como string,
+ * SEM decompor em objeto — função identidade, mesmo padrão de `toProviderNumber`.
+ */
+function toEvolutionChannelId(channelId: string): string {
+  return channelId;
+}
+
+/**
+ * `GET /newsletter/list` (`operationId` implícito `ListNewsletter`, confiança Alta — endpoint e
+ * shape confirmados via `gh api` contra o código-fonte real). Resposta `{message, data:
+ * NewsletterMetadata[]}` — `NewsletterMetadata` é o struct whatsmeow (`types.NewsletterMetadata`),
+ * mesmo shape de `create`/`getInfo` (ver `mapEvolutionChannel`).
+ */
+async function listChannels(http: HttpClient): Promise<ChannelInfo[]> {
+  const body = await http.request<unknown>({ method: 'GET', path: '/newsletter/list' });
+  const record = asRecord(body);
+  const items = record && Array.isArray(record.data) ? record.data : [];
+  return items.map((item) => mapEvolutionChannel(item));
+}
+
+/**
+ * `POST /newsletter/create` (schema `CreateNewsletterStruct {name, description}`, confiança Alta).
+ * Resposta rica `{message, data: NewsletterMetadata}` — ver `mapEvolutionChannel`.
+ */
+async function createChannel(http: HttpClient, input: CreateChannelInput): Promise<ChannelInfo> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/newsletter/create',
+    body: { name: input.name, description: input.description },
+  });
+  const record = asRecord(body);
+  const data = record ? asRecord(record.data) : undefined;
+  return mapEvolutionChannel(data ?? body, input);
+}
+
+/**
+ * `POST /newsletter/info` (schema `GetNewsletterStruct {jid}`, confiança Alta). Mesmo shape rico
+ * de resposta de `create`.
+ */
+async function getChannelInfo(http: HttpClient, channelId: string): Promise<ChannelInfo> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/newsletter/info',
+    body: { jid: toEvolutionChannelId(channelId) },
+  });
+  const record = asRecord(body);
+  const data = record ? asRecord(record.data) : undefined;
+  return mapEvolutionChannel(data ?? body, {});
+}
+
+/**
+ * `channels.follow`: `POST /newsletter/subscribe` (schema `GetNewsletterStruct {jid}`, confiança
+ * Alta). **Sem `channels.unfollow`**: a doc do provider afirma explicitamente que não existe
+ * endpoint `/newsletter/unsubscribe` — só entrar é suportado, não sair.
+ */
+async function followChannel(http: HttpClient, channelId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/newsletter/subscribe',
+    body: { jid: toEvolutionChannelId(channelId) },
+  });
+}
+
+/**
+ * Mapeia um `types.NewsletterMetadata` (whatsmeow) para `ChannelInfo`. `name`/`description` vêm
+ * aninhados em `thread_metadata.{name,description}.text` (schema `NewsletterText`, versão com
+ * timestamp de atualização — só `.text` é usado). `subscribers_count` é uma STRING no JSON
+ * (`json:"subscribers_count,string"` no struct Go), convertida para número.
+ */
+function mapEvolutionChannel(
+  body: unknown,
+  fallback: { name?: string; description?: string } = {},
+): ChannelInfo {
+  const record = asRecord(body);
+  const id = (record ? asString(record.id) : undefined) ?? '';
+  const threadMeta = record ? asRecord(record.thread_metadata) : undefined;
+  const nameObj = threadMeta ? asRecord(threadMeta.name) : undefined;
+  const descriptionObj = threadMeta ? asRecord(threadMeta.description) : undefined;
+  const name = (nameObj ? asString(nameObj.text) : undefined) ?? fallback.name ?? '';
+  const description =
+    (descriptionObj ? asString(descriptionObj.text) : undefined) ?? fallback.description;
+  const subscribersCountRaw = threadMeta ? asString(threadMeta.subscribers_count) : undefined;
+  const subscribersCount =
+    subscribersCountRaw === undefined ? undefined : Number(subscribersCountRaw);
+  return { id, name, description, subscribersCount, raw: body };
 }
 
 // ---------------------------------------------------------------------------

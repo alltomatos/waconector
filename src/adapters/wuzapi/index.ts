@@ -1,4 +1,5 @@
 import type {
+  ChannelsApi,
   ChatsApi,
   ContactsApi,
   GroupsApi,
@@ -20,6 +21,7 @@ import type {
 } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  ChannelInfo,
   CheckExistsResult,
   ConnectResult,
   Contact,
@@ -139,6 +141,7 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'presence.setTyping',
   'presence.set',
   'presence.subscribe',
+  'channels.list',
   'webhooks.parse',
 ];
 
@@ -238,6 +241,15 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     subscribe: (chatId) => subscribePresence(http, chatId),
   };
 
+  /**
+   * Namespace `channels.*` (ADR-0017). Cobertura 1/6 — só `list`, SOMENTE LEITURA (canais que a
+   * própria conta já está inscrita). Busca exaustiva por "newsletter" em `routes.go` só encontrou
+   * essa uma rota — sem `create`/`getInfo`/`delete`/`follow`/`unfollow`, busca negativa confirmada.
+   */
+  const channels: ChannelsApi = {
+    list: () => listChannels(http),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WUZAPI_CAPABILITIES,
@@ -247,6 +259,7 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     contacts,
     chats,
     presence,
+    channels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1201,6 +1214,47 @@ async function subscribePresence(http: HttpClient, chatId: string): Promise<void
     path: '/user/presence/subscribe',
     body: { Phone: toWuzapiPhone(chatId) },
   });
+}
+
+// ---------------------------------------------------------------------------
+// channels.* (ver ADR-0017)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /newsletter/list` (confiança Média — código confirmado em `handlers.go`, não documentado
+ * no `API.md`). Sem parâmetros. Implementação: `GetSubscribedNewsletters(ctx)` monta
+ * `{Newsletter: [<types.NewsletterMetadata>, ...]}` (array pode vir vazio `[]`, nunca nulo) e
+ * passa por `Respond()` — o helper comum a todo o adapter, que sempre envelopa em
+ * `{code, success, data: {...}}` (confirmado lendo `Respond()` em `handlers.go`: o payload é
+ * serializado, reparseado e colocado em `data`, mesmo padrão de todo outro endpoint deste
+ * adapter). **Somente leitura**: só newsletters/canais que a própria conta já está inscrita —
+ * busca exaustiva por "newsletter" em `routes.go` não encontrou nenhum outro endpoint (`create`/
+ * `info`/`delete`/`follow`/`unfollow`), busca negativa confirmada.
+ */
+async function listChannels(http: HttpClient): Promise<ChannelInfo[]> {
+  const response = await http.request<WuzapiEnvelope>({ method: 'GET', path: '/newsletter/list' });
+  const data = asRecord(response.data);
+  const items = data && Array.isArray(data.Newsletter) ? data.Newsletter : [];
+  return items.map((item) => mapWuzapiChannel(item));
+}
+
+/**
+ * Mapeia um `types.NewsletterMetadata` (whatsmeow) para `ChannelInfo` — mesmo shape rico já
+ * confirmado no Evolution GO (`thread_metadata.{name,description}.text`, `subscribers_count` como
+ * string), já que o Wuzapi também é construído sobre whatsmeow.
+ */
+function mapWuzapiChannel(body: unknown): ChannelInfo {
+  const record = asRecord(body);
+  const id = (record ? asString(record.id) : undefined) ?? '';
+  const threadMeta = record ? asRecord(record.thread_metadata) : undefined;
+  const nameObj = threadMeta ? asRecord(threadMeta.name) : undefined;
+  const descriptionObj = threadMeta ? asRecord(threadMeta.description) : undefined;
+  const name = (nameObj ? asString(nameObj.text) : undefined) ?? '';
+  const description = descriptionObj ? asString(descriptionObj.text) : undefined;
+  const subscribersCountText = threadMeta ? asString(threadMeta.subscribers_count) : undefined;
+  const subscribersCount =
+    subscribersCountText === undefined ? undefined : Number(subscribersCountText);
+  return { id, name, description, subscribersCount, raw: body };
 }
 
 // ---------------------------------------------------------------------------

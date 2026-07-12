@@ -713,6 +713,17 @@ sempre `undefined`.
 Existe também um formato v2 legado (`QpSendResponseV2`, campos `message_id`/`date`/`from`/`chat`/
 `result`) mantido só por compatibilidade — não usado por este adapter (só v3).
 
+## Canais — NÃO implementado (ADR-0017)
+
+**Busca negativa confirmada, 0/6**: nenhuma capability de `channels.*` é declarada nem implementada
+por este adapter. Busca ao vivo via `gh api` contra o código-fonte completo do commit pinado
+(`search/code?q=newsletter` e `?q=channel`, restrito a `path:api`) não encontrou nenhum
+controller/rota de gestão de canais/newsletters — só referências internas ao RECONHECER mensagens
+vindas de um newsletter (classificação de tipo de chat), não uma API de gestão (criar/listar/
+seguir/deletar). Limitação real do provider, não gap de pesquisa — mesmo padrão de "busca negativa
+explícita, documentada em vez de omitida" já usado para `labels.*` da Wuzapi (ADR-0016) e
+`contacts.getAbout` da uazapi.
+
 ## Grupos
 
 **Escopo muito limitado, confiança alta**: o único endpoint de grupo em todo o código é `GET

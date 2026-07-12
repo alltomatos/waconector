@@ -1,4 +1,5 @@
 import type {
+  ChannelsApi,
   ChatsApi,
   ContactsApi,
   GroupsApi,
@@ -21,11 +22,13 @@ import type {
 } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  ChannelInfo,
   CheckExistsResult,
   ConnectResult,
   Contact,
   ContactAbout,
   ContactProfilePicture,
+  CreateChannelInput,
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
@@ -216,6 +219,8 @@ const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'labels.delete',
   'labels.addToChat',
   'labels.removeFromChat',
+  'channels.create',
+  'channels.delete',
   'webhooks.parse',
 ];
 
@@ -311,6 +316,19 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     removeFromChat: (input) => setChatLabel(http, session, input, 'remove'),
   };
 
+  /**
+   * Namespace `channels.*` (ADR-0017). Cobertura 2/6 (`create`/`delete`) — achado ao vivo que
+   * corrige o relatório original (que não tinha encontrado NADA sobre canais/newsletters neste
+   * provider). `routes.ts` só registra 4 rotas de newsletter no total; `list`/`getInfo`/`follow`/
+   * `unfollow` NÃO existem como endpoint HTTP no servidor — mesmo que a lib `@wppconnect/wa-js`
+   * subjacente tenha `follow`/`unfollow` internamente, o `wppconnect-server` não os expõe via
+   * rota (achado confirmado ao vivo contra o código-fonte de ambos os repositórios).
+   */
+  const channels: ChannelsApi = {
+    create: (input) => createChannel(http, session, input),
+    delete: (channelId) => deleteChannel(http, session, channelId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WPPCONNECT_CAPABILITIES,
@@ -321,6 +339,7 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     chats,
     presence,
     labels,
+    channels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1705,6 +1724,64 @@ function mapWppconnectLabel(body: unknown): LabelInfo {
     id: (record ? asString(record.id) : undefined) ?? '',
     name: (record ? asString(record.name) : undefined) ?? '',
     color: color === undefined ? undefined : String(color),
+    raw: body,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// channels.* (ver ADR-0017)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /api/{session}/newsletter` (confiança Alta) — body `{name, options?: {description?,
+ * picture?}}`; `options.picture` não exposto pelo contrato canônico (ver ADR-0017). Diferente do
+ * bug confirmado em `client.addNewLabel` (ADR-0016, sem `return` na função avaliada no browser),
+ * `client.createNewsletter` do wa-js FAZ `return` corretamente (`(name, options) =>
+ * WPP.newsletter.create(name, options)`, confirmado ao vivo via `gh api` contra
+ * `wppconnect-team/wa-js`) — a resposta é confiável, shape `ResultCreateNewsletter {idJid,
+ * inviteCode, inviteLink, name, state, subscribersCount, description, timestamp}`.
+ */
+async function createChannel(
+  http: HttpClient,
+  session: string,
+  input: CreateChannelInput,
+): Promise<ChannelInfo> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: sessionPath(session, '/newsletter'),
+    body: { name: input.name, options: { description: input.description } },
+  });
+  return mapWppconnectChannel(body, input);
+}
+
+/**
+ * `DELETE /api/{session}/newsletter/{id}` (confiança Alta) — sem body. **Sem `channels.list`/
+ * `getInfo`/`follow`/`unfollow`**: `routes.ts` só registra 4 rotas de newsletter no total
+ * (`create`/`edit`/`destroy`/`mute-newsletter`); mesmo a lib `@wppconnect/wa-js` subjacente tendo
+ * `follow`/`unfollow`/`getSubscribers` internamente, o `wppconnect-server` não expõe rota HTTP
+ * para eles (achado confirmado ao vivo contra o código-fonte de ambos os repositórios).
+ */
+async function deleteChannel(http: HttpClient, session: string, channelId: string): Promise<void> {
+  await http.request({
+    method: 'DELETE',
+    path: sessionPath(session, `/newsletter/${encodeURIComponent(channelId)}`),
+  });
+}
+
+/**
+ * Mapeia um `ResultCreateNewsletter` (wa-js) para `ChannelInfo`. `idJid` (não `id`) é o campo do
+ * identificador — confirmado ao vivo em `wa-js/src/newsletter/functions/create.ts`.
+ */
+function mapWppconnectChannel(
+  body: unknown,
+  fallback: { name?: string; description?: string } = {},
+): ChannelInfo {
+  const record = asRecord(body);
+  return {
+    id: (record ? asString(record.idJid) : undefined) ?? '',
+    name: (record ? asString(record.name) : undefined) ?? fallback.name ?? '',
+    description: (record ? asString(record.description) : undefined) ?? fallback.description,
+    subscribersCount: record ? asNumber(record.subscribersCount) : undefined,
     raw: body,
   };
 }

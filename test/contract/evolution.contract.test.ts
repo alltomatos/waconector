@@ -352,6 +352,67 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { message: 'success' });
     }
 
+    // channels.list (ADR-0017): GET /newsletter/list.
+    if (method === 'GET' && url.pathname === '/newsletter/list') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: [
+          {
+            id: '111111111111111111@newsletter',
+            state: { type: 'active' },
+            thread_metadata: {
+              name: { text: 'Canal Contrato', id: 'n1', update_time: '1700000000000' },
+              description: { text: 'Descrição', id: 'd1', update_time: '1700000000000' },
+              subscribers_count: '10',
+              verification: 'unverified',
+            },
+            viewer_metadata: { mute: 'off', role: 'owner' },
+          },
+        ],
+      });
+    }
+
+    // channels.create (ADR-0017): POST /newsletter/create.
+    if (method === 'POST' && url.pathname === '/newsletter/create') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          id: '222222222222222222@newsletter',
+          state: { type: 'active' },
+          thread_metadata: {
+            name: { text: 'Contrato: Canal Novo', id: 'n2', update_time: '1700000000000' },
+            description: { text: '', id: 'd2', update_time: '1700000000000' },
+            subscribers_count: '0',
+            verification: 'unverified',
+          },
+          viewer_metadata: { mute: 'off', role: 'owner' },
+        },
+      });
+    }
+
+    // channels.getInfo (ADR-0017): POST /newsletter/info.
+    if (method === 'POST' && url.pathname === '/newsletter/info') {
+      return jsonResponse(200, {
+        message: 'success',
+        data: {
+          id: '111111111111111111@newsletter',
+          state: { type: 'active' },
+          thread_metadata: {
+            name: { text: 'Canal Contrato', id: 'n1', update_time: '1700000000000' },
+            description: { text: 'Descrição', id: 'd1', update_time: '1700000000000' },
+            subscribers_count: '10',
+            verification: 'unverified',
+          },
+          viewer_metadata: { mute: 'off', role: 'owner' },
+        },
+      });
+    }
+
+    // channels.follow (ADR-0017): POST /newsletter/subscribe.
+    if (method === 'POST' && url.pathname === '/newsletter/subscribe') {
+      return jsonResponse(200, { message: 'success' });
+    }
+
     throw new Error(`fetchStub (evolution): rota não configurada ${method} ${url.pathname}`);
   };
 }
@@ -1673,6 +1734,114 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
       { path: '/label/chat', body: { jid: '5511999999999@s.whatsapp.net', labelId: '1' } },
       { path: '/unlabel/chat', body: { jid: '5511999999999@s.whatsapp.net', labelId: '1' } },
     ]);
+  });
+
+  it('channels.list chama GET /newsletter/list e mapeia thread_metadata.{name,description}.text + subscribers_count (string -> número)', async () => {
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: createFetchStub(),
+    });
+    const wa = createConnector(adapter);
+    const channels = await wa.channels.list();
+
+    expect(channels).toEqual([
+      {
+        id: '111111111111111111@newsletter',
+        name: 'Canal Contrato',
+        description: 'Descrição',
+        subscribersCount: 10,
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
+  it('channels.create chama POST /newsletter/create com {name, description} (jid como string simples, sem decompor)', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/newsletter/create') {
+        calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      }
+      return createFetchStub()(input, init);
+    };
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const channel = await wa.channels.create({ name: 'Canal Novo', description: 'Descrição' });
+
+    expect(calls).toEqual([{ name: 'Canal Novo', description: 'Descrição' }]);
+    expect(channel.id).toBe('222222222222222222@newsletter');
+    expect(channel.name).toBe('Contrato: Canal Novo');
+  });
+
+  it('channels.getInfo chama POST /newsletter/info com {jid} (string simples)', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/newsletter/info') {
+        calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      }
+      return createFetchStub()(input, init);
+    };
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    const channel = await wa.channels.getInfo('111111111111111111@newsletter');
+
+    expect(calls).toEqual([{ jid: '111111111111111111@newsletter' }]);
+    expect(channel.name).toBe('Canal Contrato');
+  });
+
+  it('channels.follow chama POST /newsletter/subscribe com {jid}', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/newsletter/subscribe') {
+        calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      }
+      return createFetchStub()(input, init);
+    };
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await expect(wa.channels.follow('111111111111111111@newsletter')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ jid: '111111111111111111@newsletter' }]);
+  });
+
+  it('não declara "channels.delete"/"channels.unfollow" (sem endpoint confirmado na pesquisa) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+    for (const capability of ['channels.delete', 'channels.unfollow'] as const) {
+      expect(adapter.capabilities).not.toContain(capability);
+    }
+    expect(adapter.channels?.delete).toBeUndefined();
+    expect(adapter.channels?.unfollow).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const calls = [
+      () => wa.channels.delete('111111111111111111@newsletter'),
+      () => wa.channels.unfollow('111111111111111111@newsletter'),
+    ];
+    for (const call of calls) {
+      const failure = await call().catch((error: unknown) => error);
+      expect(isWaConnectorError(failure)).toBe(true);
+      if (isWaConnectorError(failure)) {
+        expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
+      }
+    }
   });
 
   it('chats.* declara só archive/mute/pin/unpin — sem unarchive/unmute/markRead/markUnread (sem endpoint confirmado no OpenAPI oficial, ver docs/providers/evolution.md)', () => {

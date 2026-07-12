@@ -1,4 +1,5 @@
 import type {
+  ChannelsApi,
   ChatsApi,
   ContactsApi,
   GroupsApi,
@@ -15,10 +16,12 @@ import { WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, ConnectionUpdateEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  ChannelInfo,
   CheckExistsResult,
   ConnectResult,
   Contact,
   ContactProfilePicture,
+  CreateChannelInput,
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
@@ -142,6 +145,12 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'labels.delete',
   'labels.addToChat',
   'labels.removeFromChat',
+  'channels.list',
+  'channels.create',
+  'channels.getInfo',
+  'channels.delete',
+  'channels.follow',
+  'channels.unfollow',
   'webhooks.parse',
 ];
 
@@ -233,6 +242,24 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     removeFromChat: (input) => setChatLabel(http, input, 'remove'),
   };
 
+  /**
+   * Namespace `channels.*` (ADR-0017). Cobertura 6/6 — confiança Alta quanto à EXISTÊNCIA das 24
+   * rotas de `newsletter.*` do provider (confirmadas no OpenAPI bundled), mas profundidade de
+   * payload de resposta verificada só como `additionalProperties: true` (schema livre) — a uazapi
+   * também é construída sobre whatsmeow (mesma base do Evolution GO/QuePasa/Wuzapi), então
+   * `mapUazapiChannel` assume o mesmo shape rico `types.NewsletterMetadata` já confirmado no
+   * Evolution GO (ADR-0017), com fallback defensivo para campos soltos caso a resposta real
+   * divirja — não confirmado contra uma instância real.
+   */
+  const channels: ChannelsApi = {
+    list: () => listChannels(http),
+    create: (input) => createChannel(http, input),
+    getInfo: (channelId) => getChannelInfo(http, channelId),
+    delete: (channelId) => deleteChannel(http, channelId),
+    follow: (channelId) => setChannelFollowed(http, channelId, true),
+    unfollow: (channelId) => setChannelFollowed(http, channelId, false),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: UAZAPI_CAPABILITIES,
@@ -243,6 +270,7 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     chats,
     presence,
     labels,
+    channels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1241,6 +1269,101 @@ function mapUazapiLabel(body: unknown): LabelInfo {
     color: color === undefined ? undefined : String(color),
     raw: body,
   };
+}
+
+// ---------------------------------------------------------------------------
+// channels.* (ver ADR-0017)
+// ---------------------------------------------------------------------------
+
+/** `GET /newsletter/list` — resposta `{response: [...]}`. Canais já inscritos pela conta conectada. */
+async function listChannels(http: HttpClient): Promise<ChannelInfo[]> {
+  const body = await http.request<unknown>({ method: 'GET', path: '/newsletter/list' });
+  const record = asRecord(body);
+  const items = record && Array.isArray(record.response) ? record.response : [];
+  return items.map((item) => mapUazapiChannel(item));
+}
+
+/**
+ * `POST /newsletter/create` — body `{name (obrig.), description?, picture?}`; `picture` não
+ * exposto pelo contrato canônico (ver ADR-0017). Resposta `{response: {...}}` — schema livre
+ * (`additionalProperties: true`), assumido como o mesmo `types.NewsletterMetadata` do Evolution GO
+ * (mesma base whatsmeow).
+ */
+async function createChannel(http: HttpClient, input: CreateChannelInput): Promise<ChannelInfo> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/newsletter/create',
+    body: { name: input.name, description: input.description },
+  });
+  const record = asRecord(body);
+  const data = record ? asRecord(record.response) : undefined;
+  return mapUazapiChannel(data ?? body, input);
+}
+
+/** `POST /newsletter/info` — body `{jid}` (aceita também `id` numérico cru, não usado aqui pois `channelId` já chega como JID completo). */
+async function getChannelInfo(http: HttpClient, channelId: string): Promise<ChannelInfo> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/newsletter/info',
+    body: { jid: channelId },
+  });
+  const record = asRecord(body);
+  const data = record ? asRecord(record.response) : undefined;
+  return mapUazapiChannel(data ?? body, {});
+}
+
+/** `POST /newsletter/delete` — body `{jid}`. */
+async function deleteChannel(http: HttpClient, channelId: string): Promise<void> {
+  await http.request({ method: 'POST', path: '/newsletter/delete', body: { jid: channelId } });
+}
+
+/** `channels.follow`/`unfollow`: `POST /newsletter/follow` / `/newsletter/unfollow` — body `{jid}` em ambos, endpoints distintos e simétricos (diferente do Evolution GO, que só tem o equivalente a `follow`). */
+async function setChannelFollowed(
+  http: HttpClient,
+  channelId: string,
+  follow: boolean,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: follow ? '/newsletter/follow' : '/newsletter/unfollow',
+    body: { jid: channelId },
+  });
+}
+
+/**
+ * Mapeia a resposta de `channels.*` para `ChannelInfo`. Confiança da FORMA exata: Média — a uazapi
+ * não documenta o schema de resposta (`additionalProperties: true`), então este mapper tenta
+ * primeiro o shape rico `types.NewsletterMetadata` (mesmo do Evolution GO:
+ * `thread_metadata.{name,description}.text`, `subscribers_count` como string) e cai para campos
+ * soltos (`name`/`description`/`subscribersCount`) se a estrutura aninhada não estiver presente —
+ * não confirmado contra uma instância real qual dos dois formatos a uazapi de fato devolve.
+ */
+function mapUazapiChannel(
+  body: unknown,
+  fallback: { name?: string; description?: string } = {},
+): ChannelInfo {
+  const record = asRecord(body);
+  const id = (record ? asString(record.id) : undefined) ?? '';
+  const threadMeta = record ? asRecord(record.thread_metadata) : undefined;
+  const nameObj = threadMeta ? asRecord(threadMeta.name) : undefined;
+  const descriptionObj = threadMeta ? asRecord(threadMeta.description) : undefined;
+  const name =
+    (nameObj ? asString(nameObj.text) : undefined) ??
+    (record ? asString(record.name) : undefined) ??
+    fallback.name ??
+    '';
+  const description =
+    (descriptionObj ? asString(descriptionObj.text) : undefined) ??
+    (record ? asString(record.description) : undefined) ??
+    fallback.description;
+  const subscribersCountText = threadMeta ? asString(threadMeta.subscribers_count) : undefined;
+  const subscribersCount =
+    subscribersCountText !== undefined
+      ? Number(subscribersCountText)
+      : record
+        ? asNumber(record.subscribersCount)
+        : undefined;
+  return { id, name, description, subscribersCount, raw: body };
 }
 
 // ---------------------------------------------------------------------------

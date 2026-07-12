@@ -526,6 +526,25 @@ labels; e se o bug de `return` ausente em `client.addNewLabel` já foi corrigido
 recentes da lib `@wppconnect/wa-js` (o commit pinado usado nesta pesquisa é `f09e2fed`,
 tag `v2.10.0`).
 
+## Canais (`channels.create`/`delete`, ADR-0017)
+
+Cobertura 2/6 — achado ao vivo que corrige o relatório original (que não tinha encontrado NADA
+sobre canais/newsletters neste provider).
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `channels.create` | `POST /api/{session}/newsletter` (`NewsletterController.createNewsletter`) | Body `{name, options?: {description?, picture?}}` — `options.picture` (base64) não exposto pelo contrato canônico. Diferente do bug confirmado em `client.addNewLabel` (ADR-0016, sem `return` na função avaliada no browser), `client.createNewsletter` do wa-js FAZ `return` corretamente (`(name, options) => WPP.newsletter.create(name, options)`, confirmado ao vivo via `gh api` contra `wppconnect-team/wa-js`) — a resposta é confiável. Shape `ResultCreateNewsletter {idJid, inviteCode, inviteLink, name, state, subscribersCount, description, timestamp}` — `idJid` (não `id`) é o campo do identificador. A resposta HTTP não usa o envelope `{status, response}` comum ao resto do adapter — o controller faz `res.status(201).json(await req.client.createNewsletter(...))` diretamente. |
+| `channels.delete` | `DELETE /api/{session}/newsletter/{id}` (`NewsletterController.destroyNewsletter`) | Sem body. Mesma ausência de envelope na resposta. |
+
+**Sem `channels.list`/`getInfo`/`follow`/`unfollow`** — `routes.ts` só registra 4 rotas de
+newsletter no total: `POST /newsletter` (create), `PUT /newsletter/{id}` (editar — fora do escopo
+desta ADR), `DELETE /newsletter/{id}` (delete), `POST /mute-newsletter/{id}` (silenciar — fora do
+escopo). **Achado relevante**: a lib `@wppconnect/wa-js` subjacente TEM `follow.ts`/`unfollow.ts`/
+`getSubscribers.ts` internamente (confirmado ao vivo em `wa-js/src/newsletter/functions/`), mas o
+`wppconnect-server` não expõe rota HTTP para nenhum deles — uma limitação real da SUPERFÍCIE HTTP
+do servidor, não da biblioteca subjacente nem deste adapter (que só pode chamar o que o servidor
+expõe via REST).
+
 ## Grupos
 
 14 operações confirmadas com endpoint. Todos POST/GET, nenhum PUT/PATCH/DELETE (confirmado em

@@ -415,6 +415,81 @@ describe('MockAdapter: labels', () => {
   });
 });
 
+describe('MockAdapter: channels', () => {
+  it('create gera um id novo (JID @newsletter) e list reflete o canal criado', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    expect(await wa.channels.list()).toEqual([]);
+    const channel = await wa.channels.create({ name: 'Meu Canal', description: 'Descrição' });
+    expect(channel.id).toContain('@newsletter');
+    expect(await wa.channels.list()).toEqual([channel]);
+  });
+
+  it('getInfo devolve o canal existente e falha com PROVIDER_ERROR para um channelId inexistente', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const channel = await wa.channels.create({ name: 'Meu Canal' });
+    expect(await wa.channels.getInfo(channel.id)).toEqual(channel);
+
+    const failure = await reject(wa.channels.getInfo('inexistente'));
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('delete remove o canal e limpa o estado de follow consultável via isFollowingChannel', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const channel = await wa.channels.create({ name: 'Meu Canal' });
+    await wa.channels.follow(channel.id);
+    expect(adapter.isFollowingChannel(channel.id)).toBe(true);
+
+    await wa.channels.delete(channel.id);
+    expect(await wa.channels.list()).toEqual([]);
+    expect(adapter.isFollowingChannel(channel.id)).toBe(false);
+  });
+
+  it('follow/unfollow alternam o estado consultável via isFollowingChannel', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const channel = await wa.channels.create({ name: 'Meu Canal' });
+
+    expect(adapter.isFollowingChannel(channel.id)).toBe(false);
+    await wa.channels.follow(channel.id);
+    expect(adapter.isFollowingChannel(channel.id)).toBe(true);
+    await wa.channels.unfollow(channel.id);
+    expect(adapter.isFollowingChannel(channel.id)).toBe(false);
+  });
+
+  it('operações sobre um channelId inexistente falham com PROVIDER_ERROR', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () => wa.channels.delete('inexistente'),
+      () => wa.channels.follow('inexistente'),
+      () => wa.channels.unfollow('inexistente'),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+    }
+  });
+
+  it('todo método de channels.* exige instância conectada (INSTANCE_DISCONNECTED)', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.channels.create({ name: 'Meu Canal' }));
+    expect(isWaConnectorError(failure) && failure.code === 'INSTANCE_DISCONNECTED').toBe(true);
+  });
+});
+
 describe('MockAdapter: groups', () => {
   it('cria um grupo e permite consultá-lo via getInfo/list', async () => {
     const adapter = new MockAdapter();

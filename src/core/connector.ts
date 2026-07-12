@@ -1,4 +1,5 @@
 import type {
+  ChannelsApi,
   ChatsApi,
   ContactsApi,
   GroupsApi,
@@ -14,10 +15,12 @@ import { normalizeChatId, normalizeInviteLink } from './chat-id';
 import { UnsupportedCapabilityError, WaConnectorError } from './errors';
 import type { CanonicalEvent, CanonicalEventType, EventOf, UnknownEvent } from './events';
 import type {
+  ChannelInfo,
   CheckExistsResult,
   Contact,
   ContactAbout,
   ContactProfilePicture,
+  CreateChannelInput,
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
@@ -168,6 +171,20 @@ export interface ConnectorLabelsApi {
 }
 
 /**
+ * `ChannelsApi` exposta pelo conector: todo método sempre presente (diferente da interface do
+ * adapter, onde o NAMESPACE INTEIRO é opcional — ver ADR-0017, mesmo critério de `ChatsApi`/
+ * `PresenceApi`/`LabelsApi`).
+ */
+export interface ConnectorChannelsApi {
+  list(): Promise<ChannelInfo[]>;
+  create(input: CreateChannelInput): Promise<ChannelInfo>;
+  getInfo(channelId: string): Promise<ChannelInfo>;
+  delete(channelId: string): Promise<void>;
+  follow(channelId: string): Promise<void>;
+  unfollow(channelId: string): Promise<void>;
+}
+
+/**
  * Camada de ergonomia e política sobre um adapter: checagem de capabilities,
  * validação e normalização de entrada, eventos e parsing seguro de webhooks.
  */
@@ -182,6 +199,7 @@ export class WaConnector {
   readonly chats: ConnectorChatsApi;
   readonly presence: ConnectorPresenceApi;
   readonly labels: ConnectorLabelsApi;
+  readonly channels: ConnectorChannelsApi;
   readonly webhooks: WebhooksApi;
 
   private readonly listeners = new Map<string, Set<AnyListener>>();
@@ -399,6 +417,30 @@ export class WaConnector {
       removeFromChat: (input) =>
         this.callLabelsMethod('removeFromChat', 'labels.removeFromChat', (fn) =>
           fn(this.prepareLabelChat(input)),
+        ),
+    };
+
+    this.channels = {
+      list: () => this.callChannelsMethod('list', 'channels.list', (fn) => fn()),
+      create: (input) =>
+        this.callChannelsMethod('create', 'channels.create', (fn) =>
+          fn(this.prepareCreateChannel(input)),
+        ),
+      getInfo: (channelId) =>
+        this.callChannelsMethod('getInfo', 'channels.getInfo', (fn) =>
+          fn(this.requireChannelId(channelId)),
+        ),
+      delete: (channelId) =>
+        this.callChannelsMethod('delete', 'channels.delete', (fn) =>
+          fn(this.requireChannelId(channelId)),
+        ),
+      follow: (channelId) =>
+        this.callChannelsMethod('follow', 'channels.follow', (fn) =>
+          fn(this.requireChannelId(channelId)),
+        ),
+      unfollow: (channelId) =>
+        this.callChannelsMethod('unfollow', 'channels.unfollow', (fn) =>
+          fn(this.requireChannelId(channelId)),
         ),
     };
 
@@ -662,6 +704,25 @@ export class WaConnector {
     return labelId;
   }
 
+  private prepareCreateChannel(input: CreateChannelInput): CreateChannelInput {
+    if (typeof input.name !== 'string' || input.name.length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'channels.create exige "name" não vazio.', {
+        provider: this.provider,
+      });
+    }
+    return input;
+  }
+
+  /** `channelId` é opaco (mesmo critério de `groupId`/`labelId` — ver ADR-0009/0016): não passa por `normalizeChatId`. */
+  private requireChannelId(channelId: unknown): string {
+    if (typeof channelId !== 'string' || channelId.trim().length === 0) {
+      throw new WaConnectorError('INVALID_INPUT', 'Campo "channelId" é obrigatório.', {
+        provider: this.provider,
+      });
+    }
+    return channelId;
+  }
+
   /**
    * Guard-rail comum aos métodos opcionais de `MessagesApi` (`sendReaction`/`edit`/`delete`/
    * `forward`/`star`/`unstar`/`pin`/`unpin`/`markRead`/`sendLocation`/`sendContactCard`/
@@ -799,6 +860,28 @@ export class WaConnector {
       );
     }
     return invoke(fn as NonNullable<LabelsApi[K]>);
+  }
+
+  /**
+   * Guard-rail de `channels.*` — mesmo padrão de `callLabelsMethod`/`callPresenceMethod` (namespace
+   * inteiro opcional no adapter, ver ADR-0017).
+   */
+  private async callChannelsMethod<K extends keyof ChannelsApi, R>(
+    method: K,
+    capability: Capability,
+    invoke: (fn: NonNullable<ChannelsApi[K]>) => Promise<R>,
+  ): Promise<R> {
+    this.assertCapability(capability);
+    const fn = this.adapter.channels?.[method];
+    if (!fn) {
+      throw new WaConnectorError(
+        'PROVIDER_ERROR',
+        `Adapter "${this.provider}" declara a capability "${capability}" mas não implementa ` +
+          `channels.${String(method)} — isso é um bug no adapter, não uma entrada inválida.`,
+        { provider: this.provider },
+      );
+    }
+    return invoke(fn as NonNullable<ChannelsApi[K]>);
   }
 
   /**

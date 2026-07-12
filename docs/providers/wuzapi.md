@@ -216,6 +216,19 @@ real do provider (Wuzapi não expõe essa feature), não gap de pesquisa. Mesmo 
 negativa explícita, documentada em vez de omitida" já usado para `presence.*` do Z-API (ADR-0015) e
 `contacts.getAbout` da uazapi.
 
+## Canais (`channels.list`, ADR-0017)
+
+Cobertura 1/6 — só `list`, SOMENTE LEITURA.
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `channels.list` | `GET /newsletter/list` | Confiança Média — código confirmado (`handlers.go:5248-5287`; `routes.go:169`), **não documentado** no `API.md`. Sem parâmetros. Implementação: `GetSubscribedNewsletters(ctx)` monta `{Newsletter: [<types.NewsletterMetadata>, ...]}` e passa por `Respond()` — o helper comum a todo o adapter, que sempre envelopa em `{code, success, data: {...}}` (confirmado lendo `Respond()`: o payload é serializado, reparseado e colocado em `data`, mesmo padrão de todo outro endpoint). Array pode vir vazio `[]`, nunca nulo (`gc.Newsletter = []types.NewsletterMetadata{}` explícito). `ChannelInfo` é mapeado do mesmo shape rico `types.NewsletterMetadata` já confirmado no Evolution GO (`thread_metadata.{name,description}.text`, `subscribers_count` como string) — o Wuzapi também é construído sobre whatsmeow. |
+
+**`create`/`getInfo`/`delete`/`follow`/`unfollow` NÃO implementados, busca negativa confirmada** —
+busca exaustiva por "newsletter" em `routes.go` só encontrou essa uma rota (`GET /newsletter/list`).
+Só newsletters/canais que a própria conta já está inscrita aparecem na listagem — não há como
+descobrir/entrar em canais novos com o que existe hoje neste provider.
+
 ## Conversas (`chats.*`)
 
 | Operação canônica | Endpoint | Observações |

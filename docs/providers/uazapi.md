@@ -487,6 +487,35 @@ mesmo intervalo (condição de corrida inerente a uma API sem transação/callba
 lança `PROVIDER_ERROR` se NENHUM id novo aparecer, mas não tem como detectar "id novo errado" se dois
 processos criarem labels ao mesmo tempo.
 
+## Canais (`channels.*`, ADR-0017)
+
+Cobertura 6/6, confiança Alta quanto à EXISTÊNCIA das 24 rotas de `newsletter.*` do provider
+(confirmadas no OpenAPI bundled) — a MELHOR cobertura desta ADR, empatada com WAHA/Whapi.
+Profundidade de payload de resposta, porém, é confiança Média: o schema documentado é
+`additionalProperties: true` (livre), sem tipo declarado.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `channels.list` | `GET /newsletter/list` | Canais já inscritos pela conta conectada. Resposta `{response: [...]}`. |
+| `channels.create` | `POST /newsletter/create` | Body `{name (obrig.), description?, picture?}` — `picture` aceita URL/base64/data-URI (>1MB rejeitado), não exposto pelo contrato canônico (ver ADR-0017). |
+| `channels.getInfo` | `POST /newsletter/info` | Body `{id?, jid?}` — aceita tanto um `id` numérico cru (convertido para `@newsletter` pelo provider) quanto `jid` completo; este adapter sempre envia `jid` (o `channelId` canônico já chega como JID completo). |
+| `channels.delete` | `POST /newsletter/delete` | Body `{jid}`. |
+| `channels.follow` | `POST /newsletter/follow` | Body `{jid}`. |
+| `channels.unfollow` | `POST /newsletter/unfollow` | Body `{jid}` — par simétrico completo de `follow` (diferente do Evolution GO, que só tem o equivalente a `follow`/"subscribe"). |
+
+**Mapeamento de resposta (confiança Média, não confirmado contra instância real)**: como a uazapi
+também é construída sobre whatsmeow (mesma base do Evolution GO/QuePasa/Wuzapi), `mapUazapiChannel`
+assume o mesmo shape rico `types.NewsletterMetadata` já confirmado no Evolution GO
+(`thread_metadata.{name,description}.text`, `subscribers_count` como string) — mas com fallback
+defensivo para campos soltos (`name`/`description`/`subscribersCount` diretos no objeto) caso a
+resposta real da uazapi divirja desse formato.
+
+**Fora de escopo desta ADR** (candidatas para rodada futura — a própria pesquisa original recomenda
+tratar `newsletters.*` "como fase própria" dada a extensão): `updateName`/`updateDescription`/
+`updatePicture`, `mute`/`unmute`, `getInviteLink`, `sendMessage`/`deleteMessage`/`editMessage`
+(mensagens DENTRO do canal), `admin.*` (gestão de administradores), `transferOwnership`, `search`
+(descoberta de canais públicos), `getUpdates`/`getViewed` (métricas), `getSettings`.
+
 ## Chats (gestão de estado da conversa)
 
 Namespace `chats.*` introduzido pelo ADR-0012 — distinto de `contacts.*` (sobre a pessoa/JID) e de

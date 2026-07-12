@@ -199,6 +199,63 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { response: 'Labels atualizadas com sucesso' });
     }
 
+    // channels.list (ADR-0017): GET /newsletter/list.
+    if (method === 'GET' && pathname === '/newsletter/list') {
+      return jsonResponse(200, {
+        response: [
+          {
+            id: '111111111111111111@newsletter',
+            thread_metadata: {
+              name: { text: 'Canal Contrato' },
+              description: { text: 'Descrição' },
+              subscribers_count: '10',
+            },
+          },
+        ],
+      });
+    }
+
+    // channels.create (ADR-0017): POST /newsletter/create.
+    if (method === 'POST' && pathname === '/newsletter/create') {
+      return jsonResponse(200, {
+        response: {
+          id: '222222222222222222@newsletter',
+          thread_metadata: {
+            name: { text: 'Contrato: Canal Novo' },
+            description: { text: '' },
+            subscribers_count: '0',
+          },
+        },
+      });
+    }
+
+    // channels.getInfo (ADR-0017): POST /newsletter/info.
+    if (method === 'POST' && pathname === '/newsletter/info') {
+      return jsonResponse(200, {
+        response: {
+          id: '111111111111111111@newsletter',
+          thread_metadata: {
+            name: { text: 'Canal Contrato' },
+            description: { text: 'Descrição' },
+            subscribers_count: '10',
+          },
+        },
+      });
+    }
+
+    // channels.delete (ADR-0017): POST /newsletter/delete.
+    if (method === 'POST' && pathname === '/newsletter/delete') {
+      return jsonResponse(200, { response: 'success' });
+    }
+
+    // channels.follow/unfollow (ADR-0017): POST /newsletter/follow, POST /newsletter/unfollow.
+    if (
+      method === 'POST' &&
+      (pathname === '/newsletter/follow' || pathname === '/newsletter/unfollow')
+    ) {
+      return jsonResponse(200, { response: 'success' });
+    }
+
     if (method === 'POST' && pathname === '/group/create') {
       return jsonResponse(200, {
         JID: '120363000000000000@g.us',
@@ -2041,6 +2098,109 @@ describe('uazapi adapter: comportamento específico do provider', () => {
     expect(calls).toEqual([
       { number: '5511999999999', add_labelid: '1' },
       { number: '5511999999999', remove_labelid: '1' },
+    ]);
+  });
+
+  it('channels.list chama GET /newsletter/list e mapeia thread_metadata.{name,description}.text + subscribers_count', async () => {
+    const adapter = uazapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const channels = await wa.channels.list();
+
+    expect(channels).toEqual([
+      {
+        id: '111111111111111111@newsletter',
+        name: 'Canal Contrato',
+        description: 'Descrição',
+        subscribersCount: 10,
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
+  it('channels.create chama POST /newsletter/create com {name, description}', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/newsletter/create') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const channel = await wa.channels.create({ name: 'Canal Novo', description: 'Descrição' });
+
+    expect(calls).toEqual([{ name: 'Canal Novo', description: 'Descrição' }]);
+    expect(channel.id).toBe('222222222222222222@newsletter');
+    expect(channel.name).toBe('Contrato: Canal Novo');
+  });
+
+  it('channels.getInfo chama POST /newsletter/info com {jid}', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/newsletter/info') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const channel = await wa.channels.getInfo('111111111111111111@newsletter');
+
+    expect(calls).toEqual([{ jid: '111111111111111111@newsletter' }]);
+    expect(channel.name).toBe('Canal Contrato');
+  });
+
+  it('channels.delete chama POST /newsletter/delete com {jid} e resolve void', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/newsletter/delete') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.channels.delete('111111111111111111@newsletter')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ jid: '111111111111111111@newsletter' }]);
+  });
+
+  it('channels.follow/unfollow chamam POST /newsletter/follow e POST /newsletter/unfollow com {jid}', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/newsletter/follow' || url.pathname === '/newsletter/unfollow') {
+            calls.push({ path: url.pathname, body: JSON.parse(String(init?.body)) });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.channels.follow('111111111111111111@newsletter');
+    await wa.channels.unfollow('111111111111111111@newsletter');
+
+    expect(calls).toEqual([
+      { path: '/newsletter/follow', body: { jid: '111111111111111111@newsletter' } },
+      { path: '/newsletter/unfollow', body: { jid: '111111111111111111@newsletter' } },
     ]);
   });
 

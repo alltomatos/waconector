@@ -1,4 +1,5 @@
 import type {
+  ChannelsApi,
   ChatsApi,
   ContactsApi,
   GroupsApi,
@@ -15,11 +16,13 @@ import { isWaConnectorError, WaConnectorError } from '../../core/errors';
 import type { CanonicalEvent, UnknownEvent } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  ChannelInfo,
   CheckExistsResult,
   ConnectResult,
   Contact,
   ContactAbout,
   ContactProfilePicture,
+  CreateChannelInput,
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
@@ -155,6 +158,12 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'labels.delete',
   'labels.addToChat',
   'labels.removeFromChat',
+  'channels.list',
+  'channels.create',
+  'channels.getInfo',
+  'channels.delete',
+  'channels.follow',
+  'channels.unfollow',
   'webhooks.parse',
 ];
 
@@ -247,6 +256,20 @@ export function whapi(options: WhapiOptions): WaAdapter {
     removeFromChat: (input) => setLabelAssociation(http, input, false),
   };
 
+  /**
+   * Namespace `channels.*` (ADR-0017). Cobertura 6/6, confiança Alta — schema completo
+   * (`Newsletter`/`CreateNewsletterRequest`) confirmado no `openapi.yaml` oficial, a MELHOR
+   * cobertura desta ADR junto com WAHA/uazapi.
+   */
+  const channels: ChannelsApi = {
+    list: () => listChannels(http),
+    create: (input) => createChannel(http, input),
+    getInfo: (channelId) => getChannelInfo(http, channelId),
+    delete: (channelId) => deleteChannel(http, channelId),
+    follow: (channelId) => setChannelSubscribed(http, channelId, true),
+    unfollow: (channelId) => setChannelSubscribed(http, channelId, false),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WHAPI_CAPABILITIES,
@@ -257,6 +280,7 @@ export function whapi(options: WhapiOptions): WaAdapter {
     chats,
     presence,
     labels,
+    channels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1323,6 +1347,98 @@ function mapWhapiLabel(body: unknown): LabelInfo {
     id: (record ? asString(record.id) : undefined) ?? '',
     name: (record ? asString(record.name) : undefined) ?? '',
     color: record ? asString(record.color) : undefined,
+    raw: body,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// channels.* (ver ADR-0017)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /newsletters` (`operationId: getNewsletters`, confiança Alta). Query `count`/`offset` não
+ * exposta pelo contrato canônico — omitida, lista todos os canais próprios e seguidos. Resposta
+ * `{newsletters: Newsletter[]}` — schema `Newsletter` estende `Chat` (mesmo `id` opaco de
+ * `chatId`) com campos FLAT (`name`, `description`, `subscribers_count` — diferente do shape
+ * aninhado `thread_metadata.{name,description}.text` dos providers baseados em whatsmeow puro).
+ */
+async function listChannels(http: HttpClient): Promise<ChannelInfo[]> {
+  const body = await http.request<unknown>({ method: 'GET', path: '/newsletters' });
+  const record = asRecord(body);
+  const items = record && Array.isArray(record.newsletters) ? record.newsletters : [];
+  return items.map((item) => mapWhapiChannel(item));
+}
+
+/**
+ * `POST /newsletters` (schema `CreateNewsletterRequest {name, description?, newsletter_pic?}`,
+ * confiança Alta). `newsletter_pic` (base64) não exposto pelo contrato canônico (ver ADR-0017).
+ * Resposta: `Newsletter` completo.
+ */
+async function createChannel(http: HttpClient, input: CreateChannelInput): Promise<ChannelInfo> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/newsletters',
+    body: { name: input.name, description: input.description },
+  });
+  return mapWhapiChannel(body, input);
+}
+
+/**
+ * `GET /newsletters/{NewsletterID}` (`operationId: getNewsletter`, confiança Alta quanto à
+ * existência — a doc descreve "retorna a metadata de um WhatsApp Channel", mas o `$ref` de
+ * resposta no `openapi.yaml` aponta equivocadamente para o schema de mensagens (`Messages`),
+ * provável erro de autoria do próprio spec; este adapter assume o mesmo shape `Newsletter` de
+ * `create`/`list`, coerente com a descrição textual do endpoint).
+ */
+async function getChannelInfo(http: HttpClient, channelId: string): Promise<ChannelInfo> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/newsletters/${encodeURIComponent(channelId)}`,
+  });
+  return mapWhapiChannel(body, {});
+}
+
+/** `DELETE /newsletters/{NewsletterID}` (confiança Alta). Sem body. 401 dedicado "Need to be owner of newsletter". */
+async function deleteChannel(http: HttpClient, channelId: string): Promise<void> {
+  await http.request({
+    method: 'DELETE',
+    path: `/newsletters/${encodeURIComponent(channelId)}`,
+  });
+}
+
+/**
+ * `channels.follow`/`unfollow`: `POST`/`DELETE /newsletters/{NewsletterID}/subscription`
+ * (`operationId: subscribeNewsletter`/`unsubscribeNewsletter`, confiança Alta — par SIMÉTRICO
+ * completo, mapeado para `follow`/`unfollow` no contrato canônico, ver ADR-0017 Justificativa).
+ * Sem body.
+ */
+async function setChannelSubscribed(
+  http: HttpClient,
+  channelId: string,
+  subscribe: boolean,
+): Promise<void> {
+  await http.request({
+    method: subscribe ? 'POST' : 'DELETE',
+    path: `/newsletters/${encodeURIComponent(channelId)}/subscription`,
+  });
+}
+
+/**
+ * Mapeia um `Newsletter` do Whapi (`{id, name, description, subscribers_count, ...}`, schema que
+ * estende `Chat`) para `ChannelInfo`. Campos exclusivos do provider (`invite_code`, `handle`,
+ * `verification`, `preview`, `role`) não têm equivalente no contrato canônico desta rodada —
+ * ficam só em `raw`.
+ */
+function mapWhapiChannel(
+  body: unknown,
+  fallback: { name?: string; description?: string } = {},
+): ChannelInfo {
+  const record = asRecord(body);
+  return {
+    id: (record ? asString(record.id) : undefined) ?? '',
+    name: (record ? asString(record.name) : undefined) ?? fallback.name ?? '',
+    description: (record ? asString(record.description) : undefined) ?? fallback.description,
+    subscribersCount: record ? asNumber(record.subscribers_count) : undefined,
     raw: body,
   };
 }

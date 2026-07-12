@@ -405,6 +405,62 @@ function createFetchStub(): typeof globalThis.fetch {
       return new Response(null, { status: 200 });
     }
 
+    // channels.list (ADR-0017): GET /api/{session}/channels.
+    if (method === 'GET' && pathname === `/api/${SESSION}/channels`) {
+      return jsonResponse(200, [
+        {
+          id: '111111111111111111@newsletter',
+          name: 'Canal Contrato',
+          invite: 'https://www.whatsapp.com/channel/1111',
+          role: 'OWNER',
+          verified: false,
+          subscribersCount: 10,
+        },
+      ]);
+    }
+
+    // channels.create (ADR-0017): POST /api/{session}/channels.
+    if (method === 'POST' && pathname === `/api/${SESSION}/channels`) {
+      return jsonResponse(201, {
+        id: '222222222222222222@newsletter',
+        name: 'Contrato: Canal Novo',
+        invite: 'https://www.whatsapp.com/channel/2222',
+        role: 'OWNER',
+        verified: false,
+        subscribersCount: 0,
+      });
+    }
+
+    // channels.getInfo/delete (ADR-0017): GET/DELETE /api/{session}/channels/{id}.
+    if (
+      pathname.startsWith(`/api/${SESSION}/channels/`) &&
+      !pathname.includes('/follow') &&
+      !pathname.includes('/unfollow')
+    ) {
+      if (method === 'GET') {
+        return jsonResponse(200, {
+          id: '111111111111111111@newsletter',
+          name: 'Canal Contrato',
+          invite: 'https://www.whatsapp.com/channel/1111',
+          role: 'OWNER',
+          verified: false,
+          subscribersCount: 10,
+        });
+      }
+      if (method === 'DELETE') {
+        return new Response(null, { status: 200 });
+      }
+    }
+
+    // channels.follow/unfollow (ADR-0017): POST /api/{session}/channels/{id}/follow|unfollow.
+    if (
+      method === 'POST' &&
+      (pathname.endsWith('/follow') || pathname.endsWith('/unfollow')) &&
+      pathname.startsWith(`/api/${SESSION}/channels/`)
+    ) {
+      return new Response(null, { status: 201 });
+    }
+
     throw new Error(`fetchStub: rota não configurada — ${method} ${pathname}`);
   };
 }
@@ -1742,6 +1798,110 @@ describe('WAHA adapter: comportamento específico do provider', () => {
         expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
       }
     }
+  });
+
+  it('channels.list chama GET /api/{session}/channels e mapeia {id, name, subscribersCount}', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const channels = await wa.channels.list();
+
+    expect(channels).toEqual([
+      {
+        id: '111111111111111111@newsletter',
+        name: 'Canal Contrato',
+        description: undefined,
+        subscribersCount: 10,
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
+  it('channels.create chama POST /api/{session}/channels com {name, description}', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body ? JSON.parse(String(init.body)) : undefined,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const channel = await wa.channels.create({ name: 'Canal Novo', description: 'Descrição' });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.path).toBe(`/api/${SESSION}/channels`);
+    expect(calls[0]?.body).toEqual({ name: 'Canal Novo', description: 'Descrição' });
+    expect(channel.id).toBe('222222222222222222@newsletter');
+    expect(channel.name).toBe('Contrato: Canal Novo');
+  });
+
+  it('channels.getInfo chama GET /api/{session}/channels/{id}', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const channel = await wa.channels.getInfo('111111111111111111@newsletter');
+
+    expect(channel.id).toBe('111111111111111111@newsletter');
+    expect(channel.name).toBe('Canal Contrato');
+  });
+
+  it('channels.delete chama DELETE /api/{session}/channels/{id} e resolve void', async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.channels.delete('111111111111111111@newsletter')).resolves.toBeUndefined();
+
+    expect(calls).toEqual([
+      { method: 'DELETE', path: `/api/${SESSION}/channels/111111111111111111%40newsletter` },
+    ]);
+  });
+
+  it('channels.follow/unfollow chamam POST /api/{session}/channels/{id}/follow|unfollow sem corpo', async () => {
+    const calls: Array<{ method: string; path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push({
+            method: (init?.method ?? 'GET').toUpperCase(),
+            path: url.pathname,
+            body: init?.body,
+          });
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.channels.follow('111111111111111111@newsletter');
+    await wa.channels.unfollow('111111111111111111@newsletter');
+
+    expect(calls).toEqual([
+      {
+        method: 'POST',
+        path: `/api/${SESSION}/channels/111111111111111111%40newsletter/follow`,
+        body: undefined,
+      },
+      {
+        method: 'POST',
+        path: `/api/${SESSION}/channels/111111111111111111%40newsletter/unfollow`,
+        body: undefined,
+      },
+    ]);
   });
 
   it('parseWebhook normaliza "message.ack" do dossiê para MessageAckEvent', () => {

@@ -64,6 +64,12 @@ export const CAPABILITIES = [
   'labels.delete',
   'labels.addToChat',
   'labels.removeFromChat',
+  'channels.list',
+  'channels.create',
+  'channels.getInfo',
+  'channels.delete',
+  'channels.follow',
+  'channels.unfollow',
   'webhooks.parse',
 ] as const;
 

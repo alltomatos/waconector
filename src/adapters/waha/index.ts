@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
+  ChannelsApi,
   ChatsApi,
   ContactsApi,
   GroupsApi,
@@ -21,6 +22,7 @@ import type {
 } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  ChannelInfo,
   CheckExistsResult,
   ConnectResult,
   Contact,
@@ -126,6 +128,12 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'labels.create',
   'labels.update',
   'labels.delete',
+  'channels.list',
+  'channels.create',
+  'channels.getInfo',
+  'channels.delete',
+  'channels.follow',
+  'channels.unfollow',
   'webhooks.parse',
 ];
 
@@ -832,6 +840,65 @@ export function waha(options: WahaOptions): WaAdapter {
     },
   };
 
+  /**
+   * Namespace `channels.*` (ADR-0017). Cobertura 6/6, confiança Alta — schema completo
+   * (`Channel`/`CreateChannelRequest`) confirmado no `openapi.json` oficial (tag "📢 Channels").
+   */
+  const channels: ChannelsApi = {
+    /** `GET /api/{session}/channels` — `role` (query, filtro OWNER/ADMIN/SUBSCRIBER) não exposto pelo contrato canônico, omitido (lista todos). */
+    list: async () => {
+      const body = await http.request<unknown>({
+        method: 'GET',
+        path: `/api/${encodeURIComponent(session)}/channels`,
+      });
+      const items = Array.isArray(body) ? body : [];
+      return items.map((item) => mapWahaChannel(item));
+    },
+
+    /** `POST /api/{session}/channels` (schema `CreateChannelRequest {name, description?, picture?}`) — `picture` não exposto pelo contrato canônico (ver ADR-0017). */
+    create: async (input) => {
+      const body = await http.request<unknown>({
+        method: 'POST',
+        path: `/api/${encodeURIComponent(session)}/channels`,
+        body: { name: input.name, description: input.description },
+      });
+      return mapWahaChannel(body, input);
+    },
+
+    /** `GET /api/{session}/channels/{id}` — aceita tanto o id (`@newsletter`) quanto o código de convite puro. */
+    getInfo: async (channelId) => {
+      const body = await http.request<unknown>({
+        method: 'GET',
+        path: `/api/${encodeURIComponent(session)}/channels/${encodeURIComponent(channelId)}`,
+      });
+      return mapWahaChannel(body, { id: channelId });
+    },
+
+    /** `DELETE /api/{session}/channels/{id}` — só permite deletar canais onde o chamador é OWNER (restrição do provider). */
+    delete: async (channelId) => {
+      await http.request({
+        method: 'DELETE',
+        path: `/api/${encodeURIComponent(session)}/channels/${encodeURIComponent(channelId)}`,
+      });
+    },
+
+    /** `POST /api/{session}/channels/{id}/follow` — sem body. */
+    follow: async (channelId) => {
+      await http.request({
+        method: 'POST',
+        path: `/api/${encodeURIComponent(session)}/channels/${encodeURIComponent(channelId)}/follow`,
+      });
+    },
+
+    /** `POST /api/{session}/channels/{id}/unfollow` — sem body. */
+    unfollow: async (channelId) => {
+      await http.request({
+        method: 'POST',
+        path: `/api/${encodeURIComponent(session)}/channels/${encodeURIComponent(channelId)}/unfollow`,
+      });
+    },
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WAHA_CAPABILITIES,
@@ -842,6 +909,7 @@ export function waha(options: WahaOptions): WaAdapter {
     chats,
     presence,
     labels,
+    channels,
     parseWebhook: (input) => parseWahaWebhook(input, session, options.webhookHmacKey),
   };
 }
@@ -1251,6 +1319,32 @@ function mapWahaLabel(body: unknown, fallback: LabelFallback = {}): LabelInfo {
         ? String(colorRaw)
         : fallback.color;
   return { id, name, color, raw: body };
+}
+
+/**
+ * Entrada usada só quando a resposta não traz `id`/`name` (ex.: `getInfo`, cujo `channelId` já é
+ * conhecido do chamador) — mesmo padrão de fallback de `mapWahaLabel`/`mapGroupInfo`.
+ */
+interface ChannelFallback {
+  id?: string;
+  name?: string;
+  description?: string;
+}
+
+/**
+ * Mapeia um `Channel` do WAHA (`{id, name, invite, preview, picture, role, description, verified,
+ * subscribersCount}`) para `ChannelInfo` (ADR-0017). Campos exclusivos do provider (`invite`,
+ * `preview`, `picture`, `role`, `verified`) não têm equivalente no contrato canônico desta rodada
+ * — ficam só em `raw`.
+ */
+function mapWahaChannel(body: unknown, fallback: ChannelFallback = {}): ChannelInfo {
+  const record = asRecord(body);
+  const id =
+    (record ? asString(record.id) : undefined) ?? fallback.id ?? `waha-channel-${Date.now()}`;
+  const name = (record ? asString(record.name) : undefined) ?? fallback.name ?? '';
+  const description = (record ? asString(record.description) : undefined) ?? fallback.description;
+  const subscribersCount = record ? asNumber(record.subscribersCount) : undefined;
+  return { id, name, description, subscribersCount, raw: body };
 }
 
 function mapWahaStatus(status: string | undefined): InstanceState {

@@ -408,6 +408,33 @@ inerente — se dois processos criarem labels simultaneamente, ambos podem escol
 `POST /labels`, diferente do 409 real de `addToChat`). Não há como eliminar esse risco do lado do
 cliente sem uma operação atômica no servidor.
 
+## Canais (`channels.*`, ADR-0017)
+
+Cobertura 6/6, confiança Alta — schema completo (`Newsletter`/`CreateNewsletterRequest`) confirmado
+no `openapi.yaml` oficial, a MELHOR cobertura desta ADR junto com WAHA/uazapi.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `channels.list` | `GET /newsletters` (`operationId: getNewsletters`) | Query `count`/`offset` não expostos pelo contrato canônico — omitidos, lista todos os canais próprios e seguidos. Resposta `{newsletters: Newsletter[]}`. |
+| `channels.create` | `POST /newsletters` (`operationId: createNewsletter`) | Schema `CreateNewsletterRequest {name, description?, newsletter_pic?}` — `newsletter_pic` (base64) não exposto pelo contrato canônico. Resposta: `Newsletter` completo. |
+| `channels.getInfo` | `GET /newsletters/{NewsletterID}` (`operationId: getNewsletter`) | Confiança Alta quanto à existência — a doc descreve "retorna a metadata de um WhatsApp Channel", mas o `$ref` de resposta no `openapi.yaml` aponta equivocadamente para o schema de mensagens (`Messages`), provável erro de autoria do próprio spec; este adapter assume o mesmo shape `Newsletter` de `create`/`list`, coerente com a descrição textual. |
+| `channels.delete` | `DELETE /newsletters/{NewsletterID}` (`operationId: deleteNewsletter`) | Sem body. 401 dedicado "Need to be owner of newsletter". |
+| `channels.follow` | `POST /newsletters/{NewsletterID}/subscription` (`operationId: subscribeNewsletter`) | Sem body. Par SIMÉTRICO completo com `unfollow` (diferente do Evolution GO, que só tem o equivalente a `follow`). |
+| `channels.unfollow` | `DELETE /newsletters/{NewsletterID}/subscription` (`operationId: unsubscribeNewsletter`) | Mesmo endpoint de `follow`, método `DELETE`. |
+
+Schema `Newsletter` estende `Chat` (mesmo `id` opaco de `chatId`) com campos FLAT (`name`,
+`description`, `subscribers_count`) — diferente do shape aninhado
+`thread_metadata.{name,description}.text` dos providers construídos sobre whatsmeow puro (Evolution
+GO/uazapi/Wuzapi/QuePasa). Campos exclusivos do provider (`invite_code`, `handle`, `verification`,
+`preview`, `role`) não têm equivalente no contrato canônico desta rodada — ficam só em `raw`.
+
+**Fora de escopo desta ADR** (candidatas para rodada futura): `channels.getInviteLink`
+(inferido pelo campo `invite_code` já presente na resposta de `getInfo`/`list`, sem endpoint
+dedicado confirmado), `editNewsletter` (`PATCH /newsletters/{id}`, renomear/editar descrição/foto),
+`subscribeByInvite` (`POST /newsletters/invite/{code}/subscription`, entrar via código de convite —
+equivalente a `groups.joinViaInviteLink`), `getMessages` (histórico de posts do canal),
+`admin.*` (gestão de administradores).
+
 ## Conversas (`chats.*`, ADR-0012)
 
 Namespace novo de gestão de ESTADO da conversa (distinto de `messages.*`, que age sobre UMA

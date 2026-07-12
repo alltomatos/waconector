@@ -1,11 +1,13 @@
 import type { CapabilitySet } from './capabilities';
 import type { CanonicalEvent } from './events';
 import type {
+  ChannelInfo,
   CheckExistsResult,
   ConnectResult,
   Contact,
   ContactAbout,
   ContactProfilePicture,
+  CreateChannelInput,
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
@@ -186,6 +188,20 @@ export interface LabelsApi {
 }
 
 /**
+ * Namespace novo (ADR-0017), inteiramente OPCIONAL — mesmo padrão de `chats?`/`presence?`/
+ * `labels?`. Canais do WhatsApp ("WhatsApp Channels" — nome público; a maioria dos providers chama
+ * de "newsletter" internamente).
+ */
+export interface ChannelsApi {
+  list?(): Promise<ChannelInfo[]>;
+  create?(input: CreateChannelInput): Promise<ChannelInfo>;
+  getInfo?(channelId: string): Promise<ChannelInfo>;
+  delete?(channelId: string): Promise<void>;
+  follow?(channelId: string): Promise<void>;
+  unfollow?(channelId: string): Promise<void>;
+}
+
+/**
  * Contrato que todo adapter de provider implementa.
  *
  * O adapter é "burro" de propósito: apenas traduz o modelo canônico de/para o
@@ -210,5 +226,7 @@ export interface WaAdapter {
   readonly presence?: PresenceApi;
   /** Namespace OPCIONAL (ADR-0016) — mesmo critério de `chats?` acima. */
   readonly labels?: LabelsApi;
+  /** Namespace OPCIONAL (ADR-0017) — mesmo critério de `chats?` acima. */
+  readonly channels?: ChannelsApi;
   parseWebhook(input: WebhookInput): CanonicalEvent[];
 }
