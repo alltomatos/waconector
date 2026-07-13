@@ -132,6 +132,25 @@ tratado como incremento futuro separado, não uma pendência desta Epic.
       (fecha a F3 por completo) — [PR #30](https://github.com/alltomatos/waconector/pull/30).
       Publicação verificada de ponta a ponta via `npx -y waconector@0.4.0 doctor`/`--help` direto
       do registry.
+- [x] **v1.1.0** publicado no npm (2026-07-13) — consolida os 10 changesets `minor` acumulados
+      desde o v1.0.0 (Epic 6/7/9 completas: `chats.*`, `messages.edit`/`delete`/`forward`/`star`/
+      `unstar`/`pin`/`unpin`/`markRead`/`sendLocation`/`sendContactCard`/`sendPoll`, `presence.*`,
+      `labels.*`, `channels.*`, `business.*`, `calls.*`, gaps de Whapi/WPPConnect) num único bump
+      `1.0.0` → `1.1.0` — [PR #43](https://github.com/alltomatos/waconector/pull/43). Processo:
+      `npm run version` (`changeset version`) rodado direto em `develop` (mesmo padrão de
+      v0.1.0-v0.4.0, já que `guard-main-source` bloqueia a PR de versão que o bot `changesets/action`
+      tentaria abrir contra `main`), consumindo os 10 changesets pendentes, commitado como
+      "chore: release v1.1.0" e mergeado via PR normal `develop`→`main`. Merge do PR #43 exigiu
+      reconciliar o MESMO tipo de conflito de squash-merge de todo PR desta sessão — desta vez só
+      1 arquivo (`ORCHESTRATOR-ROADMAP.md`, placeholder desatualizado) mais uma nuance nova: o
+      merge resolveu automaticamente ressuscitando `.changeset/capabilities-calls.md` (o
+      merge-base não tinha esse arquivo, então o merge o tratou como "adicionado só em `main`", não
+      "apagado em `develop`") — removido manualmente antes de commitar, já que já estava consumido
+      no `CHANGELOG.md`/`package.json` (confirmado comparando o texto do changeset com a entrada já
+      presente no changelog). QA gate completo verde na árvore final: 891 testes, build, smoke,
+      `docs:capabilities` sem diff. Publicação confirmada no log do workflow `release.yml`
+      (`🦋 success packages published successfully: waconector@1.1.0`, tag `v1.1.0` criada e
+      enviada ao repositório). **Fecha as Epics 6/7/9 do ponto de vista de release.**
 
 ## Epic 4 — F3 do produto: profundidade e DX
 
@@ -349,7 +368,7 @@ exatamente na razão que já bloqueou da última vez. Retomar quando houver inst
 
 ## Epic 9 — capabilities novas, rodada 2 (fila sequencial, sem multi-agent)
 
-Estado: **in_progress**
+Estado: **done**
 
 Continuação da Epic 7, cobrindo candidatas que ficaram fora do ADR-0012 (mensagens avançadas +
 domínios inteiramente novos: presença, labels, canais, perfil comercial, chamadas). Diferença
