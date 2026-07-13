@@ -435,6 +435,21 @@ dedicado confirmado), `editNewsletter` (`PATCH /newsletters/{id}`, renomear/edit
 equivalente a `groups.joinViaInviteLink`), `getMessages` (histórico de posts do canal),
 `admin.*` (gestão de administradores).
 
+## Perfil comercial (`business.*`, ADR-0018)
+
+Cobertura 2/2, confiança Alta — a MELHOR cobertura desta ADR, empatada com uazapi.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `business.getProfile` | `GET /business` (`operationId: getBusinessProfile`) | Resposta (`BusinessProfile`, `allOf` de `BusinessProfileCustom` + `id`): `{id, description, address, email, hours, websites}` — **sem campo `categories`** (diferente de uazapi); `BusinessProfile.categories` fica sempre `undefined` neste adapter. |
+| `business.updateProfile` | `POST /business` (`operationId: editBusinessProfile`) | **Achado ao vivo que corrige o relatório original**, que documentava `PATCH /business` — o `openapi.yaml` real usa `post:`, não `patch:`, para esse `operationId`. Body `BusinessProfileCustom {address?, description?, email?, hours?, websites?}` — só `description`/`address`/`email` expostos pelo contrato canônico (`hours`/`websites` ficam fora, ver ADR-0018). Resposta é um ack genérico (`Success`), sem corpo útil — ignorada. |
+
+**Fora de escopo desta ADR** (ver "Capabilities confirmadas mas não implementadas" para o catálogo):
+`business.products.*` (CRUD completo, `GET/POST /business/products`, `GET/PATCH/DELETE
+/business/products/{ProductID}`), `business.sendProduct`/`sendCatalog`, `business.collections.*`,
+`business.getOrderItems`, `business.getReachoutTimelock`/`getNewChatLimit` — feature de e-commerce
+do WhatsApp Business, fora do foco de mensageria deste pacote nesta rodada.
+
 ## Conversas (`chats.*`, ADR-0012)
 
 Namespace novo de gestão de ESTADO da conversa (distinto de `messages.*`, que age sobre UMA

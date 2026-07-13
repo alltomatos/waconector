@@ -1,4 +1,5 @@
 import type {
+  BusinessApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -15,6 +16,7 @@ import { extractInviteCode, normalizeInviteLink } from '../core/chat-id';
 import { WaConnectorError } from '../core/errors';
 import type { CanonicalEvent } from '../core/events';
 import {
+  type BusinessProfile,
   type ChannelInfo,
   type Contact,
   type GroupInfo,
@@ -61,6 +63,7 @@ export class MockAdapter implements WaAdapter {
   readonly presence: PresenceApi;
   readonly labels: LabelsApi;
   readonly channels: ChannelsApi;
+  readonly business: BusinessApi;
 
   private state: InstanceState;
   private seq = 0;
@@ -86,6 +89,7 @@ export class MockAdapter implements WaAdapter {
   private readonly labelIdsByChatId = new Map<string, Set<string>>();
   private readonly channelsById = new Map<string, ChannelInfo>();
   private readonly followedChannelIds = new Set<string>();
+  private businessProfile: BusinessProfile = { raw: { mock: true } };
 
   constructor(options: MockAdapterOptions = {}) {
     this.provider = options.provider ?? 'mock';
@@ -445,6 +449,23 @@ export class MockAdapter implements WaAdapter {
         this.assertConnected();
         this.requireChannel(channelId);
         this.followedChannelIds.delete(channelId);
+      },
+    };
+
+    this.business = {
+      getProfile: async () => {
+        this.assertConnected();
+        return this.businessProfile;
+      },
+      updateProfile: async (input) => {
+        this.assertConnected();
+        this.businessProfile = {
+          ...this.businessProfile,
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(input.address !== undefined ? { address: input.address } : {}),
+          ...(input.email !== undefined ? { email: input.email } : {}),
+          raw: { mock: true, input },
+        };
       },
     };
   }

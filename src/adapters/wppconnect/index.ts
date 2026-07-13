@@ -1,4 +1,5 @@
 import type {
+  BusinessApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -57,6 +58,7 @@ import type {
   SentMessage,
   SetTypingInput,
   StarMessageInput,
+  UpdateBusinessProfileInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
@@ -221,6 +223,7 @@ const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'labels.removeFromChat',
   'channels.create',
   'channels.delete',
+  'business.updateProfile',
   'webhooks.parse',
 ];
 
@@ -329,6 +332,16 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     delete: (channelId) => deleteChannel(http, session, channelId),
   };
 
+  /**
+   * Namespace `business.*` (ADR-0018). Cobertura 1/2 — só `updateProfile`, achado ao vivo
+   * (`routes.ts`, seção `// Business`): não existe rota de LEITURA de perfil comercial
+   * (`get-business-profiles-products`/`get-order-by-messageId` são de catálogo/pedidos, fora de
+   * escopo). `getProfile` não declarado.
+   */
+  const business: BusinessApi = {
+    updateProfile: (input) => updateBusinessProfile(http, session, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WPPCONNECT_CAPABILITIES,
@@ -340,6 +353,7 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     presence,
     labels,
     channels,
+    business,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1784,6 +1798,32 @@ function mapWppconnectChannel(
     subscribersCount: record ? asNumber(record.subscribersCount) : undefined,
     raw: body,
   };
+}
+
+// ---------------------------------------------------------------------------
+// business.* (ver ADR-0018)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /api/{session}/edit-business-profile` (confiança Alta para o endpoint, achado ao vivo em
+ * `routes.ts`). Body `{adress?, email?, categories?, websites?}` — **`adress` é a grafia
+ * INCORRETA real do provider** (confirmado no exemplo `#swagger.parameters` de
+ * `SessionController.editBusinessProfile`), não um erro deste adapter. **Sem campo
+ * `description`**: o endpoint não aceita esse campo — `UpdateBusinessProfileInput.description` é
+ * silenciosamente ignorado quando fornecido (caveat documentado, ver ADR-0018). Resposta é o
+ * resultado bruto de `client.editBusinessProfile`, shape não confirmado com confiança —
+ * ignorada (contrato exige `Promise<void>`).
+ */
+async function updateBusinessProfile(
+  http: HttpClient,
+  session: string,
+  input: UpdateBusinessProfileInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/edit-business-profile'),
+    body: { adress: input.address, email: input.email },
+  });
 }
 
 // ---------------------------------------------------------------------------

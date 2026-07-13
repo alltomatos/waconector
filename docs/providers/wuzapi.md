@@ -229,6 +229,13 @@ busca exaustiva por "newsletter" em `routes.go` só encontrou essa uma rota (`GE
 Só newsletters/canais que a própria conta já está inscrita aparecem na listagem — não há como
 descobrir/entrar em canais novos com o que existe hoje neste provider.
 
+## Perfil comercial (`business.*`, ADR-0018) — NÃO implementado
+
+Busca negativa confirmada ao vivo em `handlers.go` (fonte já cacheada nesta sessão): nenhuma
+menção a "business" no arquivo inteiro — nenhum endpoint para ler/editar o perfil comercial da
+instância. Limitação real de plataforma (mesma raiz whatsmeow do Evolution GO, ver dossiê desse
+provider), não gap de pesquisa. `WaAdapter.business` não implementado.
+
 ## Conversas (`chats.*`)
 
 | Operação canônica | Endpoint | Observações |

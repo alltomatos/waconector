@@ -201,6 +201,13 @@ describe('capabilities no conector', () => {
     expect(channelsFollowFailure).toBeInstanceOf(UnsupportedCapabilityError);
     const channelsUnfollowFailure = await reject(wa.channels.unfollow('channel-1'));
     expect(channelsUnfollowFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const businessGetProfileFailure = await reject(wa.business.getProfile());
+    expect(businessGetProfileFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const businessUpdateProfileFailure = await reject(
+      wa.business.updateProfile({ description: 'Nova descrição' }),
+    );
+    expect(businessUpdateProfileFailure).toBeInstanceOf(UnsupportedCapabilityError);
   });
 
   it('adapter que declara messages.forward sem implementar o método falha com PROVIDER_ERROR', async () => {
@@ -274,6 +281,16 @@ describe('capabilities no conector', () => {
     const wa = createConnector(adapter);
 
     const failure = await reject(wa.channels.list());
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('adapter que declara business.getProfile mas não implementa o namespace business inteiro falha com PROVIDER_ERROR (nunca TypeError)', async () => {
+    const adapter = new MockAdapter({ capabilities: ['business.getProfile', 'webhooks.parse'] });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (business inteiro ausente, mesmo com a capability declarada) para testar o guard-rail do conector.
+    (adapter as any).business = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.business.getProfile());
     expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
 
@@ -907,6 +924,30 @@ describe('validação e normalização de channels.*', () => {
     expect(adapter.isFollowingChannel(channel.id)).toBe(true);
     await wa.channels.unfollow(channel.id);
     expect(adapter.isFollowingChannel(channel.id)).toBe(false);
+  });
+});
+
+describe('validação e normalização de business.*', () => {
+  it('rejeita updateProfile sem nenhum campo (description/address/email) com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.business.updateProfile({}));
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('getProfile/updateProfile refletem um patch parcial aplicado', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    expect((await wa.business.getProfile()).description).toBeUndefined();
+    await wa.business.updateProfile({ description: 'Loja de exemplo', email: 'loja@exemplo.com' });
+    expect(await wa.business.getProfile()).toMatchObject({
+      description: 'Loja de exemplo',
+      email: 'loja@exemplo.com',
+    });
   });
 });
 

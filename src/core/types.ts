@@ -295,6 +295,32 @@ export interface CreateChannelInput {
   description?: string;
 }
 
+/**
+ * Perfil comercial WhatsApp Business (ver ADR-0018) — distinto do perfil PESSOAL do WhatsApp
+ * (nome/about/foto, fora de escopo aqui). `categories` é normalizado para uma lista de nomes
+ * (o shape completo do objeto categoria diverge entre providers: uazapi usa
+ * `{id, localized_display_name}`, Z-API usa `{id, label, displayName}` — o valor bruto por
+ * categoria fica só em `raw`, mesmo critério já usado para `LabelInfo.color`/ADR-0016).
+ */
+export interface BusinessProfile {
+  description?: string;
+  address?: string;
+  email?: string;
+  websites?: string[];
+  categories?: string[];
+  raw: unknown;
+}
+
+/**
+ * Ver ADR-0018. Ao menos 1 campo é obrigatório (o conector valida isso antes de chamar o
+ * adapter) — nenhum provider confirmado aceita um update totalmente vazio.
+ */
+export interface UpdateBusinessProfileInput {
+  description?: string;
+  address?: string;
+  email?: string;
+}
+
 /** Participante de um grupo, normalizado. Ver ADR-0009. */
 export interface GroupParticipant {
   /** Telefone E.164 sem `+` ou JID explícito — mesma convenção de chatId de mensagem. */

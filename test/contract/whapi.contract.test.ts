@@ -441,6 +441,22 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { success: true });
     }
 
+    // business.getProfile (ADR-0018): GET /business.
+    if (method === 'GET' && pathname === '/business') {
+      return jsonResponse(200, {
+        id: '5511999999999@s.whatsapp.net',
+        description: 'Loja de contrato',
+        address: 'Rua Contrato, 1',
+        email: 'contrato@exemplo.com',
+        websites: ['https://exemplo.com'],
+      });
+    }
+
+    // business.updateProfile (ADR-0018): POST /business.
+    if (method === 'POST' && pathname === '/business') {
+      return jsonResponse(200, { sent: true });
+    }
+
     throw new Error(`fetchStub (whapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1727,6 +1743,52 @@ describe('whapi adapter: comportamento específico do provider', () => {
         method: 'DELETE',
         path: '/newsletters/111111111111111111%40newsletter/subscription',
         body: undefined,
+      },
+    ]);
+  });
+
+  it('business.getProfile chama GET /business e mapeia campos flat (sem categories)', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+
+    const profile = await wa.business.getProfile();
+
+    expect(profile).toEqual({
+      description: 'Loja de contrato',
+      address: 'Rua Contrato, 1',
+      email: 'contrato@exemplo.com',
+      websites: ['https://exemplo.com'],
+      categories: undefined,
+      raw: expect.anything(),
+    });
+  });
+
+  it('business.updateProfile chama POST /business (não PATCH) com o patch e resolve void', async () => {
+    const calls: Array<{ method: string; body: unknown }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/business') {
+            calls.push({
+              method: (init?.method ?? 'GET').toUpperCase(),
+              body: init?.body ? JSON.parse(String(init.body)) : undefined,
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.business.updateProfile({ description: 'Nova descrição', email: 'novo@exemplo.com' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([
+      {
+        method: 'POST',
+        body: { description: 'Nova descrição', address: undefined, email: 'novo@exemplo.com' },
       },
     ]);
   });
