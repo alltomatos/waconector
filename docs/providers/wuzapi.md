@@ -236,6 +236,21 @@ menção a "business" no arquivo inteiro — nenhum endpoint para ler/editar o p
 instância. Limitação real de plataforma (mesma raiz whatsmeow do Evolution GO, ver dossiê desse
 provider), não gap de pesquisa. `WaAdapter.business` não implementado.
 
+## Chamadas de voz (`calls.reject`, ADR-0019)
+
+Cobertura 1/2 — só `reject`, confiança Alta no endpoint / Média na usabilidade.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `calls.reject` | `POST /call/reject` | Código confirmado em `handlers.go:6915-6971`, **não documentado** no `API.md`. Body em **snake_case** (diferente do resto da API): `{call_from, call_id}`, AMBOS obrigatórios. Resposta `{Details, CallID}` (dentro do envelope `Respond()`) — ignorada, contrato exige `Promise<void>`. |
+
+**Nuance**: para chamar este endpoint o consumidor precisa saber o `call_id`/`call_from` de uma
+chamada recebida — isso normalmente viria de um evento de webhook de tipo `"Call"`/`CallOffer`,
+que este adapter não reconhece hoje (`parseWebhookUnsafe` não tem nenhum `case` para eventos de
+chamada — cairiam em `unknown`). Este adapter lança `INVALID_INPUT` se `callerId`/`callId`
+faltarem. **Sem `calls.make`**: busca exaustiva por "call" em `routes.go` só encontrou essa uma
+rota — nenhum endpoint para originar chamada.
+
 ## Conversas (`chats.*`)
 
 | Operação canônica | Endpoint | Observações |

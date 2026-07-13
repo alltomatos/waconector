@@ -13,14 +13,14 @@ Nenhuma linha aqui é escrita à mão.
 
 ## Resumo por provider
 
-- **waha**: 56/66
-- **evolution**: 50/66
-- **uazapi**: 60/66
-- **zapi**: 47/66
-- **wuzapi**: 41/66
-- **whapi**: 65/66
-- **quepasa**: 24/66
-- **wppconnect**: 56/66
+- **waha**: 57/68
+- **evolution**: 51/68
+- **uazapi**: 62/68
+- **zapi**: 48/68
+- **wuzapi**: 42/68
+- **whapi**: 66/68
+- **quepasa**: 24/68
+- **wppconnect**: 57/68
 
 ## Detalhe por namespace
 
@@ -133,6 +133,13 @@ Nenhuma linha aqui é escrita à mão.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `business.getProfile` | — | — | ✅ | — | — | ✅ | — | — |
 | `business.updateProfile` | — | — | ✅ | — | — | ✅ | — | ✅ |
+
+### `calls.*`
+
+| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `calls.make` | — | — | ✅ | ✅ | — | — | — | — |
+| `calls.reject` | ✅ | ✅ | ✅ | — | ✅ | ✅ | — | ✅ |
 
 ### `webhooks.*`
 

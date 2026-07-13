@@ -21,9 +21,11 @@ import type {
   JoinGroupInviteInput,
   LabelChatInput,
   LabelInfo,
+  MakeCallInput,
   MarkMessageReadInput,
   PinMessageInput,
   PresenceState,
+  RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -215,6 +217,16 @@ export interface BusinessApi {
 }
 
 /**
+ * Namespace novo (ADR-0019), inteiramente OPCIONAL — mesmo padrão de `chats?`/`presence?`/
+ * `labels?`/`channels?`/`business?`. Chamadas de voz — `make` é uma "chamada vazia" (só toca,
+ * sem áudio real, ver `MakeCallInput`); `reject` rejeita uma chamada recebida.
+ */
+export interface CallsApi {
+  make?(input: MakeCallInput): Promise<void>;
+  reject?(input: RejectCallInput): Promise<void>;
+}
+
+/**
  * Contrato que todo adapter de provider implementa.
  *
  * O adapter é "burro" de propósito: apenas traduz o modelo canônico de/para o
@@ -243,5 +255,7 @@ export interface WaAdapter {
   readonly channels?: ChannelsApi;
   /** Namespace OPCIONAL (ADR-0018) — mesmo critério de `chats?` acima. */
   readonly business?: BusinessApi;
+  /** Namespace OPCIONAL (ADR-0019) — mesmo critério de `chats?` acima. */
+  readonly calls?: CallsApi;
   parseWebhook(input: WebhookInput): CanonicalEvent[];
 }

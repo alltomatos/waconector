@@ -450,6 +450,20 @@ Cobertura 2/2, confiança Alta — a MELHOR cobertura desta ADR, empatada com ua
 `business.getOrderItems`, `business.getReachoutTimelock`/`getNewChatLimit` — feature de e-commerce
 do WhatsApp Business, fora do foco de mensageria deste pacote nesta rodada.
 
+## Chamadas de voz (`calls.reject`, ADR-0019)
+
+Cobertura 1/2 — só `reject`, confiança Alta.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `calls.reject` | `DELETE /calls/{CallID}` (`operationId: rejectCall`) | Body `RejectCallRequest {callFrom}` obrigatório. Existe uma rota duplicada e obsoleta (`POST /calls/{CallID}/reject`, `operationId: rejectCallDeprecated`) — não usada por este adapter. `callId`/`callerId` só disponíveis inspecionando o payload bruto do webhook de chamada recebida (este pacote não faz parsing desse evento ainda) — lança `INVALID_INPUT` se faltarem. |
+
+**Sem `calls.make`** — os únicos candidatos (`calls.createEvent`, `POST /calls`, corpo só
+`{start_time}`; `calls.createGroupLink`, `POST /calls/group_link`) têm semântica ambígua/baixa
+confiança: a API não origina chamadas de voz/vídeo reais (WhatsApp não permite isso via API
+não-oficial) — mais provável que sirvam para registrar/agendar um evento associado a um link
+compartilhável, não para "ligar" de fato.
+
 ## Conversas (`chats.*`, ADR-0012)
 
 Namespace novo de gestão de ESTADO da conversa (distinto de `messages.*`, que age sobre UMA

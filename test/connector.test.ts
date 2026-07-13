@@ -208,6 +208,11 @@ describe('capabilities no conector', () => {
       wa.business.updateProfile({ description: 'Nova descrição' }),
     );
     expect(businessUpdateProfileFailure).toBeInstanceOf(UnsupportedCapabilityError);
+
+    const callsMakeFailure = await reject(wa.calls.make({ to: '5585999999999' }));
+    expect(callsMakeFailure).toBeInstanceOf(UnsupportedCapabilityError);
+    const callsRejectFailure = await reject(wa.calls.reject({}));
+    expect(callsRejectFailure).toBeInstanceOf(UnsupportedCapabilityError);
   });
 
   it('adapter que declara messages.forward sem implementar o método falha com PROVIDER_ERROR', async () => {
@@ -291,6 +296,16 @@ describe('capabilities no conector', () => {
     const wa = createConnector(adapter);
 
     const failure = await reject(wa.business.getProfile());
+    expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('adapter que declara calls.make mas não implementa o namespace calls inteiro falha com PROVIDER_ERROR (nunca TypeError)', async () => {
+    const adapter = new MockAdapter({ capabilities: ['calls.make', 'webhooks.parse'] });
+    // biome-ignore lint/suspicious/noExplicitAny: força um adapter inconsistente (calls inteiro ausente, mesmo com a capability declarada) para testar o guard-rail do conector.
+    (adapter as any).calls = undefined;
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.calls.make({ to: '5585999999999' }));
     expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
   });
 
@@ -948,6 +963,38 @@ describe('validação e normalização de business.*', () => {
       description: 'Loja de exemplo',
       email: 'loja@exemplo.com',
     });
+  });
+});
+
+describe('validação e normalização de calls.*', () => {
+  it('normaliza "to" em make e "callerId" em reject como chatId comum', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    await expect(wa.calls.make({ to: '5585999999999' })).resolves.toBeUndefined();
+    await expect(
+      wa.calls.reject({ callId: 'call-1', callerId: '5585999999999' }),
+    ).resolves.toBeUndefined();
+    await expect(wa.calls.reject({})).resolves.toBeUndefined();
+  });
+
+  it('rejeita callerId vazio (string) em reject com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.calls.reject({ callerId: '' }));
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
+  });
+
+  it('rejeita "to" vazio em make com INVALID_INPUT', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    const failure = await reject(wa.calls.make({ to: '' }));
+    expect(isWaConnectorError(failure) && failure.code === 'INVALID_INPUT').toBe(true);
   });
 });
 

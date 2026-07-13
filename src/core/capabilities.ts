@@ -72,6 +72,8 @@ export const CAPABILITIES = [
   'channels.unfollow',
   'business.getProfile',
   'business.updateProfile',
+  'calls.make',
+  'calls.reject',
   'webhooks.parse',
 ] as const;
 

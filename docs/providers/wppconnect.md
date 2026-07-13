@@ -559,6 +559,16 @@ investigada pelo relatório original).
 `get-order-by-messageId/:messageId` — as duas últimas são de CATÁLOGO/PEDIDOS (fora do escopo desta
 ADR), nenhuma rota de leitura de perfil comercial existe.
 
+## Chamadas de voz (`calls.reject`, ADR-0019)
+
+Cobertura 1/2 — só `reject`, achado ao vivo em `routes.ts`.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `calls.reject` | `POST /api/{session}/reject-call` (`DeviceController.rejectCall`) | Body `{callId}` — **ÚNICO campo exigido** (`req.client.rejectCall(callId)`, sem `callerId`), diferente de WAHA/Whapi/Wuzapi/Evolution GO, que exigem também quem originou a chamada. `callId` só disponível inspecionando o payload bruto do webhook de chamada recebida (este pacote não faz parsing desse evento ainda) — lança `INVALID_INPUT` se faltar. Resposta é o resultado bruto de `client.rejectCall`, shape não confirmado com confiança — ignorada. |
+
+**Sem `calls.make`** — nenhum endpoint para originar chamada foi encontrado em `routes.ts`.
+
 ## Grupos
 
 14 operações confirmadas com endpoint. Todos POST/GET, nenhum PUT/PATCH/DELETE (confirmado em

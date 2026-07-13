@@ -1,5 +1,6 @@
 import type {
   BusinessApi,
+  CallsApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -37,6 +38,7 @@ import type {
   JoinGroupInviteInput,
   LabelChatInput,
   LabelInfo,
+  MakeCallInput,
   MarkMessageReadInput,
   MediaKind,
   MediaRef,
@@ -44,6 +46,7 @@ import type {
   MessageKind,
   PinMessageInput,
   PresenceState,
+  RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -156,6 +159,8 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'channels.unfollow',
   'business.getProfile',
   'business.updateProfile',
+  'calls.make',
+  'calls.reject',
   'webhooks.parse',
 ];
 
@@ -271,6 +276,17 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     updateProfile: (input) => updateBusinessProfile(http, input),
   };
 
+  /**
+   * Namespace `calls.*` (ADR-0019). Cobertura 2/2, confiança Alta — a MELHOR desta ADR: `make` é
+   * uma "chamada vazia" (só toca, sem áudio real); `reject` aceita corpo vazio (rejeita a chamada
+   * ativa no momento, sem precisar de `callId`/`callerId` — único provider desta ADR com essa
+   * conveniência).
+   */
+  const calls: CallsApi = {
+    make: (input) => makeCall(http, input),
+    reject: (input) => rejectCall(http, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: UAZAPI_CAPABILITIES,
@@ -283,6 +299,7 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     labels,
     channels,
     business,
+    calls,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1454,6 +1471,39 @@ function mapUazapiBusinessProfile(body: unknown): BusinessProfile {
     categories: categories.length > 0 ? categories : undefined,
     raw: body,
   };
+}
+
+// ---------------------------------------------------------------------------
+// calls.* (ver ADR-0019)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /call/make` (confiança Alta). Body `{number, call_duration?}` — **nuance importante
+ * (chamada "vazia", não uma chamada real)**: o contato recebe uma ligação de voz normal (o
+ * telefone toca), mas "ao contato atender, ele não ouvirá nada, e você também não ouvirá nada" —
+ * não estabelece áudio de fato, só simula o toque (usado tipicamente para notificar/"acordar" um
+ * contato ou testar liveness da conexão). `call_duration` encerra a chamada automaticamente após
+ * N segundos, sem precisar chamar `calls.reject`.
+ */
+async function makeCall(http: HttpClient, input: MakeCallInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/call/make',
+    body: { number: toUazapiNumber(input.to), call_duration: input.durationSeconds },
+  });
+}
+
+/**
+ * `POST /call/reject` (confiança Alta). Body `{number?, id?}` — **ambos opcionais**; corpo vazio
+ * `{}` é o uso recomendado pela própria doc (rejeita a chamada ativa no momento, sem precisar
+ * identificá-la) — único provider desta ADR com essa conveniência.
+ */
+async function rejectCall(http: HttpClient, input: RejectCallInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/call/reject',
+    body: { number: input.callerId, id: input.callId },
+  });
 }
 
 // ---------------------------------------------------------------------------

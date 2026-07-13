@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type {
+  CallsApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -47,6 +48,7 @@ import type {
   MediaRef,
   MessageAck,
   MessageKind,
+  RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -146,6 +148,7 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'channels.create',
   'channels.getInfo',
   'channels.follow',
+  'calls.reject',
   'webhooks.parse',
 ];
 
@@ -260,6 +263,17 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     follow: (channelId) => followChannel(http, channelId),
   };
 
+  /**
+   * Namespace `calls.*` (ADR-0019). Cobertura 1/2 — só `reject` (código confirmado em
+   * `call_handler.go`/`call_service.go`, achado ao vivo). `callCreator`/`callId` são AMBOS
+   * obrigatórios — na prática só disponíveis inspecionando o payload bruto do webhook de chamada
+   * recebida (este pacote não faz parsing desse evento ainda). Sem `calls.make`: `CallService` só
+   * expõe `RejectCall`, nenhum método para originar chamada.
+   */
+  const calls: CallsApi = {
+    reject: (input) => rejectCall(http, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: EVOLUTION_CAPABILITIES,
@@ -271,6 +285,7 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     presence,
     labels,
     channels,
+    calls,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1415,6 +1430,34 @@ function mapEvolutionChannel(
   const subscribersCount =
     subscribersCountRaw === undefined ? undefined : Number(subscribersCountRaw);
   return { id, name, description, subscribersCount, raw: body };
+}
+
+// ---------------------------------------------------------------------------
+// calls.* (ver ADR-0019)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /call/reject` (código confirmado em `call_handler.go`/`call_service.go`, achado ao vivo).
+ * Body `RejectCallStruct {callCreator: types.JID, callId: string}` — `callCreator` é serializado
+ * como STRING simples (mesmo achado do `jid` de `channels.*`: `types.JID` implementa
+ * `MarshalText`/`UnmarshalText`), então `callerId` é repassado sem transformação (função
+ * identidade, ver `toEvolutionChannelId`). AMBOS os campos são obrigatórios — na prática só
+ * disponíveis inspecionando o payload bruto do webhook de chamada recebida (este pacote não faz
+ * parsing desse evento ainda).
+ */
+async function rejectCall(http: HttpClient, input: RejectCallInput): Promise<void> {
+  if (!input.callerId || !input.callId) {
+    throw new WaConnectorError(
+      'INVALID_INPUT',
+      'calls.reject no Evolution GO exige "callerId" e "callId" (body {callCreator, callId}).',
+      { provider: PROVIDER },
+    );
+  }
+  await http.request({
+    method: 'POST',
+    path: '/call/reject',
+    body: { callCreator: toEvolutionChannelId(input.callerId), callId: input.callId },
+  });
 }
 
 // ---------------------------------------------------------------------------

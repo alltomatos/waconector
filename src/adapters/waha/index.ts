@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type {
+  CallsApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -37,6 +38,7 @@ import type {
   MediaRef,
   MessageAck,
   MessageKind,
+  RejectCallInput,
   SentMessage,
   StarMessageInput,
   WaMessage,
@@ -134,6 +136,7 @@ const WAHA_CAPABILITIES: CapabilitySet = [
   'channels.delete',
   'channels.follow',
   'channels.unfollow',
+  'calls.reject',
   'webhooks.parse',
 ];
 
@@ -899,6 +902,17 @@ export function waha(options: WahaOptions): WaAdapter {
     },
   };
 
+  /**
+   * Namespace `calls.*` (ADR-0019). Cobertura 1/2 — só `reject` (confiança Média: schema
+   * confirmado no `openapi.json`, mas sem página de doc dedicada). `from`/`id` são AMBOS
+   * obrigatórios (schema `RejectCallRequest`) — na prática só disponíveis inspecionando o payload
+   * bruto do webhook de chamada recebida, já que este pacote não faz parsing desse evento ainda
+   * (cai em `unknown`). Sem `calls.make`: não encontrado nenhum endpoint para originar chamada.
+   */
+  const calls: CallsApi = {
+    reject: async (input) => rejectCall(http, session, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WAHA_CAPABILITIES,
@@ -910,8 +924,37 @@ export function waha(options: WahaOptions): WaAdapter {
     presence,
     labels,
     channels,
+    calls,
     parseWebhook: (input) => parseWahaWebhook(input, session, options.webhookHmacKey),
   };
+}
+
+// ---------------------------------------------------------------------------
+// calls.* (ver ADR-0019)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /api/{session}/calls/reject` (schema `RejectCallRequest {from, id}`, ambos obrigatórios,
+ * confiança Média). Lança `INVALID_INPUT` se algum dos dois faltar — diferente da uazapi, este
+ * provider não aceita corpo vazio.
+ */
+async function rejectCall(
+  http: HttpClient,
+  session: string,
+  input: RejectCallInput,
+): Promise<void> {
+  if (!input.callerId || !input.callId) {
+    throw new WaConnectorError(
+      'INVALID_INPUT',
+      'calls.reject no WAHA exige "callerId" e "callId" (schema RejectCallRequest {from, id}).',
+      { provider: PROVIDER },
+    );
+  }
+  await http.request({
+    method: 'POST',
+    path: `/api/${encodeURIComponent(session)}/calls/reject`,
+    body: { from: input.callerId, id: input.callId },
+  });
 }
 
 // ---------------------------------------------------------------------------

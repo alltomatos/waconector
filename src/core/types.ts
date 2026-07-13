@@ -321,6 +321,29 @@ export interface UpdateBusinessProfileInput {
   email?: string;
 }
 
+/**
+ * Ver ADR-0019. Origina uma chamada de voz — nuance real e universal entre os 2 providers
+ * confirmados (uazapi/Z-API): NÃO estabelece áudio de fato ("chamada vazia"), só faz o telefone
+ * tocar (usado tipicamente para notificar/"acordar" um contato ou testar liveness da conexão).
+ */
+export interface MakeCallInput {
+  to: string;
+  durationSeconds?: number;
+}
+
+/**
+ * Ver ADR-0019. `callId`/`callerId` são obrigatórios em WAHA/Whapi/Wuzapi/Evolution GO
+ * (identificam a chamada específica a rejeitar — só disponíveis inspecionando o payload bruto do
+ * webhook recebido, já que este pacote não faz parsing de eventos de chamada nesta rodada);
+ * WPPConnect exige só `callId`; uazapi não exige nenhum dos dois (corpo vazio rejeita a chamada
+ * ativa no momento). `callerId` é normalizado como um chatId comum (não é opaco, ao contrário de
+ * `callId`, que é um identificador de chamada específico do provider).
+ */
+export interface RejectCallInput {
+  callId?: string;
+  callerId?: string;
+}
+
 /** Participante de um grupo, normalizado. Ver ADR-0009. */
 export interface GroupParticipant {
   /** Telefone E.164 sem `+` ou JID explícito — mesma convenção de chatId de mensagem. */
