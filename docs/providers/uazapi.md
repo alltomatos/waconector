@@ -536,6 +536,15 @@ total pelo contrato canônico (`updateProfile` continua "tudo ou nada" para o ch
 `business.catalog.list/info/hide/show/delete` (visibilidade de produtos do catálogo — sem endpoint
 de criação; feature de e-commerce, fora do foco de mensageria deste pacote).
 
+## Chamadas de voz (`calls.*`, ADR-0019)
+
+Cobertura 2/2, confiança Alta — a MELHOR cobertura desta ADR.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `calls.make` | `POST /call/make` | Body `{number, call_duration?}`. **Nuance importante (chamada "vazia", não uma chamada real)**: o contato recebe uma ligação de voz normal (o telefone toca), mas "ao contato atender, ele não ouvirá nada, e você também não ouvirá nada" — não estabelece áudio de fato, só simula o toque (usado tipicamente para notificar/"acordar" um contato ou testar liveness da conexão). `call_duration` encerra a chamada automaticamente após N segundos, sem precisar chamar `calls.reject`. |
+| `calls.reject` | `POST /call/reject` | Body `{number?, id?}` — **ambos opcionais**; corpo vazio `{}` é o uso recomendado pela própria doc (rejeita a chamada ativa no momento, sem precisar identificá-la) — único provider desta ADR com essa conveniência (os demais exigem `callId`/`callerId`, obtidos de um webhook de chamada recebida que este pacote não faz parsing ainda). |
+
 ## Chats (gestão de estado da conversa)
 
 Namespace `chats.*` introduzido pelo ADR-0012 — distinto de `contacts.*` (sobre a pessoa/JID) e de

@@ -350,6 +350,20 @@ nenhum endpoint para ler/editar o PRÓPRIO perfil comercial da instância. Limit
 plataforma (mesma raiz whatsmeow do Wuzapi, ver dossiê desse provider), não gap de pesquisa.
 `WaAdapter.business` não implementado.
 
+## Chamadas de voz (`calls.reject`, ADR-0019)
+
+Cobertura 1/2 — só `reject`, achado ao vivo (`call_handler.go`/`call_service.go`, não mencionado
+no relatório original).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `calls.reject` | `POST /call/reject` | Body `RejectCallStruct {callCreator: types.JID, callId: string}`, AMBOS obrigatórios. `callCreator` é serializado como STRING simples (mesmo achado do `jid` de `channels.*`: `types.JID` implementa `MarshalText`/`UnmarshalText`) — `callerId` repassado sem transformação (`toEvolutionChannelId`). |
+
+**Sem `calls.make`**: a interface `CallService` só expõe `RejectCall(data, instance) error` — nenhum
+método para originar chamada. `callId`/`callerId` só disponíveis inspecionando o payload bruto do
+webhook de chamada recebida (este pacote não faz parsing desse evento ainda) — lança
+`INVALID_INPUT` se faltarem.
+
 ## Grupos (núcleo)
 
 As 14 operações de `groups.*` (ver ADR-0009) são suportadas por este adapter. **Nenhuma das 4

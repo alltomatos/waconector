@@ -457,6 +457,11 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { sent: true });
     }
 
+    // calls.reject (ADR-0019): DELETE /calls/{CallID}.
+    if (method === 'DELETE' && /^\/calls\/[^/]+$/.test(pathname)) {
+      return jsonResponse(200, { sent: true });
+    }
+
     throw new Error(`fetchStub (whapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1791,6 +1796,63 @@ describe('whapi adapter: comportamento específico do provider', () => {
         body: { description: 'Nova descrição', address: undefined, email: 'novo@exemplo.com' },
       },
     ]);
+  });
+
+  it('calls.reject chama DELETE /calls/{CallID} com {callFrom}', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (/^\/calls\/[^/]+$/.test(url.pathname)) {
+            calls.push({
+              path: url.pathname,
+              body: init?.body ? JSON.parse(String(init.body)) : undefined,
+            });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.calls.reject({ callId: 'CALL123', callerId: '5585999999999' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ path: '/calls/CALL123', body: { callFrom: '5585999999999' } }]);
+  });
+
+  it('calls.reject exige callId e callerId com INVALID_INPUT quando algum faltar', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+
+    const missingCallId = await wa.calls.reject({ callerId: '5585999999999' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(missingCallId) && missingCallId.code === 'INVALID_INPUT').toBe(true);
+
+    const missingCallerId = await wa.calls.reject({ callId: 'CALL123' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(missingCallerId) && missingCallerId.code === 'INVALID_INPUT').toBe(
+      true,
+    );
+  });
+
+  it('não declara "calls.make" (candidatos createEvent/createGroupLink têm semântica ambígua, não originam chamada real) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = whapi(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('calls.make');
+    expect(adapter.calls?.make).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const failure = await wa.calls.make({ to: '5585999999999' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'UNSUPPORTED_CAPABILITY').toBe(true);
   });
 
   it('chats.archive/unarchive enviam POST /chats/{ChatID} com {archive: boolean}', async () => {

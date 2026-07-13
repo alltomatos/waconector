@@ -1,5 +1,6 @@
 import type {
   BusinessApi,
+  CallsApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -64,6 +65,7 @@ export class MockAdapter implements WaAdapter {
   readonly labels: LabelsApi;
   readonly channels: ChannelsApi;
   readonly business: BusinessApi;
+  readonly calls: CallsApi;
 
   private state: InstanceState;
   private seq = 0;
@@ -466,6 +468,17 @@ export class MockAdapter implements WaAdapter {
           ...(input.email !== undefined ? { email: input.email } : {}),
           raw: { mock: true, input },
         };
+      },
+    };
+
+    this.calls = {
+      make: async (input) => {
+        this.assertConnected();
+        void input;
+      },
+      reject: async (input) => {
+        this.assertConnected();
+        void input;
       },
     };
   }

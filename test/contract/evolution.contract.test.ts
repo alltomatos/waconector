@@ -413,6 +413,11 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { message: 'success' });
     }
 
+    // calls.reject (ADR-0019): POST /call/reject.
+    if (method === 'POST' && url.pathname === '/call/reject') {
+      return jsonResponse(200, { message: 'success' });
+    }
+
     throw new Error(`fetchStub (evolution): rota não configurada ${method} ${url.pathname}`);
   };
 }
@@ -1842,6 +1847,61 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
         expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
       }
     }
+  });
+
+  it('calls.reject chama POST /call/reject com {callCreator, callId}', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchStub: typeof globalThis.fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/call/reject') {
+        calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      }
+      return createFetchStub()(input, init);
+    };
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: fetchStub,
+    });
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.calls.reject({ callerId: '5585999999999', callId: 'call-1' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ callCreator: '5585999999999', callId: 'call-1' }]);
+  });
+
+  it('calls.reject exige callerId e callId com INVALID_INPUT quando algum faltar', async () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+    const wa = createConnector(adapter);
+
+    const missingCallId = await wa.calls.reject({ callerId: '5585999999999' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(missingCallId) && missingCallId.code === 'INVALID_INPUT').toBe(true);
+
+    const missingCallerId = await wa.calls.reject({ callId: 'call-1' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(missingCallerId) && missingCallerId.code === 'INVALID_INPUT').toBe(
+      true,
+    );
+  });
+
+  it('não declara "calls.make" (CallService só expõe RejectCall) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = evolution({ baseUrl: FAKE_BASE_URL, apiKey: FAKE_INSTANCE_TOKEN });
+    expect(adapter.capabilities).not.toContain('calls.make');
+    expect(adapter.calls?.make).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const failure = await wa.calls.make({ to: '5585999999999' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'UNSUPPORTED_CAPABILITY').toBe(true);
   });
 
   it('chats.* declara só archive/mute/pin/unpin — sem unarchive/unmute/markRead/markUnread (sem endpoint confirmado no OpenAPI oficial, ver docs/providers/evolution.md)', () => {

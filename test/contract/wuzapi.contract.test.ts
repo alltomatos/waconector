@@ -426,6 +426,15 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    // calls.reject (ADR-0019): POST /call/reject.
+    if (method === 'POST' && pathname === '/call/reject') {
+      return jsonResponse(200, {
+        code: 200,
+        success: true,
+        data: { Details: 'Call rejected', CallID: 'call-1' },
+      });
+    }
+
     throw new Error(`fetchStub (wuzapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1185,6 +1194,60 @@ describe('wuzapi adapter: comportamento específico do provider', () => {
         expect(failure.code).toBe('UNSUPPORTED_CAPABILITY');
       }
     }
+  });
+
+  it('calls.reject chama POST /call/reject com {call_from, call_id} (snake_case)', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = wuzapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/call/reject') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.calls.reject({ callerId: '5585999999999', callId: 'call-1' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ call_from: '5585999999999', call_id: 'call-1' }]);
+  });
+
+  it('calls.reject exige callerId e callId com INVALID_INPUT quando algum faltar', async () => {
+    const adapter = wuzapi(buildAdapterOptions());
+    const wa = createConnector(adapter);
+
+    const missingCallId = await wa.calls.reject({ callerId: '5585999999999' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(missingCallId) && missingCallId.code === 'INVALID_INPUT').toBe(true);
+
+    const missingCallerId = await wa.calls.reject({ callId: 'call-1' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(missingCallerId) && missingCallerId.code === 'INVALID_INPUT').toBe(
+      true,
+    );
+  });
+
+  it('não declara "calls.make" (nenhum endpoint para originar chamada encontrado) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = wuzapi(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('calls.make');
+    expect(adapter.calls?.make).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const failure = await wa.calls.make({ to: '5585999999999' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'UNSUPPORTED_CAPABILITY').toBe(true);
   });
 
   it('não declara chats.mute/unmute/pin/unpin/markRead/markUnread (sem endpoint equivalente confirmado no código-fonte para o contrato canônico)', () => {

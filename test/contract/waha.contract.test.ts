@@ -461,6 +461,11 @@ function createFetchStub(): typeof globalThis.fetch {
       return new Response(null, { status: 201 });
     }
 
+    // calls.reject (ADR-0019): POST /api/{session}/calls/reject.
+    if (method === 'POST' && pathname === `/api/${SESSION}/calls/reject`) {
+      return new Response(null, { status: 201 });
+    }
+
     throw new Error(`fetchStub: rota não configurada — ${method} ${pathname}`);
   };
 }
@@ -1902,6 +1907,62 @@ describe('WAHA adapter: comportamento específico do provider', () => {
         body: undefined,
       },
     ]);
+  });
+
+  it('calls.reject chama POST /api/{session}/calls/reject com {from, id}', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = waha(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/${SESSION}/calls/reject`) {
+            calls.push({ path: url.pathname, body: JSON.parse(String(init?.body)) });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.calls.reject({ callerId: '5585999999999', callId: 'ABCDEFG' }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([
+      { path: `/api/${SESSION}/calls/reject`, body: { from: '5585999999999', id: 'ABCDEFG' } },
+    ]);
+  });
+
+  it('calls.reject exige callerId e callId com INVALID_INPUT quando algum faltar', async () => {
+    const adapter = waha(buildAdapterOptions());
+    const wa = createConnector(adapter);
+
+    const missingCallId = await wa.calls.reject({ callerId: '5585999999999' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(missingCallId) && missingCallId.code === 'INVALID_INPUT').toBe(true);
+
+    const missingCallerId = await wa.calls.reject({ callId: 'ABCDEFG' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(missingCallerId) && missingCallerId.code === 'INVALID_INPUT').toBe(
+      true,
+    );
+  });
+
+  it('não declara "calls.make" (nenhum endpoint para originar chamada encontrado) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = waha(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('calls.make');
+    expect(adapter.calls?.make).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const failure = await wa.calls.make({ to: '5585999999999' }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'UNSUPPORTED_CAPABILITY').toBe(true);
   });
 
   it('parseWebhook normaliza "message.ack" do dossiê para MessageAckEvent', () => {

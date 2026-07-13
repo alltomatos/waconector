@@ -285,6 +285,20 @@ Alternativas). Candidata para uma futura `contacts.getBusinessProfile(chatId)`, 
 Sem endpoint de edição (`PUT`/`POST`) encontrado no índice pesquisado — `business.updateProfile`
 também não implementado.
 
+## Chamadas de voz (`calls.make`, ADR-0019)
+
+Cobertura 1/2 — só `make`, confiança Média-Alta.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `calls.make` | `POST /instances/{id}/token/{token}/send-call` | Body `{phone, callDuration? (padrão 5s, máx 15s documentado — não validado por este adapter, deixado para o provider rejeitar), callAudioUrl?}` — `callAudioUrl` (tocar um áudio durante a "chamada") não exposto pelo contrato canônico: só funciona "para contas que possuem a funcionalidade de chamadas habilitada" (feature paga/opt-in adicional, não confirmada universal). Resposta `{zaapId, messageId, id}` — ignorada, contrato exige `Promise<void>`. |
+
+**`calls.reject` deliberadamente NÃO implementado** — busca no índice de endpoints não encontrou
+uma ação "rejeitar ESTA chamada". Os únicos campos relacionados (`callRejectAuto`/
+`callRejectMessage`, vistos em `GET /me`) são uma CONFIGURAÇÃO de conta (auto-rejeição automática +
+mensagem enviada ao rejeitar), não uma ação invocável sob demanda — limitação real do provider
+(ou, no mínimo, do que a pesquisa encontrou), não gap de confiança.
+
 ## Grupos (núcleo)
 
 Fonte primária: `developer.z-api.io/group/*` (páginas `create-group`, `group-metadata`,

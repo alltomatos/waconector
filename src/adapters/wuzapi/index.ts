@@ -1,4 +1,5 @@
 import type {
+  CallsApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -43,6 +44,7 @@ import type {
   MessageAck,
   MessageKind,
   PresenceState,
+  RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -142,6 +144,7 @@ const WUZAPI_CAPABILITIES: CapabilitySet = [
   'presence.set',
   'presence.subscribe',
   'channels.list',
+  'calls.reject',
   'webhooks.parse',
 ];
 
@@ -250,6 +253,17 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     list: () => listChannels(http),
   };
 
+  /**
+   * Namespace `calls.*` (ADR-0019). Cobertura 1/2 — só `reject` (confiança Alta no endpoint /
+   * Média na usabilidade). `call_from`/`call_id` são AMBOS obrigatórios — na prática só
+   * disponíveis inspecionando o payload bruto do webhook de chamada recebida (evento
+   * `"Call"`/`CallOffer`, que este adapter não reconhece hoje — cai em `unknown`). Sem
+   * `calls.make`: nenhum endpoint para originar chamada encontrado.
+   */
+  const calls: CallsApi = {
+    reject: (input) => rejectCall(http, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WUZAPI_CAPABILITIES,
@@ -260,6 +274,7 @@ export function wuzapi(options: WuzapiOptions): WaAdapter {
     chats,
     presence,
     channels,
+    calls,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1255,6 +1270,33 @@ function mapWuzapiChannel(body: unknown): ChannelInfo {
   const subscribersCount =
     subscribersCountText === undefined ? undefined : Number(subscribersCountText);
   return { id, name, description, subscribersCount, raw: body };
+}
+
+// ---------------------------------------------------------------------------
+// calls.* (ver ADR-0019)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /call/reject` (confiança Alta no endpoint / Média na usabilidade — código confirmado em
+ * `handlers.go`, não documentado no `API.md`). Body em **snake_case** (diferente do resto da API):
+ * `{call_from, call_id}`, AMBOS obrigatórios — na prática só disponíveis inspecionando o payload
+ * bruto do webhook de chamada recebida (evento `"Call"`/`CallOffer`, que este adapter não
+ * reconhece hoje — cai em `unknown`). Resposta `{Details, CallID}` (dentro do envelope
+ * `Respond()`) — ignorada, contrato exige `Promise<void>`.
+ */
+async function rejectCall(http: HttpClient, input: RejectCallInput): Promise<void> {
+  if (!input.callerId || !input.callId) {
+    throw new WaConnectorError(
+      'INVALID_INPUT',
+      'calls.reject no Wuzapi exige "callerId" e "callId" (body {call_from, call_id}).',
+      { provider: PROVIDER },
+    );
+  }
+  await http.request({
+    method: 'POST',
+    path: '/call/reject',
+    body: { call_from: input.callerId, call_id: input.callId },
+  });
 }
 
 // ---------------------------------------------------------------------------

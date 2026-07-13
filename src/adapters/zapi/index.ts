@@ -1,4 +1,5 @@
 import type {
+  CallsApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -34,6 +35,7 @@ import type {
   InstanceStatus,
   JoinGroupInviteInput,
   LabelInfo,
+  MakeCallInput,
   MarkMessageReadInput,
   MediaKind,
   MediaRef,
@@ -143,6 +145,7 @@ const ZAPI_CAPABILITIES: CapabilitySet = [
   'chats.markUnread',
   'labels.list',
   'channels.create',
+  'calls.make',
   'webhooks.parse',
 ];
 
@@ -263,6 +266,15 @@ export function zapi(options: ZapiOptions): WaAdapter {
     create: (input) => createChannel(http, prefix, input),
   };
 
+  /**
+   * Namespace `calls.*` (ADR-0019). Cobertura 1/2 — só `make` (confiança Média-Alta); nenhum
+   * endpoint de `reject` foi encontrado (`callRejectAuto`/`callRejectMessage` de `GET /me` são
+   * uma configuração de conta de auto-rejeição, não uma ação "rejeitar ESTA chamada").
+   */
+  const calls: CallsApi = {
+    make: (input) => makeCall(http, prefix, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: ZAPI_CAPABILITIES,
@@ -273,6 +285,7 @@ export function zapi(options: ZapiOptions): WaAdapter {
     chats,
     labels,
     channels,
+    calls,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1375,6 +1388,27 @@ async function createChannel(
     description: input.description,
     raw: body,
   };
+}
+
+// ---------------------------------------------------------------------------
+// calls.* (ver ADR-0019)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /instances/{id}/token/{token}/send-call` (confiança Média-Alta). Body
+ * `{phone, callDuration? (padrão 5s, máx 15s documentado — não validado neste adapter, deixado
+ * para o provider rejeitar), callAudioUrl?}` — `callAudioUrl` (tocar um áudio durante a "chamada")
+ * não exposto pelo contrato canônico: só funciona "para contas que possuem a funcionalidade de
+ * chamadas habilitada" (feature paga/opt-in adicional, não confirmada universal). Resposta
+ * `{zaapId, messageId, id}` — ignorada, contrato exige `Promise<void>` (nenhuma capability desta
+ * ADR precisa desses ids de volta).
+ */
+async function makeCall(http: HttpClient, prefix: string, input: MakeCallInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `${prefix}/send-call`,
+    body: { phone: toZapiPhone(input.to), callDuration: input.durationSeconds },
+  });
 }
 
 // ---------------------------------------------------------------------------

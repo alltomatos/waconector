@@ -280,6 +280,16 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { response: 'success' });
     }
 
+    // calls.make (ADR-0019): POST /call/make.
+    if (method === 'POST' && pathname === '/call/make') {
+      return jsonResponse(200, { response: 'success' });
+    }
+
+    // calls.reject (ADR-0019): POST /call/reject.
+    if (method === 'POST' && pathname === '/call/reject') {
+      return jsonResponse(200, { response: 'success' });
+    }
+
     if (method === 'POST' && pathname === '/group/create') {
       return jsonResponse(200, {
         JID: '120363000000000000@g.us',
@@ -2278,6 +2288,48 @@ describe('uazapi adapter: comportamento específico do provider', () => {
     );
 
     expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+  });
+
+  it('calls.make chama POST /call/make com {number, call_duration} e resolve void', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/call/make') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.calls.make({ to: '5585999999999', durationSeconds: 10 }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ number: '5585999999999', call_duration: 10 }]);
+  });
+
+  it('calls.reject chama POST /call/reject com corpo vazio quando nenhum campo é fornecido', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/call/reject') {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(wa.calls.reject({})).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{}]);
   });
 
   it('declara todas as 8 operações de chats.* em capabilities', () => {

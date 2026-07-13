@@ -520,6 +520,19 @@ no `openapi.json` oficial consultado — o WAHA é fundamentalmente um wrapper d
 genérico (engines NOWEB/WEBJS/GOWS), sem integração dedicada com a API oficial de Business.
 Limitação real de plataforma, não gap de pesquisa. `WaAdapter.business` não implementado.
 
+## Chamadas de voz (`calls.reject`, ADR-0019)
+
+Cobertura 1/2 — só `reject`, confiança Média (schema confirmado no `openapi.json`, mas sem página
+de doc dedicada — "How to" específico para calls não encontrado).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `calls.reject` | `POST /api/{session}/calls/reject` | Schema `RejectCallRequest {from, id}`, **ambos obrigatórios**. `id`/`from` claramente vêm do payload do webhook de chamada recebida (`call.received`, hoje não parseado por este pacote — cai em `unknown`) — este adapter lança `INVALID_INPUT` se `callerId`/`callId` faltarem, diferente da uazapi, que aceita corpo vazio. |
+
+**Sem `calls.make`** — nenhum endpoint para originar chamada foi encontrado nesta pesquisa (WAHA é
+um wrapper de engines de WhatsApp Web — whatsapp-web.js/NOWEB/GOWS — que, como a maioria das
+implementações reversas do protocolo, não expõe originar chamadas de voz/vídeo).
+
 ## Conversas (`chats.*`, retrofit ADR-0012)
 
 Namespace novo (ADR-0012) de gestão de estado de conversa. Cobertura real na pesquisa de

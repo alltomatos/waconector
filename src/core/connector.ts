@@ -1,5 +1,6 @@
 import type {
   BusinessApi,
+  CallsApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -34,10 +35,12 @@ import type {
   JoinGroupInviteInput,
   LabelChatInput,
   LabelInfo,
+  MakeCallInput,
   MarkMessageReadInput,
   MediaRef,
   PinMessageInput,
   PresenceState,
+  RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -198,6 +201,16 @@ export interface ConnectorBusinessApi {
 }
 
 /**
+ * `CallsApi` exposta pelo conector: todo método sempre presente (diferente da interface do
+ * adapter, onde o NAMESPACE INTEIRO é opcional — ver ADR-0019, mesmo critério de `ChatsApi`/
+ * `PresenceApi`/`LabelsApi`/`ChannelsApi`/`BusinessApi`).
+ */
+export interface ConnectorCallsApi {
+  make(input: MakeCallInput): Promise<void>;
+  reject(input: RejectCallInput): Promise<void>;
+}
+
+/**
  * Camada de ergonomia e política sobre um adapter: checagem de capabilities,
  * validação e normalização de entrada, eventos e parsing seguro de webhooks.
  */
@@ -214,6 +227,7 @@ export class WaConnector {
   readonly labels: ConnectorLabelsApi;
   readonly channels: ConnectorChannelsApi;
   readonly business: ConnectorBusinessApi;
+  readonly calls: ConnectorCallsApi;
   readonly webhooks: WebhooksApi;
 
   private readonly listeners = new Map<string, Set<AnyListener>>();
@@ -464,6 +478,13 @@ export class WaConnector {
         this.callBusinessMethod('updateProfile', 'business.updateProfile', (fn) =>
           fn(this.prepareUpdateBusinessProfile(input)),
         ),
+    };
+
+    this.calls = {
+      make: (input) =>
+        this.callCallsMethod('make', 'calls.make', (fn) => fn(this.prepareMakeCall(input))),
+      reject: (input) =>
+        this.callCallsMethod('reject', 'calls.reject', (fn) => fn(this.prepareRejectCall(input))),
     };
 
     this.webhooks = {
@@ -763,6 +784,33 @@ export class WaConnector {
     return input;
   }
 
+  private prepareMakeCall(input: MakeCallInput): MakeCallInput {
+    return {
+      to: normalizeChatId(this.requireTo(input.to)),
+      durationSeconds: input.durationSeconds,
+    };
+  }
+
+  /**
+   * `callerId`, quando presente, é normalizado como um chatId comum (não é opaco, diferente de
+   * `callId` — ver ADR-0019). A obrigatoriedade de `callId`/`callerId` varia por provider (uazapi
+   * não exige nenhum dos dois; WPPConnect só exige `callId`; WAHA/Whapi/Wuzapi/Evolution GO exigem
+   * ambos) — por isso essa checagem fica no ADAPTER, não aqui (não é uma regra universal).
+   */
+  private prepareRejectCall(input: RejectCallInput): RejectCallInput {
+    if (input.callerId !== undefined && input.callerId.length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'Campo "callerId" não pode ser vazio quando fornecido.',
+        { provider: this.provider },
+      );
+    }
+    return {
+      callId: input.callId,
+      callerId: input.callerId !== undefined ? normalizeChatId(input.callerId) : undefined,
+    };
+  }
+
   /**
    * Guard-rail comum aos métodos opcionais de `MessagesApi` (`sendReaction`/`edit`/`delete`/
    * `forward`/`star`/`unstar`/`pin`/`unpin`/`markRead`/`sendLocation`/`sendContactCard`/
@@ -944,6 +992,28 @@ export class WaConnector {
       );
     }
     return invoke(fn as NonNullable<BusinessApi[K]>);
+  }
+
+  /**
+   * Guard-rail de `calls.*` — mesmo padrão de `callBusinessMethod`/`callChannelsMethod`
+   * (namespace inteiro opcional no adapter, ver ADR-0019).
+   */
+  private async callCallsMethod<K extends keyof CallsApi, R>(
+    method: K,
+    capability: Capability,
+    invoke: (fn: NonNullable<CallsApi[K]>) => Promise<R>,
+  ): Promise<R> {
+    this.assertCapability(capability);
+    const fn = this.adapter.calls?.[method];
+    if (!fn) {
+      throw new WaConnectorError(
+        'PROVIDER_ERROR',
+        `Adapter "${this.provider}" declara a capability "${capability}" mas não implementa ` +
+          `calls.${String(method)} — isso é um bug no adapter, não uma entrada inválida.`,
+        { provider: this.provider },
+      );
+    }
+    return invoke(fn as NonNullable<CallsApi[K]>);
   }
 
   /**

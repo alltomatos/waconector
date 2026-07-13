@@ -519,6 +519,34 @@ describe('MockAdapter: business', () => {
   });
 });
 
+describe('MockAdapter: calls', () => {
+  it('make/reject resolvem quando conectado', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    await expect(wa.calls.make({ to: '5585999999999' })).resolves.toBeUndefined();
+    await expect(wa.calls.reject({})).resolves.toBeUndefined();
+    await expect(
+      wa.calls.reject({ callId: 'call-1', callerId: '5585999999999' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('todo método de calls.* exige instância conectada (INSTANCE_DISCONNECTED)', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+
+    const makeFailure = await reject(wa.calls.make({ to: '5585999999999' }));
+    expect(isWaConnectorError(makeFailure) && makeFailure.code === 'INSTANCE_DISCONNECTED').toBe(
+      true,
+    );
+    const rejectFailure = await reject(wa.calls.reject({}));
+    expect(
+      isWaConnectorError(rejectFailure) && rejectFailure.code === 'INSTANCE_DISCONNECTED',
+    ).toBe(true);
+  });
+});
+
 describe('MockAdapter: groups', () => {
   it('cria um grupo e permite consultá-lo via getInfo/list', async () => {
     const adapter = new MockAdapter();

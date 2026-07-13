@@ -1,5 +1,6 @@
 import type {
   BusinessApi,
+  CallsApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -49,6 +50,7 @@ import type {
   MessageAck,
   MessageKind,
   PresenceState,
+  RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -224,6 +226,7 @@ const WPPCONNECT_CAPABILITIES: CapabilitySet = [
   'channels.create',
   'channels.delete',
   'business.updateProfile',
+  'calls.reject',
   'webhooks.parse',
 ];
 
@@ -342,6 +345,15 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     updateProfile: (input) => updateBusinessProfile(http, session, input),
   };
 
+  /**
+   * Namespace `calls.*` (ADR-0019). Cobertura 1/2 — só `reject`, achado ao vivo em `routes.ts`.
+   * `callId` é o ÚNICO campo exigido (`req.client.rejectCall(callId)`, sem `callerId`) — diferente
+   * de WAHA/Whapi/Wuzapi/Evolution GO. Sem `calls.make`: nenhum endpoint para originar chamada.
+   */
+  const calls: CallsApi = {
+    reject: (input) => rejectCall(http, session, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WPPCONNECT_CAPABILITIES,
@@ -354,6 +366,7 @@ export function wppconnect(options: WppconnectOptions): WaAdapter {
     labels,
     channels,
     business,
+    calls,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1823,6 +1836,37 @@ async function updateBusinessProfile(
     method: 'POST',
     path: sessionPath(session, '/edit-business-profile'),
     body: { adress: input.address, email: input.email },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// calls.* (ver ADR-0019)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /api/{session}/reject-call` (achado ao vivo em `routes.ts`,
+ * `DeviceController.rejectCall`). Body `{callId}` — **ÚNICO campo exigido**
+ * (`req.client.rejectCall(callId)`, sem `callerId`), diferente de WAHA/Whapi/Wuzapi/Evolution GO.
+ * `callId` só disponível inspecionando o payload bruto do webhook de chamada recebida (este
+ * pacote não faz parsing desse evento ainda) — lança `INVALID_INPUT` se faltar. Resposta é o
+ * resultado bruto de `client.rejectCall`, shape não confirmado com confiança — ignorada.
+ */
+async function rejectCall(
+  http: HttpClient,
+  session: string,
+  input: RejectCallInput,
+): Promise<void> {
+  if (!input.callId) {
+    throw new WaConnectorError(
+      'INVALID_INPUT',
+      'calls.reject no WPPConnect exige "callId" (body {callId}).',
+      { provider: PROVIDER },
+    );
+  }
+  await http.request({
+    method: 'POST',
+    path: sessionPath(session, '/reject-call'),
+    body: { callId: input.callId },
   });
 }
 

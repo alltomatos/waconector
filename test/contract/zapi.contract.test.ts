@@ -312,6 +312,11 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { id: '999999999999999999@newsletter' });
     }
 
+    // calls.make (ADR-0019): POST /send-call.
+    if (method === 'POST' && pathname === `${PREFIX}/send-call`) {
+      return jsonResponse(200, { zaapId: 'zaap-1', messageId: 'msg-1', id: 'call-1' });
+    }
+
     throw new Error(`fetchStub (zapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1974,6 +1979,41 @@ describe('zapi adapter: comportamento específico do provider', () => {
       description: 'Descrição',
       raw: expect.anything(),
     });
+  });
+
+  it('calls.make chama POST /send-call com {phone, callDuration} e resolve void', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const adapter = zapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `${PREFIX}/send-call`) {
+            calls.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.calls.make({ to: '5585999999999', durationSeconds: 5 }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([{ phone: '5585999999999', callDuration: 5 }]);
+  });
+
+  it('não declara "calls.reject" (só uma configuração de auto-rejeição em GET /me, não uma ação) e lança UNSUPPORTED_CAPABILITY ao chamar', async () => {
+    const adapter = zapi(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('calls.reject');
+    expect(adapter.calls?.reject).toBeUndefined();
+
+    const wa = createConnector(adapter);
+    const failure = await wa.calls.reject({}).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(isWaConnectorError(failure) && failure.code === 'UNSUPPORTED_CAPABILITY').toBe(true);
   });
 
   it('só declara "channels.create" (demais 8 operações do índice só confirmadas por nome, confiança Baixa) e lança UNSUPPORTED_CAPABILITY ao chamar os demais', async () => {

@@ -457,7 +457,32 @@ pesquisa já produzidos na Epic 7 (`scratchpad/provider-reports/`), sem repetir 
       conflitantes; `docs/capabilities.md` regenerado via `npm run docs:capabilities`; e um hunk
       não-vazio em `ORCHESTRATOR-ROADMAP.md` onde o lado `main` era só um placeholder desatualizado
       do mesmo item já completo em `develop`).
-- [ ] `business.*` (ADR-0018).
+- [x] **`business.*`** (ADR-0018, [PR #41](https://github.com/alltomatos/waconector/pull/41)) —
+      quarto namespace inteiramente novo desta rodada (`WaAdapter.business?`, mesmo padrão opcional
+      de `chats?`/`presence?`/`labels?`/`channels?`): `getProfile`/`updateProfile` do perfil
+      comercial WhatsApp Business (endereço, e-mail, sites, categorias) — catálogo/produtos
+      deliberadamente fora de escopo (feature de e-commerce, não de mensageria). Cobertura por
+      adapter: uazapi 2/2 (confiança Alta; `updateProfile` trata o `207 Multi-Status` de sucesso
+      parcial da uazapi como falha total, `PROVIDER_ERROR`, único endpoint do spec inteiro que usa
+      esse código), Whapi 2/2 (achado ao vivo que corrige o relatório original: o método real de
+      `updateProfile` é `POST /business`, não `PATCH /business`; schema de resposta sem campo
+      `categories`, diferente de uazapi), WPPConnect 1/2 (só `updateProfile`, achado ao vivo em
+      `routes.ts`; campo `adress` com grafia incorreta real do provider; sem campo `description` no
+      endpoint — silenciosamente ignorado quando fornecido). **Z-API deliberadamente NÃO
+      implementado**: o único endpoint candidato (`GET .../business/profile?phone=...`) exige um
+      `phone` de destino, mesmo padrão de `contacts.getProfilePicture`/`getAbout` deste adapter —
+      descasamento de FORMA de capability (consulta a UM CONTATO, não "meu próprio perfil"), não
+      gap de confiança; candidata a um futuro `contacts.getBusinessProfile(chatId)`. WAHA, Evolution
+      GO, Wuzapi e QuePasa confirmados sem essa API (busca negativa, incluindo verificação ao vivo
+      dos 2 providers whatsmeow-based via arquivos já cacheados). `categories` normalizado para
+      `string[]` (shape do objeto diverge entre providers). Enum de capabilities cresce de 64 para
+      66. Implementado sem `Workflow`/`Agent`. QA gate completo verde: 866 testes, cobertura
+      91.63%/67.74%/99.48%/93.03% (acima dos thresholds 77/60/90/80). Merge da PR exigiu reconciliar
+      o MESMO tipo de conflito com `main` dos PRs #38/#39/#40 (squash-merge diverge `develop` de
+      `main`) — resolvido da mesma forma verificada (superset estrito do `develop` em 20 dos 22
+      arquivos conflitantes; `docs/capabilities.md` regenerado via `npm run docs:capabilities`; e um
+      hunk não-vazio em `ORCHESTRATOR-ROADMAP.md` onde o lado `main` era só um placeholder
+      desatualizado do mesmo item já completo em `develop`).
 - [ ] `calls.*` (ADR-0019).
 
 ---

@@ -731,6 +731,18 @@ relatórios/código consultados para este provider. Consistente com o restante d
 mensageria básica + grupos limitados, ver seção acima) — limitação real, não gap de pesquisa.
 `WaAdapter.business` não implementado.
 
+## Chamadas de voz — NÃO implementado (ADR-0019)
+
+**Busca negativa, 0/2**: `whatsmeow_handlers.go` (código-fonte já cacheado desta sessão) mostra
+que chamadas recebidas são convertidas internamente numa MENSAGEM sintética (`whatsapp.CallMessageType`,
+`message.Id = evt.CallID`) e roteadas pelo MESMO pipeline de webhook de mensagens
+(`WAHandlers.Message(message, "call")`) — e a rejeição é feita AUTOMATICAMENTE pelo servidor com
+base numa flag de config (`HandleCalls()`/`server_options`, migração `add_rr_rc`), a menos que um
+"VoIP Manager" esteja habilitado (nesse caso a chamada é respondida e feita ponte para SIP). **Não
+existe nenhum endpoint HTTP para o consumidor originar OU rejeitar uma chamada especificamente sob
+demanda** — é comportamento passivo/automático do servidor, não uma ação invocável via API.
+Limitação real de plataforma, não gap de pesquisa. `WaAdapter.calls` não implementado.
+
 ## Grupos
 
 **Escopo muito limitado, confiança alta**: o único endpoint de grupo em todo o código é `GET

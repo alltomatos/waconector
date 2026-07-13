@@ -1,5 +1,6 @@
 import type {
   BusinessApi,
+  CallsApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -46,6 +47,7 @@ import type {
   MessageKind,
   PinMessageInput,
   PresenceState,
+  RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -169,6 +171,7 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'channels.unfollow',
   'business.getProfile',
   'business.updateProfile',
+  'calls.reject',
   'webhooks.parse',
 ];
 
@@ -284,6 +287,18 @@ export function whapi(options: WhapiOptions): WaAdapter {
     updateProfile: (input) => updateBusinessProfile(http, input),
   };
 
+  /**
+   * Namespace `calls.*` (ADR-0019). Cobertura 1/2 — só `reject`, confiança Alta. `callId`/
+   * `callerId` são AMBOS obrigatórios (schema `RejectCallRequest {callFrom}` + `CallID` no path) —
+   * na prática só disponíveis inspecionando o payload bruto do webhook de chamada recebida, já que
+   * este pacote não faz parsing desse evento ainda. Sem `calls.make`: os candidatos
+   * (`calls.createEvent`/`createGroupLink`) têm semântica ambígua/baixa confiança (ver dossiê) —
+   * não originam uma chamada de voz/vídeo real.
+   */
+  const calls: CallsApi = {
+    reject: (input) => rejectCall(http, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: WHAPI_CAPABILITIES,
@@ -296,6 +311,7 @@ export function whapi(options: WhapiOptions): WaAdapter {
     labels,
     channels,
     business,
+    calls,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1503,6 +1519,32 @@ function mapWhapiBusinessProfile(body: unknown): BusinessProfile {
     categories: undefined,
     raw: body,
   };
+}
+
+// ---------------------------------------------------------------------------
+// calls.* (ver ADR-0019)
+// ---------------------------------------------------------------------------
+
+/**
+ * `DELETE /calls/{CallID}` (`operationId: rejectCall`, confiança Alta). Body
+ * `RejectCallRequest {callFrom}` obrigatório. Existe uma rota duplicada e obsoleta
+ * (`POST /calls/{CallID}/reject`, `operationId: rejectCallDeprecated`) — não usada por este
+ * adapter. Lança `INVALID_INPUT` se `callId`/`callerId` faltarem — só disponíveis inspecionando o
+ * payload bruto do webhook de chamada recebida (este pacote não faz parsing desse evento ainda).
+ */
+async function rejectCall(http: HttpClient, input: RejectCallInput): Promise<void> {
+  if (!input.callId || !input.callerId) {
+    throw new WaConnectorError(
+      'INVALID_INPUT',
+      'calls.reject no Whapi exige "callId" e "callerId" (DELETE /calls/{CallID}, body {callFrom}).',
+      { provider: PROVIDER },
+    );
+  }
+  await http.request({
+    method: 'DELETE',
+    path: `/calls/${encodeURIComponent(input.callId)}`,
+    body: { callFrom: input.callerId },
+  });
 }
 
 // ---------------------------------------------------------------------------
