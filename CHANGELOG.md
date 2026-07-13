@@ -1,5 +1,121 @@
 # waconector
 
+## 1.1.0
+
+### Minor Changes
+
+- bacbae1: Namespace novo `business.*` (`getProfile`/`updateProfile`) — ver ADR-0018. `WaAdapter.business?`
+  inteiramente opcional, mesmo padrão de `chats?`/`presence?`/`labels?`/`channels?`
+  (ADR-0012/0015/0016/0017). Cobre o perfil comercial WhatsApp Business (endereço, e-mail, sites,
+  categorias) — leitura e atualização parcial (`description`/`address`/`email`), sem catálogo/
+  produtos nesta rodada.
+
+  Mudança 100% aditiva: nenhum adapter existente precisa mudar para continuar compilando.
+
+- d4f8f1d: Namespace novo `calls.*` (`make`/`reject`) — ver ADR-0019. `WaAdapter.calls?` inteiramente
+  opcional, mesmo padrão de `chats?`/`presence?`/`labels?`/`channels?`/`business?`
+  (ADR-0012/0015/0016/0017/0018). Cobre chamadas de voz: `make` origina uma "chamada vazia" (só toca,
+  sem áudio real — uazapi, Z-API); `reject` rejeita uma chamada recebida (WAHA, Whapi, Wuzapi,
+  Evolution GO, uazapi, WPPConnect). Este é o último item da fila de capabilities novas planejada
+  (ADR-0013 a ADR-0019).
+
+  Mudança 100% aditiva: nenhum adapter existente precisa mudar para continuar compilando.
+
+- b7c7ad1: Namespace novo `channels.*` (`list`/`create`/`getInfo`/`delete`/`follow`/`unfollow`) — ver
+  ADR-0017. `WaAdapter.channels?` inteiramente opcional, mesmo padrão de `chats?`/`presence?`/
+  `labels?` (ADR-0012/0015/0016). Cobre canais do WhatsApp ("WhatsApp Channels" — nome público do
+  produto; a maioria dos providers chama de "newsletter" internamente): listar, criar, consultar,
+  apagar e seguir/deixar de seguir um canal. `channelId` é um valor opaco (mesmo critério de
+  `groupId`/`labelId`).
+
+  Mudança 100% aditiva: nenhum adapter existente precisa mudar para continuar compilando.
+
+- af3bed2: Namespace novo `labels.*` (`list`/`create`/`update`/`delete`/`addToChat`/`removeFromChat`) — ver
+  ADR-0016. `WaAdapter.labels?` inteiramente opcional, mesmo padrão de `chats?`/`presence?`
+  (ADR-0012/0015). Cobre etiquetas estilo WhatsApp Business: CRUD de labels e associação/desassociação
+  a uma conversa. `color` é um valor opaco (cada provider usa um vocabulário de cor diferente).
+
+  Mudança 100% aditiva: nenhum adapter existente precisa mudar para continuar compilando.
+
+- 24f49a9: Namespace novo `presence.*` (`setTyping`/`set`/`subscribe`) — ver ADR-0015. `WaAdapter.presence?`
+  inteiramente opcional, mesmo padrão de `chats?` (ADR-0012). Cobre indicador de digitação/gravação
+  por conversa, presença global da conta (online/offline) e inscrição para receber atualizações de
+  presença de um contato via webhook.
+
+  Mudança 100% aditiva: nenhum adapter existente precisa mudar para continuar compilando.
+
+- 512330e: Novo namespace `chats.*` (`archive`/`unarchive`, `mute`/`unmute`, `pin`/`unpin`, `markRead`/
+  `markUnread`) e capabilities `messages.edit`/`messages.delete` — ver ADR-0012 para o desenho
+  completo e a justificativa de `chats` ser um campo OPCIONAL em `WaAdapter` (diferente do
+  precedente de `groups`/`contacts`, que são campos obrigatórios).
+
+  Mudança 100% aditiva: `WaAdapter.chats?` é opcional, `MessagesApi.edit?`/`delete?` são opcionais,
+  e as 10 novas entradas em `CAPABILITIES` são apenas adições à union — nenhum adapter existente
+  (próprio ou de terceiros) precisa mudar para continuar compilando.
+
+- e1dd5db: Capabilities novas `messages.forward`, `messages.star`/`unstar`, `messages.pin`/`unpin` e
+  `messages.markRead` — ver ADR-0013. Métodos opcionais em `MessagesApi`, mesmo padrão de
+  `messages.edit`/`delete` (ADR-0012). `messages.pin`/`unpin`/`markRead` operam no nível de UMA
+  mensagem, distintos de `chats.pin`/`unpin`/`markRead` (nível de conversa, já existentes).
+
+  Mudança 100% aditiva: todos os métodos são opcionais, nenhum adapter existente precisa mudar para
+  continuar compilando.
+
+- ceaa5b2: Capabilities novas `messages.sendLocation`, `messages.sendContactCard` e `messages.sendPoll` — ver
+  ADR-0014. Métodos opcionais em `MessagesApi`, cobrindo o ENVIO dos tipos de conteúdo que
+  `MessageKind` já classifica na recepção (`'location'`/`'contact'`/`'poll'`) desde a F1.
+
+  Mudança 100% aditiva: todos os métodos são opcionais, nenhum adapter existente precisa mudar para
+  continuar compilando.
+
+- 590dc4d: Adapter Whapi.Cloud ganha `messages.sendReaction`, as 14 operações de `groups.*` (ADR-0009) e as 8
+  de `contacts.*` (ADR-0010) — de 6/30 para 29/30 capabilities declaradas, só `instance.pairingCode`
+  segue fora (obstáculo estrutural: `InstanceApi.connect()` não recebe telefone).
+
+  Pontos não óbvios do mapeamento:
+
+  - `groups.updateSubject`/`updateDescription` usam o MESMO endpoint (`PUT /groups/{GroupID}`,
+    `UpdateGroupInfoRequest {subject?, description?}`) — cada operação envia só o campo que lhe
+    corresponde, para não sobrescrever silenciosamente o outro.
+  - `groups.revokeInviteLink`: `DELETE /groups/{GroupID}/invite` só confirma sucesso, sem devolver o
+    novo código — o adapter encadeia `DELETE` + `GET /groups/{GroupID}/invite` para devolver o link
+    atualizado exigido pelo contrato (exceção documentada a "uma única chamada por operação").
+  - `Participant.rank` (`admin`/`member`/`creator`) mapeia para `isAdmin`/`isSuperAdmin` (`creator` →
+    ambos `true`).
+  - `contacts.checkExists` usa `HEAD /contacts/{ContactID}`: o resultado vem só do status HTTP
+    (`200` = existe, `404` = não existe) — único método deste adapter que intercepta um status
+    não-2xx esperado em vez de deixar propagar como erro.
+  - `contacts.block`/`unblock` usam `ContactIdOrLid` (`/blacklist/{id}`), que aceita só dígitos ou
+    `@lid` — o sufixo `@s.whatsapp.net` do chatId canônico é removido antes de montar o path.
+
+  Ver `docs/providers/whapi.md` para o dossiê completo dos 23 endpoints.
+
+- 292f8ce: Adapter WPPConnect Server ganha `groups.list` e as 4 operações restantes de `contacts.*`
+  (`list`/`get`/`getProfilePicture`/`getAbout`) — de 24/30 para 29/30 capabilities declaradas, só
+  `instance.pairingCode` segue fora (obstáculo estrutural: `InstanceApi.connect()` não recebe
+  telefone).
+
+  As 5 eram listadas como fora de escopo por "shape de resposta não confirmado" numa auditoria
+  anterior que olhou só o controller fino do `wppconnect-server`. Descendo à lib subjacente
+  (`@wppconnect-team/wppconnect`), o shape de resposta de todas está tipado ou visível no script
+  injetado — nenhuma é limitação real do provider.
+
+  Pontos não óbvios do mapeamento:
+
+  - `groups.list` usa `POST /list-chats` com `{onlyGroups: true}`, não `GET /all-groups`
+    (confirmado `#swagger.deprecated` — "Deprecated in favor of 'list-chats'"). O `Chat` devolvido
+    pela lib não carrega participantes — `GroupInfo.participants` fica `[]` de propósito para todo
+    item da listagem; quem precisar da lista completa encadeia `groups.getInfo` por grupo.
+  - `contacts.list`/`contacts.get` reaproveitam o mesmo shape (`WAPI._serializeContactObj`, visível
+    no script injetado `get-all-contacts.js`/`get-contact.js`) — confiança média-alta, por vir de um
+    script injetado real, não da interface TS tipada diretamente da lib.
+  - `contacts.getProfilePicture` prioriza `imgFull` sobre `img` (mesmo padrão "prefira a versão
+    full" já usado por outros adapters deste pacote, ex.: Whapi).
+  - `contacts.getAbout` mapeia `status` → `about`; string vazia vira `undefined` (nunca inventa um
+    recado).
+
+  Ver `docs/providers/wppconnect.md` para o dossiê atualizado.
+
 ## 1.0.0
 
 ### Major Changes
