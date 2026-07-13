@@ -483,7 +483,31 @@ pesquisa já produzidos na Epic 7 (`scratchpad/provider-reports/`), sem repetir 
       arquivos conflitantes; `docs/capabilities.md` regenerado via `npm run docs:capabilities`; e um
       hunk não-vazio em `ORCHESTRATOR-ROADMAP.md` onde o lado `main` era só um placeholder
       desatualizado do mesmo item já completo em `develop`).
-- [ ] `calls.*` (ADR-0019).
+- [x] **`calls.*`** (ADR-0019, [PR #42](https://github.com/alltomatos/waconector/pull/42)) —
+      quinto e ÚLTIMO namespace inteiramente novo da fila (`WaAdapter.calls?`, mesmo padrão
+      opcional de `chats?`/`presence?`/`labels?`/`channels?`/`business?`): `make`/`reject` de
+      chamadas de voz. `calls.make` é sempre uma "chamada vazia" (o telefone toca, mas nenhum áudio
+      real é estabelecido em nenhuma direção — limitação estrutural, nenhum cliente não-oficial
+      origina chamadas reais) — só uazapi e Z-API (2/8). `calls.reject` tem cobertura bem mais
+      ampla (6/8): WAHA, Evolution GO (achado ao vivo em `call_handler.go`/`call_service.go`, não
+      estava no relatório original), uazapi (único provider onde nem `callId` nem `callerId` são
+      exigidos — corpo vazio rejeita a chamada ativa no momento), Whapi, Wuzapi e WPPConnect
+      (achado ao vivo em `routes.ts`, só exige `callId`, sem `callerId` — diferente dos outros 4).
+      **Correção em relação à estimativa do plano original**: Z-API NÃO implementa `calls.reject` —
+      os campos candidatos (`callRejectAuto`/`callRejectMessage`, vistos em `GET /me`) são uma
+      CONFIGURAÇÃO de conta, não uma ação invocável sob demanda. QuePasa confirmado sem API
+      interativa de chamadas (chamadas recebidas viram uma mensagem sintética roteada pelo pipeline
+      de mensagens, com rejeição automática via config do servidor — não uma ação). Validação de
+      `callId`/`callerId` fica no ADAPTER, não no conector (a obrigatoriedade varia genuinamente por
+      provider, sem regra universal). Enum de capabilities cresce de 66 para 68 — **fecha a fila
+      planejada de 7 itens (ADR-0013 a ADR-0019)**. Implementado sem `Workflow`/`Agent`. QA gate
+      completo verde: 891 testes, cobertura 91.75%/68.06%/99.49%/93.13% (acima dos thresholds
+      77/60/90/80). Merge da PR exigiu reconciliar o MESMO tipo de conflito com `main` dos PRs
+      #38/#39/#40/#41 (squash-merge diverge `develop` de `main`) — resolvido da mesma forma
+      verificada (superset estrito do `develop` em 20 dos 22 arquivos conflitantes;
+      `docs/capabilities.md` regenerado via `npm run docs:capabilities`; e um hunk não-vazio em
+      `ORCHESTRATOR-ROADMAP.md` onde o lado `main` era só um placeholder desatualizado do mesmo item
+      já completo em `develop`).
 
 ---
 
