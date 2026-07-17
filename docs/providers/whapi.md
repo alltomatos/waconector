@@ -269,6 +269,35 @@ semântica assumida por todo o pacote, na ausência de um campo que permita esco
 revogação; esta nota existe para não perder essa ambiguidade específica do Whapi caso uma instância
 real revele o comportamento oposto (ver "Gaps conhecidos" ao final). Resposta `Success`, ignorada.
 
+## Download de mídia (`messages.download`, ADR-0020)
+
+Confiança Alta quanto ao endpoint (`GET /media/{MediaID}`, schema `MediaFile` confirmado no
+`openapi.yaml` oficial); confiança Média quanto à extração do id de mídia a partir de `raw` (sem
+payload literal de resposta capturado para `GET /newsletters/.../messages` nem para o download em
+si — só schema).
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.download` | `GET /media/{MediaID}` (`operationId: getMedia`) | Devolve o ARQUIVO BRUTO (não JSON) — `Content-Type` varia por tipo de mídia (schema `format: binary`); por isso o adapter usa `responseType: 'base64'` do `HttpClient` (`core/http.ts`, `arrayBuffer` + `Buffer.toString('base64')`, ver ADR-0020). Diferente de uazapi/Evolution GO (que resolvem via `messageId`), o Whapi identifica mídia por um id PRÓPRIO (`MediaFile.id`, SEMPRE obrigatório — diferente de `link`, opcional/best-effort só quando auto-download está habilitado no canal), distinto do id da MENSAGEM. |
+
+### Como o id de mídia é resolvido a partir de `raw`
+
+`WaMessage.raw` no adapter Whapi é o envelope INTEIRO do webhook (`{messages: [...], event,
+channel_id}` — várias mensagens podem chegar numa única entrega, ver `mapMessageItem`). Para
+descobrir o `MediaID`, este adapter busca em `raw.messages[]` o item cujo `id` bate com
+`input.messageId`, então lê o campo `id` do sub-objeto de mídia correspondente ao `item.type`
+(mesmo discriminador de `mapMessageContent` — ex.: `item.image.id`, `item.document.id`).
+`input.raw` é, na prática, **necessário** para resolver o id CORRETO (mesma nuance já registrada
+para Evolution GO/izapia na correção da ADR-0020) — mas, quando ausente ou sem correspondência,
+este adapter cai para usar `input.messageId` diretamente como `MediaID` (degradação suave: melhor
+deixar o provider real reportar `404` do que bloquear a chamada preventivamente com uma suposição
+que pode estar errada).
+
+`buildMediaRef` (usado ao parsear mensagens recebidas) foi estendido para popular `MediaRef.id` a
+partir de `record.id` (sempre presente no schema `MediaFile`), mesmo quando `link` está ausente —
+antes desta capability existir, uma mídia sem `link` (canal sem auto-download) resultava em
+`media: undefined`; agora ela é reportada com `id` preenchido e `url` ausente.
+
 ## Grupos (`groups.*`)
 
 `GroupID` é opaco (ADR-0009) e, no Whapi, sempre o JID `<dígitos>@g.us` (pattern confirmado no
@@ -408,9 +437,9 @@ inerente — se dois processos criarem labels simultaneamente, ambos podem escol
 `POST /labels`, diferente do 409 real de `addToChat`). Não há como eliminar esse risco do lado do
 cliente sem uma operação atômica no servidor.
 
-## Canais (`channels.*`, ADR-0017)
+## Canais (`channels.*`, ADR-0017 + ADR-0021)
 
-Cobertura 6/6, confiança Alta — schema completo (`Newsletter`/`CreateNewsletterRequest`) confirmado
+Cobertura 7/7, confiança Alta — schema completo (`Newsletter`/`CreateNewsletterRequest`) confirmado
 no `openapi.yaml` oficial, a MELHOR cobertura desta ADR junto com WAHA/uazapi.
 
 | Operação canônica | Endpoint | Observações |
@@ -432,8 +461,26 @@ GO/uazapi/Wuzapi/QuePasa). Campos exclusivos do provider (`invite_code`, `handle
 (inferido pelo campo `invite_code` já presente na resposta de `getInfo`/`list`, sem endpoint
 dedicado confirmado), `editNewsletter` (`PATCH /newsletters/{id}`, renomear/editar descrição/foto),
 `subscribeByInvite` (`POST /newsletters/invite/{code}/subscription`, entrar via código de convite —
-equivalente a `groups.joinViaInviteLink`), `getMessages` (histórico de posts do canal),
-`admin.*` (gestão de administradores).
+equivalente a `groups.joinViaInviteLink`), `admin.*` (gestão de administradores).
+
+### Mensageria de canal (`channels.getMessages`, ADR-0021)
+
+Confiança Alta quanto ao endpoint/paginação (`GET /newsletters/{NewsletterID}/messages`,
+`operationId: getMessagesNewsletter`, params `count`/`before`/`after` confirmados no OpenAPI) —
+confiança Média quanto ao mapeamento de campos específicos de canal (`viewsCount`), sem
+confirmação no schema.
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `channels.getMessages` | `GET /newsletters/{NewsletterID}/messages` | Resposta `MessagesList {messages: Message[], count, total, offset, first, last}` — os itens reaproveitam o MESMO schema `Message` dos webhooks de mensagem comum (sem um schema dedicado de "post de canal"); `mapWhapiChannelPost` reaproveita `mapMessageContent` para extrair `text`. `count`/`before` mapeiam para os params homônimos do provider — **`before` é um ÍNDICE numérico** ("Request messages before the specified one, see first and last" na doc), não um id de mensagem, ao contrário do `GetChannelMessagesInput.before` canônico (string, pensado como cursor opaco); convertido via `Number(...)`. |
+
+**`reactionCounts`**: o schema `MessageReaction {emoji, count}` já vem AGREGADO por emoji (um item
+por emoji distinto, não uma reação por usuário) — convertido direto para o `Record<emoji, count>`
+canônico, sem precisar somar nada.
+
+**Sem `viewsCount`**: nenhum campo de "quantidade de visualizações" confirmado no schema `Message`
+nem em nenhum outro schema relacionado a canais do OpenAPI — diferente de uazapi, que confirma
+`viewsCount`. Fica sempre `undefined` neste adapter.
 
 ## Perfil comercial (`business.*`, ADR-0018)
 
