@@ -1,5 +1,6 @@
 import type {
   BusinessApi,
+  CallsApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -43,12 +44,14 @@ import type {
   JoinGroupInviteInput,
   LabelChatInput,
   LabelInfo,
+  MakeCallInput,
   MarkMessageReadInput,
   MediaKind,
   MediaRef,
   MessageAck,
   PinMessageInput,
   PresenceState,
+  RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -155,6 +158,8 @@ const IZAPIA_CAPABILITIES: CapabilitySet = [
   'channels.follow',
   'channels.unfollow',
   'business.getProfile',
+  'calls.make',
+  'calls.reject',
   'webhooks.parse',
 ];
 
@@ -270,6 +275,11 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     getProfile: () => getBusinessProfile(http, sid),
   };
 
+  const calls: CallsApi = {
+    make: (input) => makeCall(http, sid, input),
+    reject: (input) => rejectCall(http, sid, input),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: IZAPIA_CAPABILITIES,
@@ -282,6 +292,7 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     labels,
     channels,
     business,
+    calls,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1126,6 +1137,44 @@ async function getBusinessProfile(http: HttpClient, sid: string): Promise<Busine
     categories,
     raw: body,
   };
+}
+
+// ---------------------------------------------------------------------------
+// calls.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST .../calls`: body `{to}` → `{call_id}` (ignorado, contrato retorna `Promise<void>`).
+ * `MakeCallInput.durationSeconds` não é exposto pelo provider — não enviado. Diferencial deste
+ * provider (ver dossiê): tem um `CallManager` de voz real (sinalização + WebRTC), ao contrário dos
+ * outros adapters deste pacote, cuja `calls.make` é sempre uma "chamada vazia".
+ */
+async function makeCall(http: HttpClient, sid: string, input: MakeCallInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/calls`,
+    body: { to: input.to },
+  });
+}
+
+/**
+ * `POST .../calls/{callId}/reject`: `callId` é obrigatório no PATH (parâmetro `callId` do OpenAPI,
+ * `required: true`) — diferente de outros providers deste pacote (ex.: uazapi aceita corpo vazio).
+ * `RejectCallInput.callId` é opcional no contrato canônico; sem ele, não há como montar a URL —
+ * lança `INVALID_INPUT` (mesmo critério já usado no dossiê Wuzapi para o mesmo caso).
+ */
+async function rejectCall(http: HttpClient, sid: string, input: RejectCallInput): Promise<void> {
+  if (!input.callId) {
+    throw new WaConnectorError(
+      'INVALID_INPUT',
+      'izapia: calls.reject exige "callId" (obrigatório no path do endpoint).',
+      { provider: PROVIDER },
+    );
+  }
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/calls/${input.callId}/reject`,
+  });
 }
 
 // ---------------------------------------------------------------------------

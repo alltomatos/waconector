@@ -332,6 +332,14 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/calls`) {
+      return envelope({ call_id: 'call-1' });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/calls/call-1/reject`) {
+      return envelope({});
+    }
+
     throw new Error(`fetchStub (izapia): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1260,6 +1268,42 @@ describe('izapia adapter: comportamento específico do provider', () => {
     const adapter = izapia(buildAdapterOptions());
     expect(adapter.capabilities).not.toContain('business.updateProfile');
     expect(adapter.business?.updateProfile).toBeUndefined();
+  });
+
+  it('calls.make envia { to } para POST .../calls', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/calls`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.calls?.make?.({ to: '5511999999999' })).resolves.toBeUndefined();
+    expect(capturedBody?.to).toBe('5511999999999');
+  });
+
+  it('calls.reject chama POST .../calls/{callId}/reject quando callId é informado', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    await expect(
+      wa.calls?.reject?.({ callId: 'call-1', callerId: '5511999999999' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('calls.reject lança INVALID_INPUT quando callId está ausente', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const failure = await wa.calls?.reject?.({}).catch((error: unknown) => error);
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.code).toBe('INVALID_INPUT');
+    }
   });
 
   it('parseWebhook normaliza "session.connected" para connection.update', () => {
