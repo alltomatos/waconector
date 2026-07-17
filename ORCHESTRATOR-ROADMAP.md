@@ -705,9 +705,12 @@ capabilities + ADR-0020/0021), [#62](https://github.com/alltomatos/waconector/is
 uazapi), [#63](https://github.com/alltomatos/waconector/issues/63) (adapter Evolution GO),
 [#64](https://github.com/alltomatos/waconector/issues/64) (adapter Whapi — cobertura 68/72;
 sem `channels.markViewed`/`reactToPost`, sem endpoint dedicado de "marcar visto"/"reagir a post" no
-namespace `newsletter.*` confirmado no OpenAPI oficial).
-Pendentes: [#65](https://github.com/alltomatos/waconector/issues/65) (adapter izapia),
-[#66](https://github.com/alltomatos/waconector/issues/66) (consolidação — suite 100% +
+namespace `newsletter.*` confirmado no OpenAPI oficial),
+[#65](https://github.com/alltomatos/waconector/issues/65) (adapter izapia — as 4 capabilities
+novas confirmadas e implementadas; achado notável: o webhook `message.received` carrega
+`data.raw = evt.RawMessage`, o mesmo `*waE2E.Message` bruto do whatsmeow já usado pelo Evolution
+GO, permitindo reaproveitar por analogia a mesma extração de descritor de mídia por sub-objeto).
+Pendentes: [#66](https://github.com/alltomatos/waconector/issues/66) (consolidação — suite 100% +
 `docs/capabilities.md` + changeset), [#67](https://github.com/alltomatos/waconector/issues/67)
 (docs finais).
 
