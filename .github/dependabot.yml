@@ -8,6 +8,13 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: "development"
+    ignore:
+      # typescript@7 é o novo compilador nativo (reescrita, não só um major comum) — quebra o
+      # build hoje (`rollup-plugin-dts`, usado pelo tsup para gerar .d.ts, lança
+      # "Cannot read properties of undefined (reading 'useCaseSensitiveFileNames')" com a v7,
+      # confirmado no CI do PR #15). Minor/patch do 5.x continuam permitidos.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 5
   - package-ecosystem: "github-actions"
     directory: "/"
