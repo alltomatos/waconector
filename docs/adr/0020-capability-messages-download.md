@@ -37,6 +37,17 @@ chamada). **WAHA**: mecanismo funcionalmente parecido (URL apontando de volta pr
 instância) mas também não é o mesmo conceito. **Wuzapi**: entrega sempre via push
 (`media_delivery: base64|s3|both` no webhook), sem endpoint de download por descritor.
 
+**Correção registrada durante a implementação (issue #63, Evolution GO)**: esta ADR originalmente
+assumia que Evolution GO resolvia `messages.download` só com `messageId`, no mesmo grupo de
+uazapi/Whapi. Implementação real mostrou o contrário — `POST /message/downloadimage` exige o
+descritor bruto de mídia do whatsmeow (`directPath`/`fileEncSHA256`/`fileLength`/`fileSHA256`/
+`mediaKey`/`mimetype`/`url`), igual ao izapia. `DownloadMediaInput.raw` é, na prática,
+**obrigatório** para Evolution GO (e não só para izapia) — a divisão real não é "3 stateful + 1
+stateless", é "uazapi (só messageId) vs. Evolution GO + izapia (precisam do descritor via `raw`)"
++ Whapi (precisa de um id de mídia específico, também só disponível via `raw`/`WaMessage.media.id`,
+não o `messageId` da mensagem). Isso não muda a Decisão/tipos abaixo (`raw` já era opcional e
+existia exatamente para esse caso) — só corrige a expectativa de QUEM precisa dele.
+
 ## Decisão
 
 1. **Capability nova `messages.download`**, método opcional em `MessagesApi` — mesmo padrão de

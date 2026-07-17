@@ -25,6 +25,7 @@ import type {
 import { HttpClient } from '../../core/http';
 import type {
   ChannelInfo,
+  ChannelPost,
   CheckExistsResult,
   ConnectResult,
   Contact,
@@ -34,7 +35,10 @@ import type {
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
+  DownloadedMedia,
+  DownloadMediaInput,
   EditMessageInput,
+  GetChannelMessagesInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -111,6 +115,7 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'messages.sendLocation',
   'messages.sendContactCard',
   'messages.sendPoll',
+  'messages.download',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -148,6 +153,7 @@ const EVOLUTION_CAPABILITIES: CapabilitySet = [
   'channels.create',
   'channels.getInfo',
   'channels.follow',
+  'channels.getMessages',
   'calls.reject',
   'webhooks.parse',
 ];
@@ -180,6 +186,7 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     sendLocation: (input) => sendLocation(http, input),
     sendContactCard: (input) => sendContactCard(http, input),
     sendPoll: (input) => sendPoll(http, input),
+    download: (input) => downloadMedia(http, input),
   };
 
   const groups: GroupsApi = {
@@ -261,6 +268,7 @@ export function evolution(options: EvolutionOptions): WaAdapter {
     create: (input) => createChannel(http, input),
     getInfo: (channelId) => getChannelInfo(http, channelId),
     follow: (channelId) => followChannel(http, channelId),
+    getMessages: (input) => getChannelMessages(http, input),
   };
 
   /**
@@ -638,6 +646,81 @@ function toSentMessage(to: string, response: EvolutionEnvelope): SentMessage {
     chatId: to,
     timestamp: toEpochMs(info?.Timestamp),
     raw: response,
+  };
+}
+
+/**
+ * `messages.download` (ADR-0020): `POST /message/downloadimage` — apesar do nome sugerir só
+ * imagens, os campos aceitos (`directPath`/`fileEncSHA256`/`fileLength`/`fileSHA256`/`mediaKey`/
+ * `mimetype`/`url`) são os campos genéricos de mídia do whatsmeow (presentes em `ImageMessage`/
+ * `VideoMessage`/`AudioMessage`/`DocumentMessage`/`StickerMessage`), então o mesmo endpoint deve
+ * servir qualquer `MediaKind`. Resposta: `{success, image: <base64>}`.
+ *
+ * **Achado que corrige a ADR-0020**: diferente do que a ADR assumia inicialmente (uazapi/Evolution
+ * GO/Whapi resolveriam só com `messageId`), este endpoint exige o DESCRITOR BRUTO da mídia — o
+ * Evolution GO não confirma manter histórico de mensagens/mídia server-side para esta operação.
+ * `input.raw` (o `WaMessage.raw` da mensagem original) é, na prática, OBRIGATÓRIO aqui, apesar de
+ * opcional no tipo canônico.
+ *
+ * Confiança MÉDIA no mapeamento de `input.raw` → descritor: nenhum payload real de mensagem de
+ * mídia recebida foi capturado (mesma limitação já documentada em docs/providers/evolution.md para
+ * `webhook-message-image.json`/`webhook-message-document.json`, ambos RECONSTRUÍDOS). Os nomes de
+ * campo tentados seguem o mesmo padrão já CONFIRMADO no `.pb.go` gerado do whatsmeow só para `URL`
+ * (`json:"URL,omitempty"`, maiúsculo) — assumido, por extensão, para os demais campos de mídia
+ * (`MediaKey`/`FileEncSHA256`/`FileSHA256`/`FileLength`/`DirectPath`/`Mimetype`), com fallback
+ * defensivo para o casing camelCase documentado no próprio endpoint de download, caso divirjam.
+ */
+async function downloadMedia(
+  http: HttpClient,
+  input: DownloadMediaInput,
+): Promise<DownloadedMedia> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/message/downloadimage',
+    body: extractMediaDescriptor(input.raw),
+  });
+  const record = asRecord(body);
+  return {
+    base64: (record ? asString(record.image) : undefined) ?? '',
+    raw: body,
+  };
+}
+
+/**
+ * Ver `downloadMedia` — extrai o descritor de mídia bruto de `WaMessage.raw` (o corpo do
+ * webhook). Casing confirmado na fixture reconstruída `webhook-message-image.json` (a partir do
+ * `.pb.go` gerado do whatsmeow, ver docs/providers/evolution.md): só `URL` é maiúsculo — os demais
+ * campos (`mimetype`/`directPath`/`mediaKey`/`fileEncSHA256`/`fileSHA256`/`fileLength`) já são
+ * lowerCamelCase, mesmo padrão usado por `buildMediaRef`. `fileLength` chega como STRING na
+ * fixture (`"48219"`), não número — convertido explicitamente.
+ */
+function extractMediaDescriptor(raw: unknown): Record<string, unknown> {
+  const body = asRecord(raw);
+  const data = body ? asRecord(body.data) : undefined;
+  const message = data ? asRecord(data.Message) : undefined;
+  const mediaObject = message
+    ? (asRecord(message.imageMessage) ??
+      asRecord(message.videoMessage) ??
+      asRecord(message.audioMessage) ??
+      asRecord(message.documentMessage) ??
+      asRecord(message.stickerMessage))
+    : undefined;
+  if (!mediaObject) return {};
+  const fileLengthRaw = mediaObject.fileLength;
+  const fileLength =
+    typeof fileLengthRaw === 'number'
+      ? fileLengthRaw
+      : typeof fileLengthRaw === 'string'
+        ? Number(fileLengthRaw)
+        : undefined;
+  return {
+    url: asString(mediaObject.URL) ?? asString(mediaObject.url),
+    mimetype: asString(mediaObject.mimetype),
+    directPath: asString(mediaObject.directPath),
+    mediaKey: mediaObject.mediaKey,
+    fileEncSHA256: mediaObject.fileEncSHA256,
+    fileSHA256: mediaObject.fileSHA256,
+    fileLength,
   };
 }
 
@@ -1432,6 +1515,72 @@ function mapEvolutionChannel(
   return { id, name, description, subscribersCount, raw: body };
 }
 
+/**
+ * `channels.getMessages` (ADR-0021): `POST /newsletter/messages`, body `{jid, count?,
+ * before_id?}` — `jid` como string simples, mesmo achado de `toEvolutionChannelId` (o schema
+ * OpenAPI documenta um objeto `types.JID` decomposto, mas o resto deste adapter já confirma que a
+ * API aceita string simples nos demais endpoints de `channels.*`; seguido aqui por consistência).
+ * `GetChannelMessagesInput.before` (cursor string canônico) mapeia para `before_id` (inteiro) via
+ * `Number(...)`. Resposta: `{success, messages: object[]}` — schema do item **não documentado**
+ * (`object[]`, sem tipo declarado no OpenAPI oficial); `mapEvolutionChannelPost` assume o mesmo
+ * shape `types.NewsletterMessage` do whatsmeow usado pelos demais providers whatsmeow-based deste
+ * pacote (`MessageServerID`/`MessageID`/`Type`/`Timestamp`/`ViewsCount`/`ReactionCounts`/`Message`,
+ * casing Go PascalCase — mesmo padrão já confirmado para `Info`/`Message` no evento de mensagem
+ * recebida), com fallback defensivo para casing camelCase. **Confiança BAIXA-MÉDIA**: não
+ * confirmado contra uma instância real.
+ */
+async function getChannelMessages(
+  http: HttpClient,
+  input: GetChannelMessagesInput,
+): Promise<ChannelPost[]> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/newsletter/messages',
+    body: {
+      jid: toEvolutionChannelId(input.channelId),
+      count: input.count,
+      ...(input.before !== undefined ? { before_id: Number(input.before) } : {}),
+    },
+  });
+  const record = asRecord(body);
+  const items = Array.isArray(record?.messages) ? record.messages : [];
+  return items.map((item: unknown) => mapEvolutionChannelPost(item));
+}
+
+function mapEvolutionChannelPost(body: unknown): ChannelPost {
+  const record = asRecord(body);
+  const serverId =
+    (record ? asIdString(record.MessageServerID) : undefined) ??
+    (record ? asIdString(record.serverId) : undefined);
+  const timestamp =
+    (record ? toEpochMs(record.Timestamp) : undefined) ??
+    (record ? toEpochMs(record.timestamp) : undefined) ??
+    0;
+  const reactionCountsRaw =
+    (record ? asRecord(record.ReactionCounts) : undefined) ??
+    (record ? asRecord(record.reactionCounts) : undefined);
+  const reactionCounts = reactionCountsRaw
+    ? Object.fromEntries(
+        Object.entries(reactionCountsRaw)
+          .map(([emoji, count]) => [emoji, asNumber(count)] as const)
+          .filter((entry): entry is [string, number] => entry[1] !== undefined),
+      )
+    : undefined;
+  const messageContent = record
+    ? mapMessageContent(asRecord(record.Message) ?? asRecord(record.message))
+    : undefined;
+  return {
+    id: serverId ?? '',
+    timestamp,
+    text: messageContent?.text,
+    viewsCount:
+      (record ? asNumber(record.ViewsCount) : undefined) ??
+      (record ? asNumber(record.viewsCount) : undefined),
+    reactionCounts,
+    raw: body,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // calls.* (ver ADR-0019)
 // ---------------------------------------------------------------------------
@@ -1842,6 +1991,10 @@ function asIdString(value: unknown): string | undefined {
 
 function asBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' ? value : undefined;
 }
 
 function asStringArray(value: unknown): string[] {
