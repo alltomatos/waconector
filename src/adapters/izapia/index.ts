@@ -1,4 +1,5 @@
 import type {
+  ContactsApi,
   GroupsApi,
   InstanceApi,
   MessagesApi,
@@ -16,7 +17,11 @@ import type {
 } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  CheckExistsResult,
   ConnectResult,
+  Contact,
+  ContactAbout,
+  ContactProfilePicture,
   CreateGroupInput,
   DeleteMessageInput,
   EditMessageInput,
@@ -105,6 +110,14 @@ const IZAPIA_CAPABILITIES: CapabilitySet = [
   'groups.revokeInviteLink',
   'groups.joinViaInviteLink',
   'groups.leaveGroup',
+  'contacts.list',
+  'contacts.get',
+  'contacts.checkExists',
+  'contacts.getProfilePicture',
+  'contacts.getAbout',
+  'contacts.block',
+  'contacts.unblock',
+  'contacts.listBlocked',
   'webhooks.parse',
 ];
 
@@ -164,15 +177,24 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     leaveGroup: (groupId) => leaveGroup(http, sid, groupId),
   };
 
+  const contacts: ContactsApi = {
+    list: () => listContacts(http, sid),
+    get: (chatId) => getContact(http, sid, chatId),
+    checkExists: (phone) => checkContactExists(http, sid, phone),
+    getProfilePicture: (chatId) => getContactProfilePicture(http, sid, chatId),
+    getAbout: (chatId) => getContactAbout(http, sid, chatId),
+    block: (chatId) => setContactBlocked(http, sid, chatId, true),
+    unblock: (chatId) => setContactBlocked(http, sid, chatId, false),
+    listBlocked: () => listBlockedContacts(http, sid),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: IZAPIA_CAPABILITIES,
     instance,
     messages,
     groups,
-    // contacts obrigatório no contrato `WaAdapter`, mas ainda não implementado nesta fase
-    // (issue #49 desta Epic) — objeto vazio, sem capability declarada.
-    contacts: {},
+    contacts,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -618,6 +640,125 @@ async function leaveGroup(http: HttpClient, sid: string, groupId: string): Promi
     method: 'POST',
     path: `/api/v1/sessions/${sid}/groups/${groupId}/leave`,
   });
+}
+
+// ---------------------------------------------------------------------------
+// contacts.*
+// ---------------------------------------------------------------------------
+
+/**
+ * Modelo canônico confirmado em `internal/session/contacts.go` (`contactToCanonical`): `{jid,
+ * first_name, full_name, push_name, business_name, found}`. `name` usa `full_name` (fallback
+ * `push_name`, fallback `first_name`) — nenhum dos três é garantido presente.
+ */
+function mapContact(body: unknown): Contact {
+  const data = unwrapEnvelope(body);
+  return {
+    id: asString(data.jid) ?? '',
+    name: asString(data.full_name) ?? asString(data.push_name) ?? asString(data.first_name),
+    about: asString(data.about),
+    raw: body,
+  };
+}
+
+/** `GET .../contacts`: `data` é um array direto (mesmo padrão de `GET .../groups`). */
+async function listContacts(http: HttpClient, sid: string): Promise<Contact[]> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/contacts`,
+  });
+  const record = asRecord(body);
+  const contacts = record && Array.isArray(record.data) ? record.data : [];
+  return contacts.map((contact: unknown) => mapContact({ ok: true, data: contact }));
+}
+
+/**
+ * `GET .../contacts/{jid}`: resposta já enriquecida com `about`/`devices` (`GetContact`,
+ * confirmado no dossiê) — usada também por `contacts.getAbout`, sem chamada extra (regra de ouro:
+ * uma única chamada HTTP por operação canônica).
+ */
+async function getContact(http: HttpClient, sid: string, chatId: string): Promise<Contact> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/contacts/${chatId}`,
+  });
+  return mapContact(body);
+}
+
+async function getContactAbout(
+  http: HttpClient,
+  sid: string,
+  chatId: string,
+): Promise<ContactAbout> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/contacts/${chatId}`,
+  });
+  const data = unwrapEnvelope(body);
+  return { about: asString(data.about), raw: body };
+}
+
+/**
+ * `POST .../contacts/check`: body `{numbers: [phone]}` (array de 1 elemento, já que o contrato
+ * canônico verifica um telefone por vez) → array `{query, jid, is_in_whatsapp, verified_name?}`;
+ * só o primeiro (único) item é usado.
+ */
+async function checkContactExists(
+  http: HttpClient,
+  sid: string,
+  phone: string,
+): Promise<CheckExistsResult> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/contacts/check`,
+    body: { numbers: [phone] },
+  });
+  const record = asRecord(body);
+  const list = record && Array.isArray(record.data) ? record.data : [];
+  const first = asRecord(list[0]);
+  return {
+    exists: (first ? asBoolean(first.is_in_whatsapp) : undefined) ?? false,
+    chatId: first ? asString(first.jid) : undefined,
+    raw: body,
+  };
+}
+
+async function getContactProfilePicture(
+  http: HttpClient,
+  sid: string,
+  chatId: string,
+): Promise<ContactProfilePicture> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/contacts/${chatId}/picture`,
+  });
+  const data = unwrapEnvelope(body);
+  return { url: asString(data.url), raw: body };
+}
+
+async function setContactBlocked(
+  http: HttpClient,
+  sid: string,
+  chatId: string,
+  block: boolean,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/contacts/${chatId}/${block ? 'block' : 'unblock'}`,
+  });
+}
+
+/** `GET .../contacts/blocked`: `data` é um array direto de `{jid}` (mesmo padrão de listagens). */
+async function listBlockedContacts(http: HttpClient, sid: string): Promise<string[]> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/contacts/blocked`,
+  });
+  const record = asRecord(body);
+  const list = record && Array.isArray(record.data) ? record.data : [];
+  return list
+    .map((item: unknown) => asString(asRecord(item)?.jid))
+    .filter((id): id is string => id !== undefined);
 }
 
 // ---------------------------------------------------------------------------

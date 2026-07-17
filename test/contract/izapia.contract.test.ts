@@ -182,6 +182,55 @@ function createFetchStub(): typeof globalThis.fetch {
       return envelope({});
     }
 
+    if (method === 'GET' && pathname === `/api/v1/sessions/${SID}/contacts`) {
+      return envelope([
+        {
+          jid: '5511999999999@s.whatsapp.net',
+          full_name: 'Fulano da Silva',
+          push_name: 'Fulano',
+          found: true,
+        },
+      ]);
+    }
+
+    if (method === 'GET' && pathname === `/api/v1/sessions/${SID}/contacts/5511999999999`) {
+      return envelope({
+        jid: '5511999999999@s.whatsapp.net',
+        full_name: 'Fulano da Silva',
+        push_name: 'Fulano',
+        found: true,
+        about: 'Disponível',
+        devices: ['5511999999999.0:1@s.whatsapp.net'],
+      });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/contacts/check`) {
+      return envelope([
+        { query: '5511999999999', jid: '5511999999999@s.whatsapp.net', is_in_whatsapp: true },
+      ]);
+    }
+
+    if (method === 'GET' && pathname === `/api/v1/sessions/${SID}/contacts/5511999999999/picture`) {
+      return envelope({
+        url: 'https://cdn.izapia-fake.test/foto.jpg',
+        id: 'pic-1',
+        type: 'image',
+        direct_path: '/v/foto.jpg',
+      });
+    }
+
+    if (
+      method === 'POST' &&
+      (pathname === `/api/v1/sessions/${SID}/contacts/5511999999999/block` ||
+        pathname === `/api/v1/sessions/${SID}/contacts/5511999999999/unblock`)
+    ) {
+      return envelope({});
+    }
+
+    if (method === 'GET' && pathname === `/api/v1/sessions/${SID}/contacts/blocked`) {
+      return envelope([{ jid: '5511988887777@s.whatsapp.net' }]);
+    }
+
     throw new Error(`fetchStub (izapia): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -788,6 +837,94 @@ describe('izapia adapter: comportamento específico do provider', () => {
     const adapter = izapia(buildAdapterOptions());
     const wa = createConnector(adapter);
     await expect(wa.groups.leaveGroup?.('120363012345678901@g.us')).resolves.toBeUndefined();
+  });
+
+  it('contacts.list mapeia o array direto de "data" (sem wrapper) para Contact[]', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const list = await wa.contacts.list?.();
+
+    expect(list).toEqual([
+      {
+        id: '5511999999999@s.whatsapp.net',
+        name: 'Fulano da Silva',
+        about: undefined,
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
+  it('contacts.get devolve name/about/id a partir de GET .../contacts/{jid} (about já embutido)', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const contact = await wa.contacts.get?.('5511999999999');
+
+    expect(contact?.id).toBe('5511999999999@s.whatsapp.net');
+    expect(contact?.name).toBe('Fulano da Silva');
+    expect(contact?.about).toBe('Disponível');
+    expect(contact).toHaveProperty('raw');
+  });
+
+  it('contacts.getAbout reaproveita GET .../contacts/{jid} (mesma chamada de contacts.get)', async () => {
+    const calls: string[] = [];
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const about = await wa.contacts.getAbout?.('5511999999999');
+
+    expect(about?.about).toBe('Disponível');
+    expect(
+      calls.filter((call) => call === `GET /api/v1/sessions/${SID}/contacts/5511999999999`),
+    ).toHaveLength(1);
+  });
+
+  it('contacts.checkExists envia { numbers: [phone] } e mapeia is_in_whatsapp/jid', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/contacts/check`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const result = await wa.contacts.checkExists?.('5511999999999');
+
+    expect(capturedBody?.numbers).toEqual(['5511999999999']);
+    expect(result?.exists).toBe(true);
+    expect(result?.chatId).toBe('5511999999999@s.whatsapp.net');
+  });
+
+  it('contacts.getProfilePicture devolve "url" de GET .../contacts/{jid}/picture', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const picture = await wa.contacts.getProfilePicture?.('5511999999999');
+    expect(picture?.url).toBe('https://cdn.izapia-fake.test/foto.jpg');
+  });
+
+  it('contacts.block/unblock chamam os endpoints correspondentes sem lançar', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    await expect(wa.contacts.block?.('5511999999999')).resolves.toBeUndefined();
+    await expect(wa.contacts.unblock?.('5511999999999')).resolves.toBeUndefined();
+  });
+
+  it('contacts.listBlocked mapeia o array direto de "data" para string[] de jids', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const blocked = await wa.contacts.listBlocked?.();
+    expect(blocked).toEqual(['5511988887777@s.whatsapp.net']);
   });
 
   it('parseWebhook normaliza "session.connected" para connection.update', () => {
