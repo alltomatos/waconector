@@ -702,7 +702,8 @@ todas fechadas — fatiadas via skill `to-issues`, executadas em fila sequencial
 
 - [#61](https://github.com/alltomatos/waconector/issues/61): core (types/adapter/capabilities +
   ADR-0020/0021).
-- [#62](https://github.com/alltomatos/waconector/issues/62): adapter uazapi (68/72).
+- [#62](https://github.com/alltomatos/waconector/issues/62): adapter uazapi (66/72 — ganhou as 4
+  capabilities novas, mas partia de uma base menor que Whapi/izapia antes da Epic 12).
 - [#63](https://github.com/alltomatos/waconector/issues/63): adapter Evolution GO (53/72) — achado
   que corrigiu a ADR-0020: `messages.download` exige o descritor bruto via `raw`, não só
   `messageId` (mesmo grupo do izapia, não de uazapi/Whapi).
@@ -710,7 +711,7 @@ todas fechadas — fatiadas via skill `to-issues`, executadas em fila sequencial
   `channels.markViewed`/`reactToPost`, sem endpoint dedicado de "marcar visto"/"reagir a post" no
   namespace `newsletter.*` confirmado no OpenAPI oficial.
 - [#65](https://github.com/alltomatos/waconector/issues/65): adapter izapia (68/72, empatado com
-  uazapi/Whapi na maior cobertura do pacote) — achado notável: o webhook `message.received` carrega
+  Whapi na maior cobertura do pacote) — achado notável: o webhook `message.received` carrega
   `data.raw = evt.RawMessage`, o mesmo `*waE2E.Message` bruto do whatsmeow já usado pelo Evolution
   GO, permitindo reaproveitar por analogia a mesma extração de descritor de mídia por sub-objeto.
 - [#66](https://github.com/alltomatos/waconector/issues/66): consolidação — QA gate completo verde

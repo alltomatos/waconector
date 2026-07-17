@@ -108,8 +108,8 @@ endpoint deprecado `GET /all-groups`).
   com `messageId`; `MediaRef` ganha um campo novo `id?: string`. **`channels.getMessages`/
   `markViewed`/`reactToPost`** (ADR-0021, `ChannelPost` novo) cobrem o CONTEÚDO dos posts de um
   canal — lacuna real do namespace `channels.*` (ADR-0017), que até aqui só cobria metadados. Enum
-  de capabilities cresce de 68 para 72; cobertura pós-implementação: uazapi e izapia empatados na
-  maior cobertura do pacote (68/72 cada), Whapi também em 68/72, Evolution GO em 53/72 — ver
+  de capabilities cresce de 68 para 72; cobertura pós-implementação: izapia e Whapi empatados na
+  maior cobertura do pacote (68/72 cada), uazapi em 66/72, Evolution GO em 53/72 — ver
   `docs/capabilities.md` (gerado do código, sempre a fonte da verdade para os números atuais).
   Também estendeu o `HttpClient` (core) com `responseType: 'base64'` para suportar respostas
   binárias cruas (necessário para o `GET /media/{MediaID}` do Whapi). Fatiado e implementado via

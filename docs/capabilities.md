@@ -13,7 +13,7 @@ Nenhuma linha aqui é escrita à mão.
 
 ## Resumo por provider
 
-- **waha**: 57/72
+- **izapia**: 68/72
 - **evolution**: 53/72
 - **uazapi**: 66/72
 - **zapi**: 48/72
@@ -21,13 +21,13 @@ Nenhuma linha aqui é escrita à mão.
 - **whapi**: 68/72
 - **quepasa**: 24/72
 - **wppconnect**: 57/72
-- **izapia**: 68/72
+- **waha**: 57/72
 
 ## Detalhe por namespace
 
 ### `instance.*`
 
-| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | izapia |
+| Capability | izapia | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | waha |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `instance.connect` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | `instance.pairingCode` | — | — | — | — | — | — | — | — | — |
@@ -36,14 +36,14 @@ Nenhuma linha aqui é escrita à mão.
 
 ### `messages.*`
 
-| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | izapia |
+| Capability | izapia | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | waha |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `messages.sendText` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `messages.sendMedia` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `messages.sendReaction` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | `messages.edit` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `messages.delete` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `messages.forward` | ✅ | — | — | ✅ | — | ✅ | — | ✅ | — |
+| `messages.forward` | — | — | — | ✅ | — | ✅ | — | ✅ | ✅ |
 | `messages.star` | ✅ | — | — | — | — | ✅ | — | ✅ | ✅ |
 | `messages.unstar` | ✅ | — | — | — | — | ✅ | — | ✅ | ✅ |
 | `messages.pin` | ✅ | — | ✅ | ✅ | — | ✅ | — | — | ✅ |
@@ -52,11 +52,11 @@ Nenhuma linha aqui é escrita à mão.
 | `messages.sendLocation` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `messages.sendContactCard` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `messages.sendPoll` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `messages.download` | — | ✅ | ✅ | — | — | ✅ | — | — | ✅ |
+| `messages.download` | ✅ | ✅ | ✅ | — | — | ✅ | — | — | — |
 
 ### `groups.*`
 
-| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | izapia |
+| Capability | izapia | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | waha |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `groups.create` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | `groups.getInfo` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
@@ -75,7 +75,7 @@ Nenhuma linha aqui é escrita à mão.
 
 ### `contacts.*`
 
-| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | izapia |
+| Capability | izapia | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | waha |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `contacts.list` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | `contacts.get` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
@@ -84,24 +84,24 @@ Nenhuma linha aqui é escrita à mão.
 | `contacts.getAbout` | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | `contacts.block` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | `contacts.unblock` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ |
-| `contacts.listBlocked` | — | ✅ | ✅ | — | ✅ | ✅ | — | ✅ | ✅ |
+| `contacts.listBlocked` | ✅ | ✅ | ✅ | — | ✅ | ✅ | — | ✅ | — |
 
 ### `chats.*`
 
-| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | izapia |
+| Capability | izapia | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | waha |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `chats.archive` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `chats.unarchive` | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `chats.mute` | — | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
-| `chats.unmute` | — | — | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
-| `chats.pin` | — | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
-| `chats.unpin` | — | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
+| `chats.mute` | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | — |
+| `chats.unmute` | ✅ | — | ✅ | ✅ | — | ✅ | — | ✅ | — |
+| `chats.pin` | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | — |
+| `chats.unpin` | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | — |
 | `chats.markRead` | ✅ | — | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ |
 | `chats.markUnread` | ✅ | — | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ |
 
 ### `presence.*`
 
-| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | izapia |
+| Capability | izapia | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | waha |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `presence.setTyping` | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `presence.set` | ✅ | — | ✅ | — | ✅ | ✅ | — | ✅ | ✅ |
@@ -109,45 +109,45 @@ Nenhuma linha aqui é escrita à mão.
 
 ### `labels.*`
 
-| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | izapia |
+| Capability | izapia | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | waha |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `labels.list` | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ |
 | `labels.create` | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
 | `labels.update` | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | — | ✅ |
 | `labels.delete` | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
-| `labels.addToChat` | — | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
-| `labels.removeFromChat` | — | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
+| `labels.addToChat` | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | — |
+| `labels.removeFromChat` | ✅ | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | — |
 
 ### `channels.*`
 
-| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | izapia |
+| Capability | izapia | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | waha |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `channels.list` | ✅ | ✅ | ✅ | — | ✅ | ✅ | — | — | ✅ |
 | `channels.create` | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | ✅ |
 | `channels.getInfo` | ✅ | ✅ | ✅ | — | — | ✅ | — | — | ✅ |
-| `channels.delete` | ✅ | — | ✅ | — | — | ✅ | — | ✅ | — |
+| `channels.delete` | — | — | ✅ | — | — | ✅ | — | ✅ | ✅ |
 | `channels.follow` | ✅ | ✅ | ✅ | — | — | ✅ | — | — | ✅ |
 | `channels.unfollow` | ✅ | — | ✅ | — | — | ✅ | — | — | ✅ |
-| `channels.getMessages` | — | ✅ | ✅ | — | — | ✅ | — | — | ✅ |
-| `channels.markViewed` | — | — | ✅ | — | — | — | — | — | ✅ |
-| `channels.reactToPost` | — | — | ✅ | — | — | — | — | — | ✅ |
+| `channels.getMessages` | ✅ | ✅ | ✅ | — | — | ✅ | — | — | — |
+| `channels.markViewed` | ✅ | — | ✅ | — | — | — | — | — | — |
+| `channels.reactToPost` | ✅ | — | ✅ | — | — | — | — | — | — |
 
 ### `business.*`
 
-| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | izapia |
+| Capability | izapia | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | waha |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `business.getProfile` | — | — | ✅ | — | — | ✅ | — | — | ✅ |
+| `business.getProfile` | ✅ | — | ✅ | — | — | ✅ | — | — | — |
 | `business.updateProfile` | — | — | ✅ | — | — | ✅ | — | ✅ | — |
 
 ### `calls.*`
 
-| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | izapia |
+| Capability | izapia | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | waha |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `calls.make` | — | — | ✅ | ✅ | — | — | — | — | ✅ |
+| `calls.make` | ✅ | — | ✅ | ✅ | — | — | — | — | — |
 | `calls.reject` | ✅ | ✅ | ✅ | — | ✅ | ✅ | — | ✅ | ✅ |
 
 ### `webhooks.*`
 
-| Capability | waha | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | izapia |
+| Capability | izapia | evolution | uazapi | zapi | wuzapi | whapi | quepasa | wppconnect | waha |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `webhooks.parse` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
