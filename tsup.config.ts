@@ -13,6 +13,7 @@ export default defineConfig([
       'adapters/whapi/index': 'src/adapters/whapi/index.ts',
       'adapters/quepasa/index': 'src/adapters/quepasa/index.ts',
       'adapters/wppconnect/index': 'src/adapters/wppconnect/index.ts',
+      'adapters/izapia/index': 'src/adapters/izapia/index.ts',
     },
     format: ['esm', 'cjs'],
     dts: true,

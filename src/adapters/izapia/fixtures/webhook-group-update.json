@@ -1,0 +1,13 @@
+{
+  "event_id": "evt_4d5e6f7081929a3b4c5d",
+  "type": "group.update",
+  "session_id": "8f14e45f-ceea-467e-a5c9-5f0d3a4c1b2e",
+  "tenant_id": "c1a2b3c4-d5e6-4f70-8192-93a4b5c6d7e8",
+  "data": {
+    "group_id": "120363012345678901@g.us",
+    "timestamp": 1784289800,
+    "sender": "5511999999999@s.whatsapp.net",
+    "join": ["5511988887777@s.whatsapp.net"]
+  },
+  "published_at": "2026-07-16T12:03:20Z"
+}

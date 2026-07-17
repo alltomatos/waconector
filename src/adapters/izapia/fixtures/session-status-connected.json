@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "data": {
+    "id": "8f14e45f-ceea-467e-a5c9-5f0d3a4c1b2e",
+    "name": "minha-sessao",
+    "jid": "5511999999999@s.whatsapp.net",
+    "status": "connected",
+    "connected_at": "2026-07-16T12:00:00Z",
+    "last_activity_at": "2026-07-16T12:05:00Z"
+  }
+}
