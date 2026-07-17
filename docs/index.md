@@ -15,8 +15,8 @@ hero:
       text: GitHub
       link: https://github.com/alltomatos/waconector
 features:
-  - title: Um contrato, oito providers
-    details: WAHA, Evolution GO, uazapi, Z-API, Wuzapi, Whapi, QuePasa e WPPConnect atrás da mesma API.
+  - title: Um contrato, nove providers
+    details: WAHA, Evolution GO, uazapi, Z-API, Wuzapi, Whapi, QuePasa, WPPConnect e izapia atrás da mesma API.
   - title: Capabilities declaradas
     details: Cada adapter anuncia exatamente o que suporta — chamar fora do conjunto lança um erro tipado, não um 404 misterioso.
   - title: Webhooks que nunca derrubam seu endpoint
