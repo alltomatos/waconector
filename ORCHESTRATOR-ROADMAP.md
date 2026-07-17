@@ -626,9 +626,33 @@ ADR-0019: só promover ao enum central o que convergir em 2+ providers já imple
 - Decisão: **não promover nada ao contrato central nesta rodada** — critério histórico de
   convergência (2+ providers) não satisfeito para nenhum candidato dentro do escopo pesquisado.
   Os 12 continuam documentados como features exclusivas do izapia no próprio dossiê, sem virar
-  trabalho de implementação agora. Pendente de decisão do usuário: estender a pesquisa aos outros 5
-  adapters para os 2 candidatos promissores (`messages.download`, `channels.*` mensageria), ou
-  encerrar esta Epic aqui.
+  trabalho de implementação agora.
+- **Rodada 2 (a pedido do usuário)**: pesquisa dos 2 candidatos promissores (`messages.download`,
+  `channels.*` mensageria de canal) estendida aos outros 5 adapters já implementados (uazapi,
+  Z-API, Whapi, QuePasa, WPPConnect), somando ao Evolution GO já confirmado da rodada 1.
+  - `messages.download`: **critério de 2+ NÃO atingido**. Z-API/Whapi/QuePasa descartados com
+    confiança razoável — resolvem mídia recebida via URL já pronta no próprio payload do webhook
+    (mecanismo diferente do "download por descritor" do izapia/Evolution GO). WPPConnect
+    descartado — busca no código-fonte do controller não achou rota HTTP de download (mesmo padrão
+    já visto em outras capabilities deste provider: a lib subjacente pode ter o mecanismo, o
+    servidor não expõe). **uazapi fica incerto** (zero pesquisa dedicada até hoje, mas é
+    whatsmeow-based como o Evolution GO que já confirmou — candidato mais plausível para uma
+    pesquisa nova, ainda não feita).
+  - `channels.*` mensageria (feed/viewed/react a post): **critério de 2+ NÃO atingido, por
+    pouco**. Z-API (índice completo das 9 rotas de newsletter vistas por nome, nenhuma é de
+    mensagens/posts), QuePasa (busca negativa exaustiva, 0/6 channels) e WPPConnect (só 4 rotas de
+    newsletter no total, nenhuma de posts) descartados com confiança razoável. **Whapi tem o lead
+    mais forte**: `getMessages` citado nominalmente na doc oficial como "histórico de posts do
+    canal", mas sem endpoint/operationId confirmado (mesmo nível de confiança que este repo já
+    considerou insuficiente para ADR no ADR-0017 original). **uazapi é o segundo lead**: das 24
+    rotas de `newsletter.*` já confirmadas existir no OpenAPI bundled, só 6 foram nomeadas em
+    detalhe — pode haver um `getMessages`/`markSeen` equivalente nas ~18 restantes, nunca abertas
+    individualmente.
+  - **Conclusão**: nenhuma ADR pode ser aberta hoje com o material já pesquisado (8 dossiês
+    revisados, nenhuma pesquisa nova ao vivo). Próximo passo, se o usuário quiser continuar, exige
+    pesquisa **nova** (não só reler dossiês existentes) em Whapi (`openapi.yaml` real) e/ou uazapi
+    (abrir as ~18 rotas de newsletter não nomeadas do OpenAPI bundled já confirmado disponível) —
+    maior esforço que as rodadas 1/2, que só recombinaram pesquisa já feita.
 
 ---
 
