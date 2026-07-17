@@ -654,6 +654,45 @@ ADR-0019: só promover ao enum central o que convergir em 2+ providers já imple
     (abrir as ~18 rotas de newsletter não nomeadas do OpenAPI bundled já confirmado disponível) —
     maior esforço que as rodadas 1/2, que só recombinaram pesquisa já feita.
 
+- **Rodada 3 (a pedido do usuário — pesquisa NOVA de verdade, specs OpenAPI reais baixados ao
+  vivo)**: `https://docs.uazapi.com/openapi-bundled.json` e
+  `https://raw.githubusercontent.com/Whapi-Cloud/whatsapp-api-docs/main/openapi.yaml` baixados e
+  inspecionados diretamente (não releitura de dossiê). **Reverte por completo a conclusão da
+  rodada 2** — as ~18 rotas de `newsletter.*` do uazapi nunca abertas individualmente, e o
+  `getMessages` do Whapi que só tinha citação por nome, ambos tinham endpoint real, e não foram
+  achados antes simplesmente porque nenhuma pesquisa dedicada tinha ido atrás deles ao vivo.
+  - **`messages.download` — critério de 2+ ATINGIDO, com folga**: confirmado em **Evolution GO**
+    (rodada 1), **uazapi** (`POST /message/download`, body `{id, return_base64?, generate_mp3?,
+    return_link?, transcribe?, openai_apikey?, download_quoted?}` → `{fileURL?, mimetype,
+    base64Data?, transcription?}` — schema rico, com opções de transcrição de áudio via Whisper) e
+    **Whapi** (`GET /media/{MediaID}`, `operationId: getMedia` — todo `MediaFile` recebido em
+    mensagem de mídia tem um campo `id` **obrigatório** do tipo `MediaID`, diferente do campo
+    `link` opcional/best-effort já mapeado antes — ou seja, é um mecanismo de download por
+    descritor genuíno e sempre disponível, não o "link já pronto" que a rodada 2 tinha descartado
+    como mecanismo diferente). **izapia também já suporta** (adapter próprio, fora do contrato
+    ainda). 4 candidatos reais: Evolution GO, uazapi, Whapi, izapia.
+  - **`channels.getMessages` (ler feed de posts) — critério de 2+ ATINGIDO, com folga**:
+    confirmado em **Evolution GO** (rodada 1), **uazapi** (`POST /newsletter/messages`, body
+    `{id?, jid?, count?, beforeid?}` → array de posts `{serverid, messageid, type, timestamp,
+    viewsCount, reactionCounts, message}` — busca direto no WhatsApp, com paginação por
+    `beforeid`) e **Whapi** (`GET /newsletters/{NewsletterID}/messages`, `operationId:
+    getMessagesNewsletter`, params `count`/`before`/`after`). **izapia também já suporta**
+    (`GET .../channels/{channelId}/messages`, fora do contrato). 4 candidatos reais.
+  - **`channels.markViewed`/`channels.reactToPost` — critério de 2+ ATINGIDO no piso mínimo**
+    (mesmo padrão de `calls.make`, que foi promovido com só 2/8 providers): confirmado em
+    **uazapi** (`POST /newsletter/viewed` body `{id?, jid?, serverids: integer[]}` → `{response:
+    boolean}`; `POST /newsletter/reaction` body `{id?, jid?, serverid, reaction?,
+    reactionmessageid?}` → `{response: boolean}`, reaction vazia remove — mesma convenção
+    canônica já usada em `messages.sendReaction`) e **izapia** (`POST .../messages/viewed`,
+    `POST .../messages/{serverId}/react`, ambos já no adapter mas fora do contrato). Evolution
+    GO/Whapi não confirmam essas duas operações especificamente (só a leitura do feed).
+  - **Conclusão**: os 3 candidatos atingem o critério histórico de convergência com pesquisa real,
+    ao vivo, contra os specs OpenAPI oficiais — diferente das rodadas 1/2, que só recombinaram
+    dossiês já escritos. Pendente de decisão do usuário: escrever as ADRs (novo namespace
+    `channels.getMessages`/`markViewed`/`reactToPost` além dos 6 já existentes; nova capability
+    `messages.download`) e implementar nos adapters confirmados (Evolution GO, uazapi, Whapi,
+    izapia para os 3; mais QuePasa/WAHA/Z-API/WPPConnect/Wuzapi só se pesquisa adicional confirmar).
+
 ---
 
 Atualize este arquivo ao concluir cada milestone; o detalhe de *por quê* de cada fase do produto
