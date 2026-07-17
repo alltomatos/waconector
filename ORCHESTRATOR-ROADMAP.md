@@ -132,6 +132,25 @@ tratado como incremento futuro separado, não uma pendência desta Epic.
       (fecha a F3 por completo) — [PR #30](https://github.com/alltomatos/waconector/pull/30).
       Publicação verificada de ponta a ponta via `npx -y waconector@0.4.0 doctor`/`--help` direto
       do registry.
+- [x] **v1.1.0** publicado no npm (2026-07-13) — consolida os 10 changesets `minor` acumulados
+      desde o v1.0.0 (Epic 6/7/9 completas: `chats.*`, `messages.edit`/`delete`/`forward`/`star`/
+      `unstar`/`pin`/`unpin`/`markRead`/`sendLocation`/`sendContactCard`/`sendPoll`, `presence.*`,
+      `labels.*`, `channels.*`, `business.*`, `calls.*`, gaps de Whapi/WPPConnect) num único bump
+      `1.0.0` → `1.1.0` — [PR #43](https://github.com/alltomatos/waconector/pull/43). Processo:
+      `npm run version` (`changeset version`) rodado direto em `develop` (mesmo padrão de
+      v0.1.0-v0.4.0, já que `guard-main-source` bloqueia a PR de versão que o bot `changesets/action`
+      tentaria abrir contra `main`), consumindo os 10 changesets pendentes, commitado como
+      "chore: release v1.1.0" e mergeado via PR normal `develop`→`main`. Merge do PR #43 exigiu
+      reconciliar o MESMO tipo de conflito de squash-merge de todo PR desta sessão — desta vez só
+      1 arquivo (`ORCHESTRATOR-ROADMAP.md`, placeholder desatualizado) mais uma nuance nova: o
+      merge resolveu automaticamente ressuscitando `.changeset/capabilities-calls.md` (o
+      merge-base não tinha esse arquivo, então o merge o tratou como "adicionado só em `main`", não
+      "apagado em `develop`") — removido manualmente antes de commitar, já que já estava consumido
+      no `CHANGELOG.md`/`package.json` (confirmado comparando o texto do changeset com a entrada já
+      presente no changelog). QA gate completo verde na árvore final: 891 testes, build, smoke,
+      `docs:capabilities` sem diff. Publicação confirmada no log do workflow `release.yml`
+      (`🦋 success packages published successfully: waconector@1.1.0`, tag `v1.1.0` criada e
+      enviada ao repositório). **Fecha as Epics 6/7/9 do ponto de vista de release.**
 
 ## Epic 4 — F3 do produto: profundidade e DX
 
@@ -349,7 +368,7 @@ exatamente na razão que já bloqueou da última vez. Retomar quando houver inst
 
 ## Epic 9 — capabilities novas, rodada 2 (fila sequencial, sem multi-agent)
 
-Estado: **in_progress**
+Estado: **done**
 
 Continuação da Epic 7, cobrindo candidatas que ficaram fora do ADR-0012 (mensagens avançadas +
 domínios inteiramente novos: presença, labels, canais, perfil comercial, chamadas). Diferença
@@ -508,6 +527,63 @@ pesquisa já produzidos na Epic 7 (`scratchpad/provider-reports/`), sem repetir 
       `docs/capabilities.md` regenerado via `npm run docs:capabilities`; e um hunk não-vazio em
       `ORCHESTRATOR-ROADMAP.md` onde o lado `main` era só um placeholder desatualizado do mesmo item
       já completo em `develop`).
+
+## Epic 10 — Adapter izapia (9º provider)
+
+Estado: **done**. Planejada via Fase 3/4 do orchestrator e fatiada em issues via skill `to-issues`
+— [issue #44](https://github.com/alltomatos/waconector/issues/44) (Epic) + 13 sub-issues
+[#45](https://github.com/alltomatos/waconector/issues/45)-[#57](https://github.com/alltomatos/waconector/issues/57),
+todas fechadas. Executadas em fila sequencial (a pedido do usuário, sem `Workflow`/`Agent` em
+paralelo), uma por vez, cada uma com commit próprio na branch `feat/izapia-adapter`. Criação das
+issues via `gh` CLI direto (o GitHub MCP retornou `403 Resource not accessible by integration` ao
+tentar `issue_write` — integração sem permissão de escrita em Issues neste repo; `gh` funcionou
+normalmente nesta sessão, inclusive para ler o código-fonte do repo privado `alltomatos/izapia`,
+contradizendo uma memória de sessão anterior sobre isolamento do keyring).
+
+**Resultado final**: **64/68 capabilities — a maior cobertura entre os 9 adapters do pacote**
+(ver `docs/capabilities.md`). Gaps documentados (todos limitações reais do provider, não da
+pesquisa): `instance.pairingCode` (mesmo motivo estrutural dos outros 8 adapters — o contrato não
+recebe telefone), `messages.forward` (endpoint só aceita texto pronto; izapia é stateless, sem
+histórico para resolver o texto original a partir de um `messageId`), `channels.delete` e
+`business.updateProfile` (ambos `501 NOT_IMPLEMENTED` hoje — o `whatsmeow` não expõe essas
+operações publicamente). Achado notável: `calls.*` roda sobre um `CallManager` de voz genuíno
+(sinalização + bridge WebRTC), diferente da "chamada vazia" dos demais 8 adapters — o contrato
+canônico atual não modela áudio, então isso não aparece na assinatura, só no comportamento real.
+QA gate completo verde em cada issue: lint, typecheck, suite de contrato (81 testes específicos +
+contrato compartilhado), cobertura 92.1%/67.93%/99.54%/93.41% (acima dos thresholds 77/60/90/80),
+build e smoke (incluindo o subpath `waconector/izapia`) passando. Changeset `minor` criado.
+[PR #58](https://github.com/alltomatos/waconector/pull/58) aberto (`feat/izapia-adapter` → `develop`).
+
+- Contexto: izapia (`github.com/alltomatos/izapia`, repo **privado** do próprio usuário) é uma API
+  SaaS multi-tenant de WhatsApp sobre `whatsmeow` — o candidato mais completo já avaliado para um
+  adapter novo (`v0.2.0` confirmado ao vivo em `api.izapia.com` em 2026-07-16, ~100 endpoints).
+  Vira o 9º provider suportado pelo waconector.
+- **Correção de registro importante**: uma pesquisa anterior (3 passadas, 2026-07-12 a 2026-07-16,
+  ver memória do agente) concluía que o dossiê já estava pronto em `docs/providers/izapia.md` numa
+  branch (`claude/add-codechat-provider-512561`). Verificação nesta sessão (2026-07-16) não
+  encontrou o arquivo em NENHUM branch/commit local (`git ls-tree -r --name-only <ref>` e
+  `git log --all` vazios para `izapia` em qualquer lugar do repo, incluindo commits *dangling*).
+  **Tratar o dossiê como inexistente** — precisa ser refeito do zero, reconfirmando
+  `api.izapia.com/openapi.json` ao vivo antes de qualquer implementação (API muda rápido: v0.1.0→
+  v0.2.0 em 4 dias).
+- `docs/capabilities.md` é **gerado**, não editado à mão (`npm run docs:capabilities`, ver cabeçalho
+  do arquivo) — a linha `izapia: X/68` só existirá de fato depois que o adapter estiver
+  implementado e essa geração rodar; não é algo a "preencher" manualmente.
+- DAG de tarefas atômicas (vertical slices por namespace, mesmo padrão dos adapters da Epic 3):
+  1. Dossiê `docs/providers/izapia.md` + fixtures reais capturadas ao vivo — sem deps.
+  2. Core do adapter (`src/adapters/izapia/`) — `instance.connect/status/logout` +
+     `webhooks.parse` — depende de (1).
+  3. `messages.*` completo (sendText/sendMedia/sendReaction/edit/delete/forward/star/unstar/pin/
+     unpin/markRead/sendLocation/sendContactCard/sendPoll) — depende de (2).
+  4. `groups.*` + `contacts.*` — depende de (2).
+  5. `chats.*` + `presence.*` + `labels.*` — depende de (2).
+  6. `channels.*` + `business.*` + `calls.*` — depende de (2).
+  7. Suite de contrato (`test/contract/`) passando 100% + subpath export (`package.json` +
+     `tsup.config.ts`) + `npx changeset` — depende de (3, 4, 5, 6).
+  8. Docs: `docs/providers/README.md` (tabela de providers-alvo), `docs/CONTEXT.md` (roadmap de
+     produto), `docs/capabilities.md` regenerado — depende de (7).
+- Tier de risco: T2 (batch) — mesmo perfil dos adapters uazapi/Z-API/Wuzapi da Epic 3; não mexe em
+  schema, autenticação existente ou API pública já publicada.
 
 ---
 
