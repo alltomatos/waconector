@@ -1,4 +1,5 @@
 import type {
+  ChannelsApi,
   ChatsApi,
   ContactsApi,
   GroupsApi,
@@ -20,11 +21,13 @@ import type {
 } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  ChannelInfo,
   CheckExistsResult,
   ConnectResult,
   Contact,
   ContactAbout,
   ContactProfilePicture,
+  CreateChannelInput,
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
@@ -144,6 +147,11 @@ const IZAPIA_CAPABILITIES: CapabilitySet = [
   'labels.delete',
   'labels.addToChat',
   'labels.removeFromChat',
+  'channels.list',
+  'channels.create',
+  'channels.getInfo',
+  'channels.follow',
+  'channels.unfollow',
   'webhooks.parse',
 ];
 
@@ -240,6 +248,16 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     removeFromChat: (input) => setChatLabel(http, sid, input, false),
   };
 
+  const channels: ChannelsApi = {
+    list: () => listChannels(http, sid),
+    create: (input) => createChannel(http, sid, input),
+    getInfo: (channelId) => getChannelInfo(http, sid, channelId),
+    follow: (channelId) => setChannelFollowed(http, sid, channelId, true),
+    unfollow: (channelId) => setChannelFollowed(http, sid, channelId, false),
+    // `channels.delete` NÃO implementado: POST .../channels/{channelId}/delete hoje devolve
+    // 501 NOT_IMPLEMENTED — o whatsmeow não expõe "apagar canal" publicamente (ver dossiê).
+  };
+
   return {
     provider: PROVIDER,
     capabilities: IZAPIA_CAPABILITIES,
@@ -250,6 +268,7 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     chats,
     presence,
     labels,
+    channels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -982,6 +1001,74 @@ async function setChatLabel(
   await http.request({
     method: 'POST',
     path: `/api/v1/sessions/${sid}/labels/${input.labelId}/chats/${input.chatId}${suffix}`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// channels.*
+// ---------------------------------------------------------------------------
+
+/**
+ * Modelo canônico confirmado em `internal/session/channels.go` (`channelToCanonical`):
+ * `{channel_id, name, description, subscriber_count}` — `channel_id` é sempre o JID
+ * (`...@newsletter`).
+ */
+function mapChannel(body: unknown): ChannelInfo {
+  const data = unwrapEnvelope(body);
+  return {
+    id: asString(data.channel_id) ?? '',
+    name: asString(data.name) ?? '',
+    description: asString(data.description),
+    subscribersCount: asNumber(data.subscriber_count),
+    raw: body,
+  };
+}
+
+/** `GET .../channels`: `data` é um array direto (mesmo padrão das demais listagens). */
+async function listChannels(http: HttpClient, sid: string): Promise<ChannelInfo[]> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/channels`,
+  });
+  const record = asRecord(body);
+  const channels = record && Array.isArray(record.data) ? record.data : [];
+  return channels.map((channel: unknown) => mapChannel({ ok: true, data: channel }));
+}
+
+async function createChannel(
+  http: HttpClient,
+  sid: string,
+  input: CreateChannelInput,
+): Promise<ChannelInfo> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/channels`,
+    body: { name: input.name, ...(input.description ? { description: input.description } : {}) },
+  });
+  return mapChannel(body);
+}
+
+async function getChannelInfo(
+  http: HttpClient,
+  sid: string,
+  channelId: string,
+): Promise<ChannelInfo> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/channels/${channelId}`,
+  });
+  return mapChannel(body);
+}
+
+async function setChannelFollowed(
+  http: HttpClient,
+  sid: string,
+  channelId: string,
+  follow: boolean,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/channels/${channelId}/${follow ? 'follow' : 'unfollow'}`,
   });
 }
 

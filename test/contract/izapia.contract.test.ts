@@ -277,6 +277,46 @@ function createFetchStub(): typeof globalThis.fetch {
       return envelope({ ok: true });
     }
 
+    if (method === 'GET' && pathname === `/api/v1/sessions/${SID}/channels`) {
+      return envelope([
+        {
+          channel_id: '111111111111111111@newsletter',
+          name: 'Canal Contrato',
+          description: 'Descrição',
+          subscriber_count: 10,
+        },
+      ]);
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/channels`) {
+      return envelope({
+        channel_id: '222222222222222222@newsletter',
+        name: 'Canal Novo',
+        description: '',
+        subscriber_count: 0,
+      });
+    }
+
+    if (
+      method === 'GET' &&
+      pathname === `/api/v1/sessions/${SID}/channels/111111111111111111@newsletter`
+    ) {
+      return envelope({
+        channel_id: '111111111111111111@newsletter',
+        name: 'Canal Contrato',
+        description: 'Descrição',
+        subscriber_count: 10,
+      });
+    }
+
+    if (
+      method === 'POST' &&
+      (pathname === `/api/v1/sessions/${SID}/channels/111111111111111111@newsletter/follow` ||
+        pathname === `/api/v1/sessions/${SID}/channels/111111111111111111@newsletter/unfollow`)
+    ) {
+      return envelope({});
+    }
+
     throw new Error(`fetchStub (izapia): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1113,6 +1153,49 @@ describe('izapia adapter: comportamento específico do provider', () => {
     await expect(
       wa.labels?.removeFromChat?.({ labelId: 'label-1', chatId: '5511999999999' }),
     ).resolves.toBeUndefined();
+  });
+
+  it('channels.list mapeia o array direto de "data" para ChannelInfo[]', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const list = await wa.channels?.list?.();
+    expect(list).toEqual([
+      {
+        id: '111111111111111111@newsletter',
+        name: 'Canal Contrato',
+        description: 'Descrição',
+        subscribersCount: 10,
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
+  it('channels.create envia { name, description } e mapeia o channel_id real', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const channel = await wa.channels?.create?.({ name: 'Canal Novo' });
+    expect(channel?.id).toBe('222222222222222222@newsletter');
+  });
+
+  it('channels.getInfo consulta GET .../channels/{channelId}', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const channel = await wa.channels?.getInfo?.('111111111111111111@newsletter');
+    expect(channel?.name).toBe('Canal Contrato');
+    expect(channel?.subscribersCount).toBe(10);
+  });
+
+  it('channels.follow/unfollow chamam os endpoints corretos sem lançar', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    await expect(wa.channels?.follow?.('111111111111111111@newsletter')).resolves.toBeUndefined();
+    await expect(wa.channels?.unfollow?.('111111111111111111@newsletter')).resolves.toBeUndefined();
+  });
+
+  it('channels.delete não é declarado (endpoint real devolve 501 NOT_IMPLEMENTED hoje)', () => {
+    const adapter = izapia(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('channels.delete');
+    expect(adapter.channels?.delete).toBeUndefined();
   });
 
   it('parseWebhook normaliza "session.connected" para connection.update', () => {
