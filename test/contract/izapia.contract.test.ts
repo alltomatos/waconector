@@ -1,0 +1,353 @@
+import { describe, expect, it } from 'vitest';
+import { createConnector, isWaConnectorError } from '../../src';
+import { type IzapiaOptions, izapia } from '../../src/adapters/izapia';
+import messageReceivedFixture from '../../src/adapters/izapia/fixtures/webhook-message-received.json';
+import { describeAdapterContract } from './adapter-contract';
+
+const BASE_URL = 'https://contrato.izapia.com';
+const API_KEY = 'api-key-de-teste-nao-real';
+const SID = '8f14e45f-ceea-467e-a5c9-5f0d3a4c1b2e';
+
+function envelope(data: unknown): Response {
+  return new Response(JSON.stringify({ ok: true, data }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/**
+ * Stub de `fetch` que roteia por (método, pathname) e devolve respostas equivalentes às reais do
+ * izapia (envelope `{ok, data}` — ver docs/providers/izapia.md), sem rede real.
+ */
+function createFetchStub(): typeof globalThis.fetch {
+  return async (input, init) => {
+    const url = new URL(String(input));
+    const method = (init?.method ?? 'GET').toUpperCase();
+    const pathname = url.pathname;
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/pair`) {
+      return envelope({ code: '2@fake-qr-code', qr_png_base64: 'ZmFrZS1xcg==' });
+    }
+
+    if (method === 'GET' && pathname === `/api/v1/sessions/${SID}`) {
+      return envelope({
+        id: SID,
+        name: 'contrato',
+        jid: '5511999999999@s.whatsapp.net',
+        status: 'connected',
+      });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/logout`) {
+      return envelope({ id: SID, status: 'logged_out' });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/text`) {
+      return envelope({ message_id: '3EB0FAKE0000000000TEXT' });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/media`) {
+      return envelope({ message_id: '3EB0FAKE0000000000MEDIA' });
+    }
+
+    throw new Error(`fetchStub (izapia): rota não configurada ${method} ${pathname}`);
+  };
+}
+
+function buildAdapterOptions(overrides: Partial<IzapiaOptions> = {}): IzapiaOptions {
+  return {
+    baseUrl: BASE_URL,
+    apiKey: API_KEY,
+    sid: SID,
+    fetch: createFetchStub(),
+    ...overrides,
+  };
+}
+
+describeAdapterContract({
+  name: 'izapia',
+  create() {
+    const adapter = izapia(buildAdapterOptions());
+    return {
+      adapter,
+      ready: async () => {
+        await adapter.instance.connect();
+      },
+      webhooks: {
+        messageReceived: { body: messageReceivedFixture },
+      },
+      recipient: '5511999999999',
+    };
+  },
+});
+
+describe('izapia adapter: comportamento específico do provider', () => {
+  it('instance.connect chama POST /pair e devolve o qr de qr_png_base64', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const result = await adapter.instance.connect();
+    expect(result.qr).toBe('ZmFrZS1xcg==');
+    expect(result).toHaveProperty('raw');
+  });
+
+  it('instance.status mapeia "connected" para o InstanceState canônico', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const status = await adapter.instance.status();
+    expect(status.state).toBe('connected');
+    expect(status).toHaveProperty('raw');
+  });
+
+  it.each([
+    ['created', 'disconnected'],
+    ['pairing', 'qr'],
+    ['connected', 'connected'],
+    ['disconnected', 'connecting'],
+    ['logged_out', 'disconnected'],
+    ['algo-novo-nao-documentado', 'unknown'],
+  ] as const)('instance.status mapeia status="%s" para "%s"', async (providerStatus, expected) => {
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}`) {
+            return envelope({ id: SID, name: 'contrato', status: providerStatus });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const status = await adapter.instance.status();
+    expect(status.state).toBe(expected);
+  });
+
+  it('instance.logout chama POST /logout sem lançar', async () => {
+    const calls: string[] = [];
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    await expect(adapter.instance.logout()).resolves.toBeUndefined();
+    expect(calls).toContain(`POST /api/v1/sessions/${SID}/logout`);
+  });
+
+  it('messages.sendText envia { to, text } e mapeia message_id', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/text`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendText({ to: '5511999999999', text: 'contrato: ping' });
+
+    expect(capturedBody?.to).toBe('5511999999999');
+    expect(capturedBody?.text).toBe('contrato: ping');
+    expect(sent.id).toBe('3EB0FAKE0000000000TEXT');
+    expect(sent.chatId).toBe('5511999999999');
+  });
+
+  it('messages.sendMedia envia "url" quando presente, sem "base64"', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/media`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendMedia({
+      to: '5511999999999',
+      media: { kind: 'image', url: 'https://cdn.exemplo.test/foto.jpg', mimeType: 'image/jpeg' },
+      caption: 'legenda',
+    });
+
+    expect(capturedBody?.to).toBe('5511999999999');
+    expect(capturedBody?.kind).toBe('image');
+    expect(capturedBody?.url).toBe('https://cdn.exemplo.test/foto.jpg');
+    expect(capturedBody?.base64).toBeUndefined();
+    expect(capturedBody?.mimetype).toBe('image/jpeg');
+    expect(capturedBody?.caption).toBe('legenda');
+    expect(sent.id).toBe('3EB0FAKE0000000000MEDIA');
+  });
+
+  it('messages.sendMedia usa "base64" quando media.url está ausente', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/media`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendMedia({
+      to: '5511999999999',
+      media: { kind: 'image', base64: 'ZmFrZS1pbWFnZW0=' },
+    });
+
+    expect(capturedBody?.base64).toBe('ZmFrZS1pbWFnZW0=');
+    expect(capturedBody?.url).toBeUndefined();
+  });
+
+  it('sendMedia sem media.url nem media.base64 lança INVALID_INPUT', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+
+    const failure = await wa.messages
+      .sendMedia({ to: '5511999999999', media: { kind: 'image' } })
+      .catch((error: unknown) => error);
+
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.code).toBe('INVALID_INPUT');
+    }
+  });
+
+  it('envia o header Authorization: Bearer <apiKey> em toda chamada', async () => {
+    const calls: Headers[] = [];
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          calls.push(new Headers(init?.headers));
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    await adapter.instance.status();
+    expect(calls[0]?.get('authorization')).toBe(`Bearer ${API_KEY}`);
+  });
+
+  it('redige a API key de mensagens de erro (HttpClient secrets)', async () => {
+    const adapter = izapia(
+      buildAdapterOptions({
+        apiKey: 'super-secret-key',
+        fetch: async () =>
+          new Response(
+            JSON.stringify({
+              ok: false,
+              error: { code: 'AUTH_FAILED', message: 'bad key super-secret-key' },
+            }),
+            {
+              status: 401,
+              headers: { 'content-type': 'application/json' },
+            },
+          ),
+      }),
+    );
+    const failure = await adapter.instance.status().catch((error: unknown) => error);
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.message).not.toContain('super-secret-key');
+      expect(failure.message).toContain('***');
+      expect(failure.code).toBe('AUTH_FAILED');
+    }
+  });
+
+  it('parseWebhook normaliza "session.connected" para connection.update', () => {
+    const adapter = izapia(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: {
+        event_id: 'evt_1',
+        type: 'session.connected',
+        session_id: SID,
+        tenant_id: 'tenant-1',
+        data: { jid: '5511999999999@s.whatsapp.net' },
+      },
+    });
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('connection.update');
+    if (event?.type === 'connection.update') {
+      expect(event.state).toBe('connected');
+      expect(event.instanceId).toBe(SID);
+    }
+  });
+
+  it('parseWebhook normaliza "message.ack" para message.ack', () => {
+    const adapter = izapia(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: {
+        event_id: 'evt_2',
+        type: 'message.ack',
+        session_id: SID,
+        tenant_id: 'tenant-1',
+        data: {
+          message_ids: ['3EB0C767D26A8A5F1234'],
+          status: 'read',
+          from: '5511988887777@s.whatsapp.net',
+          chat: '5511988887777@s.whatsapp.net',
+          timestamp: 1784289700,
+        },
+      },
+    });
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('message.ack');
+    if (event?.type === 'message.ack') {
+      expect(event.messageId).toBe('3EB0C767D26A8A5F1234');
+      expect(event.chatId).toBe('5511988887777@s.whatsapp.net');
+      expect(event.ack).toBe('read');
+    }
+  });
+
+  it('parseWebhook normaliza evento de mensagem recebida, incluindo timestamp em ms', () => {
+    const adapter = izapia(buildAdapterOptions());
+    const events = adapter.parseWebhook({ body: messageReceivedFixture });
+
+    expect(events).toHaveLength(1);
+    const [event] = events;
+    expect(event?.type).toBe('message.received');
+    if (event?.type === 'message.received') {
+      expect(event.message.id).toBe('3EB0C767D26A8A5F1234');
+      expect(event.message.chatId).toBe('5511988887777@s.whatsapp.net');
+      expect(event.message.text).toBe('Oi, tudo bem?');
+      expect(event.message.timestamp).toBe(1784289650000);
+      expect(event.message.fromMe).toBe(false);
+    }
+  });
+
+  it('parseWebhook evento não mapeado (ex.: presence.update) vira "unknown"', () => {
+    const adapter = izapia(buildAdapterOptions());
+    const events = adapter.parseWebhook({
+      body: {
+        event_id: 'evt_3',
+        type: 'presence.update',
+        session_id: SID,
+        tenant_id: 'tenant-1',
+        data: {},
+      },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('unknown');
+  });
+
+  it('parseWebhook nunca lança para payload desconhecido ou quebrado (vira "unknown")', () => {
+    const adapter = izapia(buildAdapterOptions());
+
+    expect(() => adapter.parseWebhook({ body: null })).not.toThrow();
+    expect(() => adapter.parseWebhook({ body: 'string-solta' })).not.toThrow();
+    expect(() => adapter.parseWebhook({ body: { sem: 'campo-type' } })).not.toThrow();
+
+    const events = adapter.parseWebhook({ body: { formato: 'desconhecido' } });
+    expect(events.every((event) => event.type === 'unknown')).toBe(true);
+  });
+});
