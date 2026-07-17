@@ -1,4 +1,10 @@
-import type { InstanceApi, MessagesApi, WaAdapter, WebhookInput } from '../../core/adapter';
+import type {
+  GroupsApi,
+  InstanceApi,
+  MessagesApi,
+  WaAdapter,
+  WebhookInput,
+} from '../../core/adapter';
 import type { CapabilitySet } from '../../core/capabilities';
 import { WaConnectorError } from '../../core/errors';
 import type {
@@ -11,12 +17,19 @@ import type {
 import { HttpClient } from '../../core/http';
 import type {
   ConnectResult,
+  CreateGroupInput,
   DeleteMessageInput,
   EditMessageInput,
+  GroupInfo,
+  GroupInviteLink,
+  GroupParticipant,
+  GroupParticipantsInput,
   InstanceState,
   InstanceStatus,
+  JoinGroupInviteInput,
   MarkMessageReadInput,
   MediaKind,
+  MediaRef,
   MessageAck,
   PinMessageInput,
   SendContactCardInput,
@@ -27,6 +40,9 @@ import type {
   SendTextInput,
   SentMessage,
   StarMessageInput,
+  UpdateGroupDescriptionInput,
+  UpdateGroupPictureInput,
+  UpdateGroupSubjectInput,
   WaMessage,
 } from '../../core/types';
 
@@ -75,6 +91,20 @@ const IZAPIA_CAPABILITIES: CapabilitySet = [
   'messages.sendLocation',
   'messages.sendContactCard',
   'messages.sendPoll',
+  'groups.create',
+  'groups.getInfo',
+  'groups.list',
+  'groups.addParticipants',
+  'groups.removeParticipants',
+  'groups.promoteParticipants',
+  'groups.demoteParticipants',
+  'groups.updateSubject',
+  'groups.updateDescription',
+  'groups.updatePicture',
+  'groups.getInviteLink',
+  'groups.revokeInviteLink',
+  'groups.joinViaInviteLink',
+  'groups.leaveGroup',
   'webhooks.parse',
 ];
 
@@ -117,14 +147,31 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     // do contrato canônico não carrega o texto). Limitação real do provider, não gap de pesquisa.
   };
 
+  const groups: GroupsApi = {
+    create: (input) => createGroup(http, sid, input),
+    getInfo: (groupId) => getGroupInfo(http, sid, groupId),
+    list: () => listGroups(http, sid),
+    addParticipants: (input) => updateGroupParticipants(http, sid, input, 'add'),
+    removeParticipants: (input) => updateGroupParticipants(http, sid, input, 'remove'),
+    promoteParticipants: (input) => updateGroupParticipants(http, sid, input, 'promote'),
+    demoteParticipants: (input) => updateGroupParticipants(http, sid, input, 'demote'),
+    updateSubject: (input) => updateGroupSubject(http, sid, input),
+    updateDescription: (input) => updateGroupDescription(http, sid, input),
+    updatePicture: (input) => updateGroupPicture(http, sid, input),
+    getInviteLink: (groupId) => getGroupInviteLink(http, sid, groupId),
+    revokeInviteLink: (groupId) => revokeGroupInviteLink(http, sid, groupId),
+    joinViaInviteLink: (input) => joinGroupViaInviteLink(http, sid, input),
+    leaveGroup: (groupId) => leaveGroup(http, sid, groupId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: IZAPIA_CAPABILITIES,
     instance,
     messages,
-    // groups/contacts obrigatórios no contrato `WaAdapter`, mas ainda não implementados nesta
-    // fase (issues #48/#49 desta Epic) — objetos vazios, sem capability declarada.
-    groups: {},
+    groups,
+    // contacts obrigatório no contrato `WaAdapter`, mas ainda não implementado nesta fase
+    // (issue #49 desta Epic) — objeto vazio, sem capability declarada.
     contacts: {},
     parseWebhook: (input) => parseWebhook(input),
   };
@@ -387,6 +434,190 @@ async function sendPoll(http: HttpClient, sid: string, input: SendPollInput): Pr
     },
   });
   return mapSentMessage(body, input.to);
+}
+
+// ---------------------------------------------------------------------------
+// groups.*
+// ---------------------------------------------------------------------------
+
+/**
+ * Modelo canônico de grupo confirmado em `internal/session/groups.go` (`groupToCanonical`):
+ * `{group_id, subject, description, owner, created, participants: [{jid, is_admin,
+ * is_super_admin}]}`. `group_id` é sempre o JID (`<dígitos>@g.us`) — `GroupInfo.id` fica opaco
+ * mesmo assim (não passa por `normalizeChatId`, ver ADR-0009).
+ */
+function mapGroupInfo(body: unknown): GroupInfo {
+  const data = unwrapEnvelope(body);
+  const participantsRaw = data.participants;
+  const participants = Array.isArray(participantsRaw) ? participantsRaw.map(mapParticipant) : [];
+  return {
+    id: asString(data.group_id) ?? '',
+    subject: asString(data.subject) ?? '',
+    description: asString(data.description),
+    owner: asString(data.owner),
+    participants,
+    raw: body,
+  };
+}
+
+function mapParticipant(value: unknown): GroupParticipant {
+  const record = asRecord(value);
+  return {
+    id: (record ? asString(record.jid) : undefined) ?? 'unknown',
+    isAdmin: (record ? asBoolean(record.is_admin) : undefined) ?? false,
+    isSuperAdmin: (record ? asBoolean(record.is_super_admin) : undefined) ?? false,
+  };
+}
+
+async function createGroup(
+  http: HttpClient,
+  sid: string,
+  input: CreateGroupInput,
+): Promise<GroupInfo> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/groups`,
+    body: { subject: input.subject, participants: input.participants },
+  });
+  return mapGroupInfo(body);
+}
+
+async function getGroupInfo(http: HttpClient, sid: string, groupId: string): Promise<GroupInfo> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/groups/${groupId}`,
+  });
+  return mapGroupInfo(body);
+}
+
+/**
+ * `GET .../groups`: `data` do envelope é um ARRAY direto de grupos (`ListGroups` do provider
+ * devolve `[]map[string]any`, sem wrapper `{groups: [...]}` — confirmado em
+ * `internal/session/groups.go`), diferente de outros providers deste pacote.
+ */
+async function listGroups(http: HttpClient, sid: string): Promise<GroupInfo[]> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/groups`,
+  });
+  const record = asRecord(body);
+  const groups = record && Array.isArray(record.data) ? record.data : [];
+  return groups.map((group: unknown) => mapGroupInfo({ ok: true, data: group }));
+}
+
+/**
+ * `addParticipants`/`removeParticipants`/`promoteParticipants`/`demoteParticipants` são, no izapia,
+ * o MESMO endpoint (`POST .../groups/{groupId}/participants`), discriminado pelo campo `action`
+ * (ver docs/providers/izapia.md). Resposta traz o resultado por-participante — ignorada, o
+ * contrato exige apenas `Promise<void>`.
+ */
+async function updateGroupParticipants(
+  http: HttpClient,
+  sid: string,
+  input: GroupParticipantsInput,
+  action: 'add' | 'remove' | 'promote' | 'demote',
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/groups/${input.groupId}/participants`,
+    body: { action, participants: input.participants },
+  });
+}
+
+async function updateGroupSubject(
+  http: HttpClient,
+  sid: string,
+  input: UpdateGroupSubjectInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/groups/${input.groupId}/subject`,
+    body: { subject: input.subject },
+  });
+}
+
+/** `description` vazia é permitida e limpa a descrição do grupo (ver docs/providers/izapia.md). */
+async function updateGroupDescription(
+  http: HttpClient,
+  sid: string,
+  input: UpdateGroupDescriptionInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/groups/${input.groupId}/description`,
+    body: { description: input.description },
+  });
+}
+
+/** `MediaRef` já garantida com `kind === 'image'` pelo conector — mesma regra de `sendMedia`. */
+function toIzapiaImageBody(media: MediaRef): Record<string, unknown> {
+  const requestBody: Record<string, unknown> = {};
+  if (media.url) requestBody.url = media.url;
+  else requestBody.base64 = media.base64;
+  if (media.mimeType) requestBody.mimetype = media.mimeType;
+  return requestBody;
+}
+
+async function updateGroupPicture(
+  http: HttpClient,
+  sid: string,
+  input: UpdateGroupPictureInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/groups/${input.groupId}/picture`,
+    body: toIzapiaImageBody(input.media),
+  });
+}
+
+async function getGroupInviteLink(
+  http: HttpClient,
+  sid: string,
+  groupId: string,
+): Promise<GroupInviteLink> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/groups/${groupId}/invite`,
+  });
+  const data = unwrapEnvelope(body);
+  return { link: asString(data.invite_link) ?? '', raw: body };
+}
+
+async function revokeGroupInviteLink(
+  http: HttpClient,
+  sid: string,
+  groupId: string,
+): Promise<GroupInviteLink> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/groups/${groupId}/invite/revoke`,
+  });
+  const data = unwrapEnvelope(body);
+  return { link: asString(data.invite_link) ?? '', raw: body };
+}
+
+/**
+ * `input.link` já chega normalizado pelo conector como o link completo
+ * (`https://chat.whatsapp.com/<código>`) — o izapia aceita esse campo como `link` (não extrai só o
+ * código, diferente de outros providers). Ver docs/providers/izapia.md.
+ */
+async function joinGroupViaInviteLink(
+  http: HttpClient,
+  sid: string,
+  input: JoinGroupInviteInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/groups/join`,
+    body: { link: input.invite },
+  });
+}
+
+async function leaveGroup(http: HttpClient, sid: string, groupId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/groups/${groupId}/leave`,
+  });
 }
 
 // ---------------------------------------------------------------------------

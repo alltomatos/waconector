@@ -86,6 +86,102 @@ function createFetchStub(): typeof globalThis.fetch {
       return envelope({ message_id: '3EB0FAKE0000000000POLL' });
     }
 
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/groups`) {
+      return envelope({
+        group_id: '120363012345678901@g.us',
+        subject: 'Grupo de teste',
+        description: '',
+        owner: '5511999999999@s.whatsapp.net',
+        created: 1784289600,
+        participants: [
+          { jid: '5511999999999@s.whatsapp.net', is_admin: true, is_super_admin: true },
+          { jid: '5511988887777@s.whatsapp.net', is_admin: false, is_super_admin: false },
+        ],
+      });
+    }
+
+    if (method === 'GET' && pathname === `/api/v1/sessions/${SID}/groups/120363012345678901@g.us`) {
+      return envelope({
+        group_id: '120363012345678901@g.us',
+        subject: 'Grupo de teste',
+        description: 'Descrição do grupo',
+        owner: '5511999999999@s.whatsapp.net',
+        created: 1784289600,
+        participants: [
+          { jid: '5511999999999@s.whatsapp.net', is_admin: true, is_super_admin: true },
+        ],
+      });
+    }
+
+    if (method === 'GET' && pathname === `/api/v1/sessions/${SID}/groups`) {
+      return envelope([
+        {
+          group_id: '120363012345678901@g.us',
+          subject: 'Grupo de teste',
+          participants: [
+            { jid: '5511999999999@s.whatsapp.net', is_admin: true, is_super_admin: true },
+          ],
+        },
+      ]);
+    }
+
+    if (
+      method === 'POST' &&
+      pathname === `/api/v1/sessions/${SID}/groups/120363012345678901@g.us/participants`
+    ) {
+      return envelope({
+        participants: [
+          { jid: '5511988887777@s.whatsapp.net', is_admin: false, is_super_admin: false },
+        ],
+      });
+    }
+
+    if (
+      method === 'POST' &&
+      pathname === `/api/v1/sessions/${SID}/groups/120363012345678901@g.us/subject`
+    ) {
+      return envelope({});
+    }
+
+    if (
+      method === 'POST' &&
+      pathname === `/api/v1/sessions/${SID}/groups/120363012345678901@g.us/description`
+    ) {
+      return envelope({});
+    }
+
+    if (
+      method === 'POST' &&
+      pathname === `/api/v1/sessions/${SID}/groups/120363012345678901@g.us/picture`
+    ) {
+      return envelope({ ok: true, picture_id: 'pic-1' });
+    }
+
+    if (
+      method === 'GET' &&
+      pathname === `/api/v1/sessions/${SID}/groups/120363012345678901@g.us/invite`
+    ) {
+      return envelope({ invite_link: 'https://chat.whatsapp.com/ABC123FAKE' });
+    }
+
+    if (
+      method === 'POST' &&
+      pathname === `/api/v1/sessions/${SID}/groups/120363012345678901@g.us/invite/revoke`
+    ) {
+      return envelope({ invite_link: 'https://chat.whatsapp.com/NEWCODE456' });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/groups/join`) {
+      return envelope({ group_id: '120363012345678901@g.us' });
+    }
+
+    if (
+      method === 'POST' &&
+      pathname === `/api/v1/sessions/${SID}/groups/120363012345678901@g.us/leave`
+    ) {
+      return envelope({});
+    }
+
     throw new Error(`fetchStub (izapia): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -544,6 +640,154 @@ describe('izapia adapter: comportamento específico do provider', () => {
     const adapter = izapia(buildAdapterOptions());
     expect(adapter.capabilities).not.toContain('messages.forward');
     expect(adapter.messages.forward).toBeUndefined();
+  });
+
+  it('groups.create envia { subject, participants } e mapeia a resposta para GroupInfo', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (
+            url.pathname === `/api/v1/sessions/${SID}/groups` &&
+            (init?.method ?? 'GET') === 'POST'
+          ) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const group = await wa.groups.create?.({
+      subject: 'Grupo de teste',
+      participants: ['5511988887777'],
+    });
+
+    expect(capturedBody?.subject).toBe('Grupo de teste');
+    expect(capturedBody?.participants).toEqual(['5511988887777']);
+    expect(group?.id).toBe('120363012345678901@g.us');
+    expect(group?.subject).toBe('Grupo de teste');
+    expect(group?.owner).toBe('5511999999999@s.whatsapp.net');
+    expect(group?.participants).toEqual([
+      { id: '5511999999999@s.whatsapp.net', isAdmin: true, isSuperAdmin: true },
+      { id: '5511988887777@s.whatsapp.net', isAdmin: false, isSuperAdmin: false },
+    ]);
+    expect(group).toHaveProperty('raw');
+  });
+
+  it('groups.getInfo consulta GET .../groups/{groupId} e mapeia GroupInfo', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const group = await wa.groups.getInfo?.('120363012345678901@g.us');
+
+    expect(group?.id).toBe('120363012345678901@g.us');
+    expect(group?.description).toBe('Descrição do grupo');
+    expect(group?.participants).toEqual([
+      { id: '5511999999999@s.whatsapp.net', isAdmin: true, isSuperAdmin: true },
+    ]);
+  });
+
+  it('groups.list mapeia o array direto de "data" (sem wrapper) para GroupInfo[]', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const list = await wa.groups.list?.();
+
+    expect(list).toHaveLength(1);
+    expect(list?.[0]?.id).toBe('120363012345678901@g.us');
+  });
+
+  it('groups.addParticipants/removeParticipants/promoteParticipants/demoteParticipants usam o mesmo endpoint com "action" correto', async () => {
+    const capturedActions: string[] = [];
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (
+            url.pathname === `/api/v1/sessions/${SID}/groups/120363012345678901@g.us/participants`
+          ) {
+            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            capturedActions.push(String(body.action));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const input = { groupId: '120363012345678901@g.us', participants: ['5511988887777'] };
+    await wa.groups.addParticipants?.(input);
+    await wa.groups.removeParticipants?.(input);
+    await wa.groups.promoteParticipants?.(input);
+    await wa.groups.demoteParticipants?.(input);
+
+    expect(capturedActions).toEqual(['add', 'remove', 'promote', 'demote']);
+  });
+
+  it('groups.updateSubject/updateDescription enviam os campos esperados', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    await expect(
+      wa.groups.updateSubject?.({ groupId: '120363012345678901@g.us', subject: 'Novo nome' }),
+    ).resolves.toBeUndefined();
+    await expect(
+      wa.groups.updateDescription?.({ groupId: '120363012345678901@g.us', description: '' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('groups.updatePicture envia "url" ou "base64" conforme MediaRef', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/groups/120363012345678901@g.us/picture`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.updatePicture?.({
+      groupId: '120363012345678901@g.us',
+      media: { kind: 'image', base64: 'ZmFrZQ==', mimeType: 'image/png' },
+    });
+    expect(capturedBody?.base64).toBe('ZmFrZQ==');
+    expect(capturedBody?.mimetype).toBe('image/png');
+    expect(capturedBody?.url).toBeUndefined();
+  });
+
+  it('groups.getInviteLink/revokeInviteLink devolvem o link completo de "invite_link"', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const link = await wa.groups.getInviteLink?.('120363012345678901@g.us');
+    expect(link?.link).toBe('https://chat.whatsapp.com/ABC123FAKE');
+    const revoked = await wa.groups.revokeInviteLink?.('120363012345678901@g.us');
+    expect(revoked?.link).toBe('https://chat.whatsapp.com/NEWCODE456');
+  });
+
+  it('groups.joinViaInviteLink envia o link completo em "link"', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/groups/join`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.groups.joinViaInviteLink?.({ invite: 'https://chat.whatsapp.com/ABC123FAKE' });
+    expect(capturedBody?.link).toBe('https://chat.whatsapp.com/ABC123FAKE');
+  });
+
+  it('groups.leaveGroup chama POST .../leave sem lançar', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    await expect(wa.groups.leaveGroup?.('120363012345678901@g.us')).resolves.toBeUndefined();
   });
 
   it('parseWebhook normaliza "session.connected" para connection.update', () => {
