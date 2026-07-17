@@ -871,8 +871,9 @@ Todas marcadas como **RECONSTRUÍDAS** (mesmo aviso de confiança acima):
 - Outras capabilities candidatas confirmadas na mesma pesquisa dedicada de 2026-07-12 mas
   **deliberadamente fora do escopo** desta rodada (ADR-0012 cobre só `messages.edit`/`delete` e o
   núcleo de `chats.*`): `messages.markRead` (nível de mensagem, batch de IDs), `messages.getStatus`,
-  `messages.downloadMedia` (bug de rate-limit 429 autodocumentado pelo próprio provider),
   `chats.setPresence`, `messages.sendLocation`/`sendContact`/`sendPoll`/`sendLink`/`sendSticker`,
   os namespaces `labels.*`/`newsletters.*`/`community.*` inteiros, `contacts.getPrivacySettings`,
   `instance.setProfilePicture` e `instance.disconnect` — candidatos a ADRs/fases futuras, não
-  perdidos, apenas não fazem parte desta mudança.
+  perdidos, apenas não fazem parte desta mudança. (`messages.downloadMedia`, citado aqui na pesquisa
+  original com o bug de rate-limit 429 autodocumentado, foi promovido e implementado como
+  `messages.download` na Epic 12 — ver seção "Download de mídia" acima.)
