@@ -3,6 +3,7 @@ import type { CanonicalEvent } from './events';
 import type {
   BusinessProfile,
   ChannelInfo,
+  ChannelPost,
   CheckExistsResult,
   ConnectResult,
   Contact,
@@ -12,8 +13,11 @@ import type {
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
+  DownloadedMedia,
+  DownloadMediaInput,
   EditMessageInput,
   ForwardMessageInput,
+  GetChannelMessagesInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipantsInput,
@@ -22,9 +26,11 @@ import type {
   LabelChatInput,
   LabelInfo,
   MakeCallInput,
+  MarkChannelMessagesViewedInput,
   MarkMessageReadInput,
   PinMessageInput,
   PresenceState,
+  ReactToChannelMessageInput,
   RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
@@ -99,6 +105,8 @@ export interface MessagesApi {
   sendContactCard?(input: SendContactCardInput): Promise<SentMessage>;
   /** Opcional: só implementado por adapters que declaram a capability `messages.sendPoll`. Ver ADR-0014. */
   sendPoll?(input: SendPollInput): Promise<SentMessage>;
+  /** Opcional: só implementado por adapters que declaram a capability `messages.download`. Ver ADR-0020. */
+  download?(input: DownloadMediaInput): Promise<DownloadedMedia>;
 }
 
 /**
@@ -203,6 +211,12 @@ export interface ChannelsApi {
   delete?(channelId: string): Promise<void>;
   follow?(channelId: string): Promise<void>;
   unfollow?(channelId: string): Promise<void>;
+  /** Opcional: só implementado por adapters que declaram a capability `channels.getMessages`. Ver ADR-0021. */
+  getMessages?(input: GetChannelMessagesInput): Promise<ChannelPost[]>;
+  /** Opcional: só implementado por adapters que declaram a capability `channels.markViewed`. Ver ADR-0021. */
+  markViewed?(input: MarkChannelMessagesViewedInput): Promise<void>;
+  /** Opcional: só implementado por adapters que declaram a capability `channels.reactToPost`. Ver ADR-0021. */
+  reactToPost?(input: ReactToChannelMessageInput): Promise<void>;
 }
 
 /**
