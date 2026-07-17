@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createConnector, isWaConnectorError } from '../../src';
 import { type IzapiaOptions, izapia } from '../../src/adapters/izapia';
+import messageImageFixture from '../../src/adapters/izapia/fixtures/webhook-message-image.json';
 import messageReceivedFixture from '../../src/adapters/izapia/fixtures/webhook-message-received.json';
 import { describeAdapterContract } from './adapter-contract';
 
@@ -338,6 +339,45 @@ function createFetchStub(): typeof globalThis.fetch {
 
     if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/calls/call-1/reject`) {
       return envelope({});
+    }
+
+    // messages.download (ADR-0020): POST /messages/download.
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/download`) {
+      return envelope({ mimetype: 'image/jpeg', data_base64: 'ZmFrZS1kb3dubG9hZA==' });
+    }
+
+    // channels.getMessages (ADR-0021): GET /channels/{id}/messages.
+    if (
+      method === 'GET' &&
+      pathname === `/api/v1/sessions/${SID}/channels/111111111111111111@newsletter/messages`
+    ) {
+      return envelope([
+        {
+          server_id: 42,
+          message_id: 'post-msg-1',
+          type: 'text',
+          timestamp: 1700000000,
+          views_count: 10,
+          reaction_counts: { '👍': 3 },
+          text: 'Post de teste',
+        },
+      ]);
+    }
+
+    // channels.markViewed (ADR-0021): POST /channels/{id}/messages/viewed.
+    if (
+      method === 'POST' &&
+      pathname === `/api/v1/sessions/${SID}/channels/111111111111111111@newsletter/messages/viewed`
+    ) {
+      return envelope({});
+    }
+
+    // channels.reactToPost (ADR-0021): POST /channels/{id}/messages/{serverId}/react.
+    if (
+      method === 'POST' &&
+      /^\/api\/v1\/sessions\/[^/]+\/channels\/[^/]+\/messages\/\d+\/react$/.test(pathname)
+    ) {
+      return envelope({ message_id: 'reaction-msg-1' });
     }
 
     throw new Error(`fetchStub (izapia): rota não configurada ${method} ${pathname}`);
@@ -798,6 +838,127 @@ describe('izapia adapter: comportamento específico do provider', () => {
     const adapter = izapia(buildAdapterOptions());
     expect(adapter.capabilities).not.toContain('messages.forward');
     expect(adapter.messages.forward).toBeUndefined();
+  });
+
+  it('messages.download extrai o descritor de "raw.data.raw" (fixture de imagem) e envia para POST .../messages/download', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/download`) {
+            capturedBody = JSON.parse(String(init?.body));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const events = adapter.parseWebhook({ body: messageImageFixture });
+    const [event] = events;
+    if (event?.type !== 'message.received') {
+      throw new Error('esperava evento message.received');
+    }
+
+    const downloaded = await wa.messages.download({
+      messageId: event.message.id,
+      raw: event.message.raw,
+    });
+
+    expect(capturedBody).toEqual({
+      kind: 'image',
+      url: 'https://mmg.whatsapp.net/v/t62.7118-24/10000000_123456789_n.enc',
+      mimetype: 'image/jpeg',
+      direct_path: '/v/t62.7118-24/10000000_123456789_n.enc',
+      media_key: 'ZmFrZS1tZWRpYS1rZXk=',
+      file_enc_sha256: 'ZmFrZS1lbmMtc2hhMjU2',
+      file_sha256: 'ZmFrZS1zaGEyNTY=',
+      file_length: 48219,
+    });
+    expect(downloaded.base64.length).toBeGreaterThan(0);
+    expect(downloaded.mimeType).toBe('image/jpeg');
+  });
+
+  it('channels.getMessages consulta GET .../channels/{id}/messages e mapeia reaction_counts/views_count', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+
+    const posts = await wa.channels.getMessages({
+      channelId: '111111111111111111@newsletter',
+      count: 5,
+      before: '100',
+    });
+
+    expect(posts).toEqual([
+      {
+        id: '42',
+        timestamp: 1700000000 * 1000,
+        text: 'Post de teste',
+        viewsCount: 10,
+        reactionCounts: { '👍': 3 },
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
+  it('channels.markViewed envia { server_ids } convertidos para número', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (
+            url.pathname ===
+            `/api/v1/sessions/${SID}/channels/111111111111111111@newsletter/messages/viewed`
+          ) {
+            capturedBody = JSON.parse(String(init?.body));
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.channels.markViewed({
+        channelId: '111111111111111111@newsletter',
+        messageIds: ['42', '43'],
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({ server_ids: [42, 43] });
+  });
+
+  it('channels.reactToPost usa "messageId" como serverId no path e envia { reaction }', async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (/\/messages\/\d+\/react$/.test(url.pathname)) {
+            calls.push({ path: url.pathname, body: JSON.parse(String(init?.body)) });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await expect(
+      wa.channels.reactToPost({
+        channelId: '111111111111111111@newsletter',
+        messageId: '42',
+        emoji: '👍',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(calls).toEqual([
+      {
+        path: `/api/v1/sessions/${SID}/channels/111111111111111111@newsletter/messages/42/react`,
+        body: { reaction: '👍' },
+      },
+    ]);
   });
 
   it('groups.create envia { subject, participants } e mapeia a resposta para GroupInfo', async () => {

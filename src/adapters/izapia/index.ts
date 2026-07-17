@@ -25,6 +25,7 @@ import { HttpClient } from '../../core/http';
 import type {
   BusinessProfile,
   ChannelInfo,
+  ChannelPost,
   CheckExistsResult,
   ConnectResult,
   Contact,
@@ -34,7 +35,10 @@ import type {
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
+  DownloadedMedia,
+  DownloadMediaInput,
   EditMessageInput,
+  GetChannelMessagesInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -45,12 +49,14 @@ import type {
   LabelChatInput,
   LabelInfo,
   MakeCallInput,
+  MarkChannelMessagesViewedInput,
   MarkMessageReadInput,
   MediaKind,
   MediaRef,
   MessageAck,
   PinMessageInput,
   PresenceState,
+  ReactToChannelMessageInput,
   RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
@@ -113,6 +119,7 @@ const IZAPIA_CAPABILITIES: CapabilitySet = [
   'messages.sendLocation',
   'messages.sendContactCard',
   'messages.sendPoll',
+  'messages.download',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -157,6 +164,9 @@ const IZAPIA_CAPABILITIES: CapabilitySet = [
   'channels.getInfo',
   'channels.follow',
   'channels.unfollow',
+  'channels.getMessages',
+  'channels.markViewed',
+  'channels.reactToPost',
   'business.getProfile',
   'calls.make',
   'calls.reject',
@@ -196,6 +206,7 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     sendLocation: (input) => sendLocation(http, sid, input),
     sendContactCard: (input) => sendContactCard(http, sid, input),
     sendPoll: (input) => sendPoll(http, sid, input),
+    download: (input) => downloadMedia(http, sid, input),
     // `messages.forward` NÃO implementado: POST .../messages/forward só aceita {to, text} — o
     // izapia não guarda histórico (stateless por design, ver docs/providers/izapia.md), então não
     // há como resolver o texto original a partir de só `messageId`/`fromChatId` (ForwardMessageInput
@@ -262,6 +273,9 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     getInfo: (channelId) => getChannelInfo(http, sid, channelId),
     follow: (channelId) => setChannelFollowed(http, sid, channelId, true),
     unfollow: (channelId) => setChannelFollowed(http, sid, channelId, false),
+    getMessages: (input) => getChannelMessages(http, sid, input),
+    markViewed: (input) => markChannelMessagesViewed(http, sid, input),
+    reactToPost: (input) => reactToChannelPost(http, sid, input),
     // `channels.delete` NÃO implementado: POST .../channels/{channelId}/delete hoje devolve
     // 501 NOT_IMPLEMENTED — o whatsmeow não expõe "apagar canal" publicamente (ver dossiê).
   };
@@ -554,6 +568,94 @@ async function sendPoll(http: HttpClient, sid: string, input: SendPollInput): Pr
     },
   });
   return mapSentMessage(body, input.to);
+}
+
+/**
+ * `messages.download` (ADR-0020): `POST .../messages/download`, body `{kind, direct_path?,
+ * file_enc_sha256?, file_length?, file_sha256?, media_key?, mimetype?, url?}` → envelope
+ * `data: {mimetype, data_base64}`. izapia é STATELESS (não guarda histórico de mensagens
+ * recebidas do lado do servidor) — este endpoint exige o descritor bruto completo, nunca só um
+ * `messageId`.
+ *
+ * O descritor vem de `input.raw` — para este adapter, o ENVELOPE INTEIRO do webhook
+ * `message.received` (`{event_id, type, session_id, tenant_id, data, published_at}`, ver
+ * `messageReceived`/`WaMessage.raw` abaixo). `data.raw` (confirmado em
+ * `internal/session/message.go`, `receivedEvent`: `data["raw"] = evt.RawMessage`) é o
+ * `*waE2E.Message` bruto do whatsmeow — MESMO struct/JSON tags usados pelo Evolution GO (mesma
+ * dependência `go.mau.fi/whatsmeow`), então este adapter reaproveita a mesma extração por
+ * sub-objeto (`imageMessage`/`videoMessage`/`audioMessage`/`documentMessage`/`stickerMessage`,
+ * campo `URL` maiúsculo + resto lowerCamelCase, `fileLength` como STRING) já confirmada ao vivo
+ * para o Evolution GO. **Confiança Média**: a origem do campo (`evt.RawMessage`) é confirmada no
+ * código-fonte real do izapia, mas o casing específico do JSON de SAÍDA deste provider não foi
+ * capturado ao vivo — só herdado por analogia da mesma dependência whatsmeow.
+ */
+async function downloadMedia(
+  http: HttpClient,
+  sid: string,
+  input: DownloadMediaInput,
+): Promise<DownloadedMedia> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/messages/download`,
+    body: extractDownloadRequestBody(input.raw),
+  });
+  const data = unwrapEnvelope(body);
+  return {
+    base64: asString(data.data_base64) ?? '',
+    mimeType: asString(data.mimetype),
+    raw: body,
+  };
+}
+
+const MEDIA_KIND_FIELDS: Array<[MediaKind, string]> = [
+  ['image', 'imageMessage'],
+  ['video', 'videoMessage'],
+  ['audio', 'audioMessage'],
+  ['document', 'documentMessage'],
+  ['sticker', 'stickerMessage'],
+];
+
+/**
+ * Busca em `raw.data.raw` (o `*waE2E.Message` bruto, ver `downloadMedia`) o primeiro sub-objeto de
+ * mídia presente (`imageMessage`/`videoMessage`/etc.) e monta o corpo `{kind, ...}` esperado pelo
+ * endpoint. Sem sub-objeto reconhecido (raw ausente, mensagem sem mídia), devolve `{}` — mesma
+ * postura de degradação suave do Evolution GO (`extractMediaDescriptor`): a chamada segue adiante
+ * mesmo assim, deixando o provider real reportar erro em vez de bloquear preventivamente aqui.
+ */
+function extractDownloadRequestBody(raw: unknown): Record<string, unknown> {
+  const envelope = asRecord(raw);
+  const eventData = envelope ? asRecord(envelope.data) : undefined;
+  const message = eventData ? asRecord(eventData.raw) : undefined;
+  if (!message) return {};
+
+  for (const [kind, field] of MEDIA_KIND_FIELDS) {
+    const mediaObject = asRecord(message[field]);
+    if (mediaObject) return buildDownloadRequestBody(kind, mediaObject);
+  }
+  return {};
+}
+
+function buildDownloadRequestBody(
+  kind: MediaKind,
+  mediaObject: Record<string, unknown>,
+): Record<string, unknown> {
+  const fileLengthRaw = mediaObject.fileLength;
+  const fileLength =
+    typeof fileLengthRaw === 'number'
+      ? fileLengthRaw
+      : typeof fileLengthRaw === 'string'
+        ? Number(fileLengthRaw)
+        : undefined;
+  return {
+    kind,
+    url: asString(mediaObject.URL) ?? asString(mediaObject.url),
+    mimetype: asString(mediaObject.mimetype),
+    direct_path: asString(mediaObject.directPath),
+    media_key: mediaObject.mediaKey,
+    file_enc_sha256: mediaObject.fileEncSHA256,
+    file_sha256: mediaObject.fileSHA256,
+    file_length: fileLength,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1093,6 +1195,92 @@ async function setChannelFollowed(
   await http.request({
     method: 'POST',
     path: `/api/v1/sessions/${sid}/channels/${channelId}/${follow ? 'follow' : 'unfollow'}`,
+  });
+}
+
+/**
+ * `channels.getMessages` (ADR-0021): `GET .../channels/{channelId}/messages?count&before` →
+ * envelope `data`: array no modelo canônico `{server_id, message_id, type, timestamp, views_count,
+ * reaction_counts, text}` (`internal/session/channels.go`, `newsletterMessageToCanonical`) — já
+ * vem pronto, sem precisar de nenhuma conversão de formato (diferente de uazapi/Whapi):
+ * `reaction_counts` já é um mapa `emoji -> contagem` (`null` quando o post não tem reação nenhuma).
+ * `before` é um CURSOR numérico (`server_id` do post mais antigo já visto, exclusive) — mesmo
+ * tratamento de uazapi, convertido via `Number(...)`.
+ */
+async function getChannelMessages(
+  http: HttpClient,
+  sid: string,
+  input: GetChannelMessagesInput,
+): Promise<ChannelPost[]> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/channels/${input.channelId}/messages`,
+    query: {
+      count: input.count,
+      before: input.before !== undefined ? Number(input.before) : undefined,
+    },
+  });
+  const record = asRecord(body);
+  const items = record && Array.isArray(record.data) ? record.data : [];
+  return items.map((item: unknown) => mapChannelPost(item));
+}
+
+function mapChannelPost(body: unknown): ChannelPost {
+  const record = asRecord(body);
+  const serverId = record ? asNumber(record.server_id) : undefined;
+  const reactionCountsRaw = record ? asRecord(record.reaction_counts) : undefined;
+  const reactionCounts = reactionCountsRaw
+    ? Object.fromEntries(
+        Object.entries(reactionCountsRaw)
+          .map(([emoji, count]) => [emoji, asNumber(count)] as const)
+          .filter((entry): entry is [string, number] => entry[1] !== undefined),
+      )
+    : undefined;
+  return {
+    id: serverId !== undefined ? String(serverId) : '',
+    timestamp: ((record ? asNumber(record.timestamp) : undefined) ?? 0) * 1000,
+    text: record ? asString(record.text) : undefined,
+    viewsCount: record ? asNumber(record.views_count) : undefined,
+    reactionCounts:
+      reactionCounts && Object.keys(reactionCounts).length > 0 ? reactionCounts : undefined,
+    raw: body,
+  };
+}
+
+/**
+ * `channels.markViewed` (ADR-0021): `POST .../channels/{channelId}/messages/viewed`, body
+ * `{server_ids: integer[]}` — `MarkChannelMessagesViewedInput.messageIds` (strings canônicas)
+ * convertidos via `Number(...)`.
+ */
+async function markChannelMessagesViewed(
+  http: HttpClient,
+  sid: string,
+  input: MarkChannelMessagesViewedInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/channels/${input.channelId}/messages/viewed`,
+    body: { server_ids: input.messageIds.map(Number) },
+  });
+}
+
+/**
+ * `channels.reactToPost` (ADR-0021): `POST .../channels/{channelId}/messages/{serverId}/react` —
+ * `serverId` no PATH é `input.messageId` (o id opaco do POST-ALVO, convertido para número); body
+ * `{reaction}` — `message_id` (id da MENSAGEM-REAÇÃO em si, distinto do post-alvo) é opcional
+ * ("o worker gera um" quando omitido, confirmado na doc do endpoint) e não enviado por este
+ * adapter. `reaction` vazia remove a reação anterior (mesma convenção de `messages.sendReaction`,
+ * ADR-0008).
+ */
+async function reactToChannelPost(
+  http: HttpClient,
+  sid: string,
+  input: ReactToChannelMessageInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/channels/${input.channelId}/messages/${Number(input.messageId)}/react`,
+    body: { reaction: input.emoji },
   });
 }
 
