@@ -238,6 +238,21 @@ function createFetchStub(): typeof globalThis.fetch {
       return envelope({});
     }
 
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/presence/typing`) {
+      return envelope({});
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/presence`) {
+      return envelope({});
+    }
+
+    if (
+      method === 'POST' &&
+      pathname === `/api/v1/sessions/${SID}/presence/5511999999999/subscribe`
+    ) {
+      return envelope({});
+    }
+
     throw new Error(`fetchStub (izapia): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -965,6 +980,71 @@ describe('izapia adapter: comportamento específico do provider', () => {
     const wa = createConnector(adapter);
     await expect(wa.chats?.[method]?.('5511999999999')).resolves.toBeUndefined();
     expect(capturedBody?.[field]).toBe(expected);
+  });
+
+  it('presence.setTyping envia state="composing" para "composing" e "paused" para "paused"', async () => {
+    const capturedBodies: Record<string, unknown>[] = [];
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/presence/typing`) {
+            capturedBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.presence?.setTyping?.({ to: '5511999999999', state: 'composing' });
+    await wa.presence?.setTyping?.({ to: '5511999999999', state: 'paused' });
+
+    expect(capturedBodies[0]).toEqual({ to: '5511999999999', state: 'composing' });
+    expect(capturedBodies[1]).toEqual({ to: '5511999999999', state: 'paused' });
+  });
+
+  it('presence.setTyping mapeia "recording" para state="composing" + media="audio"', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/presence/typing`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.presence?.setTyping?.({ to: '5511999999999', state: 'recording' });
+    expect(capturedBody).toEqual({ to: '5511999999999', state: 'composing', media: 'audio' });
+  });
+
+  it('presence.set mapeia "online"/"offline" para "available"/"unavailable"', async () => {
+    const capturedStates: unknown[] = [];
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/presence`) {
+            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            capturedStates.push(body.state);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.presence?.set?.('online');
+    await wa.presence?.set?.('offline');
+    expect(capturedStates).toEqual(['available', 'unavailable']);
+  });
+
+  it('presence.subscribe chama POST .../presence/{jid}/subscribe sem lançar', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    await expect(wa.presence?.subscribe?.('5511999999999')).resolves.toBeUndefined();
   });
 
   it('parseWebhook normaliza "session.connected" para connection.update', () => {

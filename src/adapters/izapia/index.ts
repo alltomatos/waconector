@@ -4,6 +4,7 @@ import type {
   GroupsApi,
   InstanceApi,
   MessagesApi,
+  PresenceApi,
   WaAdapter,
   WebhookInput,
 } from '../../core/adapter';
@@ -38,6 +39,7 @@ import type {
   MediaRef,
   MessageAck,
   PinMessageInput,
+  PresenceState,
   SendContactCardInput,
   SendLocationInput,
   SendMediaInput,
@@ -45,6 +47,7 @@ import type {
   SendReactionInput,
   SendTextInput,
   SentMessage,
+  SetTypingInput,
   StarMessageInput,
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
@@ -127,6 +130,9 @@ const IZAPIA_CAPABILITIES: CapabilitySet = [
   'chats.unpin',
   'chats.markRead',
   'chats.markUnread',
+  'presence.setTyping',
+  'presence.set',
+  'presence.subscribe',
   'webhooks.parse',
 ];
 
@@ -208,6 +214,12 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     markUnread: (chatId) => setChatRead(http, sid, chatId, false),
   };
 
+  const presence: PresenceApi = {
+    setTyping: (input) => setTyping(http, sid, input),
+    set: (state) => setPresence(http, sid, state),
+    subscribe: (chatId) => subscribePresence(http, sid, chatId),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: IZAPIA_CAPABILITIES,
@@ -216,6 +228,7 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     groups,
     contacts,
     chats,
+    presence,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -836,6 +849,45 @@ async function setChatRead(
     method: 'POST',
     path: `/api/v1/sessions/${sid}/chats/${chatId}/read`,
     body: { read },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// presence.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST .../presence/typing`: body `{to, state: composing|paused, media?: text|audio}` — sem
+ * enum dedicado a "gravando áudio"; `media: audio` (junto com `state: composing`) sinaliza
+ * gravação (mesmo padrão já documentado no dossiê Wuzapi). `TypingState.recording` mapeia para
+ * `state: composing` + `media: audio`.
+ */
+async function setTyping(http: HttpClient, sid: string, input: SetTypingInput): Promise<void> {
+  const body: Record<string, unknown> =
+    input.state === 'recording'
+      ? { to: input.to, state: 'composing', media: 'audio' }
+      : { to: input.to, state: input.state };
+  await http.request({ method: 'POST', path: `/api/v1/sessions/${sid}/presence/typing`, body });
+}
+
+/** `POST .../presence`: body `{state: available|unavailable}` — presença GLOBAL da sessão. */
+async function setPresence(http: HttpClient, sid: string, state: PresenceState): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/presence`,
+    body: { state: state === 'online' ? 'available' : 'unavailable' },
+  });
+}
+
+/**
+ * `POST .../presence/{jid}/subscribe`: só registra a inscrição — o resultado (online/offline)
+ * chega assíncrono via evento `presence.update` (webhook), sem evento canônico equivalente hoje
+ * (ver docs/providers/izapia.md).
+ */
+async function subscribePresence(http: HttpClient, sid: string, chatId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/presence/${chatId}/subscribe`,
   });
 }
 
