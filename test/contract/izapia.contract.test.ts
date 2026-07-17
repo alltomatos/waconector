@@ -50,6 +50,42 @@ function createFetchStub(): typeof globalThis.fetch {
       return envelope({ message_id: '3EB0FAKE0000000000MEDIA' });
     }
 
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/react`) {
+      return envelope({ message_id: '3EB0FAKE0000000000REACT' });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/edit`) {
+      return envelope({ message_id: '3EB0FAKE0000000000EDIT' });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/delete`) {
+      return envelope({ message_id: '3EB0FAKE0000000000ORIGINAL' });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/star`) {
+      return envelope({});
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/pin`) {
+      return envelope({ message_id: '3EB0FAKE0000000000PIN' });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/read`) {
+      return envelope({});
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/location`) {
+      return envelope({ message_id: '3EB0FAKE0000000000LOCATION' });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/contact`) {
+      return envelope({ message_id: '3EB0FAKE0000000000CONTACT' });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/messages/poll`) {
+      return envelope({ message_id: '3EB0FAKE0000000000POLL' });
+    }
+
     throw new Error(`fetchStub (izapia): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -260,6 +296,254 @@ describe('izapia adapter: comportamento específico do provider', () => {
       expect(failure.message).toContain('***');
       expect(failure.code).toBe('AUTH_FAILED');
     }
+  });
+
+  it('messages.sendReaction envia "reaction" (emoji) e mapeia message_id', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/react`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendReaction({
+      to: '5511999999999',
+      messageId: '3EB0538DA65A59F6D8A251',
+      emoji: '👍',
+    });
+
+    expect(capturedBody?.message_id).toBe('3EB0538DA65A59F6D8A251');
+    expect(capturedBody?.reaction).toBe('👍');
+    expect(sent.id).toBe('3EB0FAKE0000000000REACT');
+  });
+
+  it('messages.sendReaction envia "reaction" vazia para remover uma reação já enviada', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/react`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendReaction({
+      to: '5511999999999',
+      messageId: '3EB0538DA65A59F6D8A251',
+      emoji: '',
+    });
+
+    expect(capturedBody?.reaction).toBe('');
+  });
+
+  it('messages.edit envia { to, message_id, text } e mapeia o novo message_id', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.edit?.({
+      to: '5511999999999',
+      messageId: '3EB0ORIGINAL',
+      text: 'texto editado',
+    });
+    expect(sent?.id).toBe('3EB0FAKE0000000000EDIT');
+  });
+
+  it('messages.delete envia { to, message_id }', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/delete`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.delete?.({ to: '5511999999999', messageId: '3EB0ORIGINAL' }),
+    ).resolves.toBeUndefined();
+    expect(capturedBody?.message_id).toBe('3EB0ORIGINAL');
+  });
+
+  it('messages.star/unstar enviam "starred" true/false para POST .../messages/star', async () => {
+    const capturedStarred: unknown[] = [];
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/star`) {
+            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            capturedStarred.push(body.starred);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.star?.({ to: '5511999999999', messageId: '3EB0ORIGINAL' });
+    await wa.messages.unstar?.({ to: '5511999999999', messageId: '3EB0ORIGINAL' });
+    expect(capturedStarred).toEqual([true, false]);
+  });
+
+  it('messages.pin/unpin enviam "pinned" true/false para POST .../messages/pin', async () => {
+    const capturedPinned: unknown[] = [];
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/pin`) {
+            const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+            capturedPinned.push(body.pinned);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.pin?.({ to: '5511999999999', messageId: '3EB0ORIGINAL' });
+    await wa.messages.unpin?.({ to: '5511999999999', messageId: '3EB0ORIGINAL' });
+    expect(capturedPinned).toEqual([true, false]);
+  });
+
+  it('messages.markRead envia { to, message_ids: [messageId] } (array de 1 elemento)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/read`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.messages.markRead?.({ to: '5511999999999', messageId: '3EB0ORIGINAL' }),
+    ).resolves.toBeUndefined();
+    expect(capturedBody?.message_ids).toEqual(['3EB0ORIGINAL']);
+  });
+
+  it('messages.sendLocation envia latitude/longitude/name/address', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/location`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendLocation?.({
+      to: '5511999999999',
+      latitude: -3.7327,
+      longitude: -38.527,
+      name: 'Praia de Iracema',
+      address: 'Fortaleza, CE',
+    });
+    expect(capturedBody).toEqual({
+      to: '5511999999999',
+      latitude: -3.7327,
+      longitude: -38.527,
+      name: 'Praia de Iracema',
+      address: 'Fortaleza, CE',
+    });
+    expect(sent?.id).toBe('3EB0FAKE0000000000LOCATION');
+  });
+
+  it('messages.sendContactCard mapeia contactName/contactPhone para display_name/phone', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/contact`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendContactCard?.({
+      to: '5511999999999',
+      contactName: 'Fulano de Tal',
+      contactPhone: '5511988887777',
+    });
+    expect(capturedBody?.display_name).toBe('Fulano de Tal');
+    expect(capturedBody?.phone).toBe('5511988887777');
+    expect(sent?.id).toBe('3EB0FAKE0000000000CONTACT');
+  });
+
+  it('messages.sendPoll omite "selectable_count" por padrão (escolha única)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/poll`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const sent = await wa.messages.sendPoll?.({
+      to: '5511999999999',
+      question: 'Qual sua cor favorita?',
+      options: ['Azul', 'Verde'],
+    });
+    expect(capturedBody?.name).toBe('Qual sua cor favorita?');
+    expect(capturedBody?.options).toEqual(['Azul', 'Verde']);
+    expect(capturedBody?.selectable_count).toBeUndefined();
+    expect(sent?.id).toBe('3EB0FAKE0000000000POLL');
+  });
+
+  it('messages.sendPoll envia "selectable_count" igual ao total de opções quando allowMultipleAnswers é true', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}/messages/poll`) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await wa.messages.sendPoll?.({
+      to: '5511999999999',
+      question: 'Escolha quantas quiser',
+      options: ['A', 'B', 'C'],
+      allowMultipleAnswers: true,
+    });
+    expect(capturedBody?.selectable_count).toBe(3);
+  });
+
+  it('messages.forward não é declarado (izapia não guarda histórico para resolver o texto original)', () => {
+    const adapter = izapia(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('messages.forward');
+    expect(adapter.messages.forward).toBeUndefined();
   });
 
   it('parseWebhook normaliza "session.connected" para connection.update', () => {
