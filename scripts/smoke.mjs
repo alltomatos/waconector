@@ -1,7 +1,7 @@
 /**
  * Smoke test do pacote EMPACOTADO (dist/): valida o mapa de exports em ESM e
  * CJS — incluindo os subpath exports de adapter (`./waha`, `./evolution`,
- * `./uazapi`, `./zapi`, `./wuzapi`, `./whapi`, `./quepasa`, `./wppconnect`) — e exercita o fluxo completo com o
+ * `./uazapi`, `./zapi`, `./wuzapi`, `./whapi`, `./quepasa`, `./wppconnect`, `./izapia`) — e exercita o fluxo completo com o
  * MockAdapter. Roda após `npm run build`. Ao adicionar um adapter novo,
  * estenda ADAPTER_SUBPATHS em scripts/adapter-subpaths.mjs em vez de duplicar o bloco de asserções.
  */

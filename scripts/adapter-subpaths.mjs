@@ -27,4 +27,9 @@ export const ADAPTER_SUBPATHS = [
     factory: 'wppconnect',
     options: { baseUrl: 'http://localhost:1', session: 'x', token: 'x' },
   },
+  {
+    name: 'izapia',
+    factory: 'izapia',
+    options: { baseUrl: 'http://localhost:1', apiKey: 'x', sid: 'x' },
+  },
 ];
