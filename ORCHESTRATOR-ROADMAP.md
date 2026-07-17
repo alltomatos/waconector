@@ -540,11 +540,12 @@ tentar `issue_write` — integração sem permissão de escrita em Issues neste 
 normalmente nesta sessão, inclusive para ler o código-fonte do repo privado `alltomatos/izapia`,
 contradizendo uma memória de sessão anterior sobre isolamento do keyring).
 
-**Resultado final**: **64/68 capabilities — a maior cobertura entre os 9 adapters do pacote**
-(ver `docs/capabilities.md`). Gaps documentados (todos limitações reais do provider, não da
-pesquisa): `instance.pairingCode` (mesmo motivo estrutural dos outros 8 adapters — o contrato não
-recebe telefone), `messages.forward` (endpoint só aceita texto pronto; izapia é stateless, sem
-histórico para resolver o texto original a partir de um `messageId`), `channels.delete` e
+**Resultado final**: **64/68 capabilities — segunda maior cobertura entre os 9 adapters do pacote**
+(atrás só do Whapi, 66/68 — ver `docs/capabilities.md`). Gaps documentados (todos limitações reais
+do provider, não da pesquisa): `instance.pairingCode` (mesmo motivo estrutural dos outros 8
+adapters — o contrato não recebe telefone), `messages.forward` (endpoint só aceita texto pronto;
+izapia é stateless, sem histórico para resolver o texto original a partir de um `messageId`),
+`channels.delete` e
 `business.updateProfile` (ambos `501 NOT_IMPLEMENTED` hoje — o `whatsmeow` não expõe essas
 operações publicamente). Achado notável: `calls.*` roda sobre um `CallManager` de voz genuíno
 (sinalização + bridge WebRTC), diferente da "chamada vazia" dos demais 8 adapters — o contrato
@@ -552,7 +553,11 @@ canônico atual não modela áudio, então isso não aparece na assinatura, só 
 QA gate completo verde em cada issue: lint, typecheck, suite de contrato (81 testes específicos +
 contrato compartilhado), cobertura 92.1%/67.93%/99.54%/93.41% (acima dos thresholds 77/60/90/80),
 build e smoke (incluindo o subpath `waconector/izapia`) passando. Changeset `minor` criado.
-[PR #58](https://github.com/alltomatos/waconector/pull/58) aberto (`feat/izapia-adapter` → `develop`).
+[PR #58](https://github.com/alltomatos/waconector/pull/58) mergeado em `develop`.
+[PR #59](https://github.com/alltomatos/waconector/pull/59) ("chore: release v1.2.0") mergeado em
+`main`, publicando a **v1.2.0 no npm** (com provenance). Reconciliado o mesmo padrão recorrente de
+divergência de squash-merge já documentado nos PRs #38-#42 (`develop`↔`main`, resolvido tomando o
+lado que já era superset estrito em ambas as pontas).
 
 - Contexto: izapia (`github.com/alltomatos/izapia`, repo **privado** do próprio usuário) é uma API
   SaaS multi-tenant de WhatsApp sobre `whatsmeow` — o candidato mais completo já avaliado para um
@@ -584,6 +589,176 @@ build e smoke (incluindo o subpath `waconector/izapia`) passando. Changeset `min
      produto), `docs/capabilities.md` regenerado — depende de (7).
 - Tier de risco: T2 (batch) — mesmo perfil dos adapters uazapi/Z-API/Wuzapi da Epic 3; não mexe em
   schema, autenticação existente ou API pública já publicada.
+
+## Epic 11 — expandir o contrato central com "extras" do izapia (pesquisa, rodada 1)
+
+Estado: **pesquisa concluída, sem promoção nesta rodada**.
+
+Motivada por uma pergunta direta do usuário após a Epic 10: izapia declara 64/68 capabilities do
+contrato central, mas tem ~100 endpoints reais — a diferença é o design pretendido (ADR-0005,
+contrato é o vocabulário COMUM entre providers, não o teto de nenhum um deles), mas os "extras"
+documentados no dossiê (`docs/providers/izapia.md`, seções "Extras além do contrato atual") são
+candidatos honestos a uma futura expansão, seguindo o mesmo processo histórico das ADR-0008 a
+ADR-0019: só promover ao enum central o que convergir em 2+ providers já implementados.
+
+- 12 candidatos pesquisados contra os dossiês/código-fonte de **WAHA**, **Evolution GO** e
+  **Wuzapi** (os 3 outros adapters já implementados mais próximos tecnicamente do izapia — Evolution
+  GO e Wuzapi confirmadamente sobre a mesma lib `tulir/whatsmeow`): `calls.accept`, `calls.end`,
+  `groups.announce`/`locked`/`memberAddMode`/`joinApprovalMode`+`joinRequests`/`preview`,
+  `chats.delete`/`disappearing`, `channels.*` mensageria de canal (feed/viewed/react a post),
+  `messages.download` (mídia por descritor), mensagens interativas (botões/lista).
+- **Resultado: nenhum dos 12 atinge confirmação positiva em 2+ dos 3 providers pesquisados** dentro
+  do que já está documentado nos dossiês existentes — a maioria (`calls.accept`/`end`,
+  `groups.*` avançado, `chats.delete`/`disappearing`, mensagens interativas) nunca foi alvo de
+  busca dedicada nas rodadas anteriores (ADR-0009/0012 escoparam um conjunto fixo de operações,
+  sem incluir esses), então o veredito real é "incerto/não pesquisado", não "confirmado ausente".
+  `calls.accept`/`calls.end` são exceção: busca exaustiva já feita nos 3 providers (mesma pesquisa
+  que confirmou `calls.reject`) não encontrou nada — negativa genuína, provável exclusividade do
+  `CallManager` próprio do izapia.
+- **2 candidatos com sinal mais forte** para uma rodada dedicada futura (Evolution GO já tem
+  endpoint real confirmado para os dois, faltando estender a busca aos outros 5 adapters já
+  implementados — uazapi, Z-API, Whapi, QuePasa, WPPConnect — para fechar o critério de 2+):
+  `messages.download` (`Evolution GO` confirmado com bug de rate-limit autodocumentado; Wuzapi só
+  push de mídia, sem download por descritor; WAHA tem mecanismo funcionalmente parecido mas
+  semanticamente diferente — não stateless) e `channels.*` mensageria de canal (`Evolution GO`
+  confirmado — `POST /newsletter/messages`; WAHA tem `previewMessages` de canais NÃO inscritos,
+  semântica diferente; Wuzapi busca negativa confirmada).
+- Decisão: **não promover nada ao contrato central nesta rodada** — critério histórico de
+  convergência (2+ providers) não satisfeito para nenhum candidato dentro do escopo pesquisado.
+  Os 12 continuam documentados como features exclusivas do izapia no próprio dossiê, sem virar
+  trabalho de implementação agora.
+- **Rodada 2 (a pedido do usuário)**: pesquisa dos 2 candidatos promissores (`messages.download`,
+  `channels.*` mensageria de canal) estendida aos outros 5 adapters já implementados (uazapi,
+  Z-API, Whapi, QuePasa, WPPConnect), somando ao Evolution GO já confirmado da rodada 1.
+  - `messages.download`: **critério de 2+ NÃO atingido**. Z-API/Whapi/QuePasa descartados com
+    confiança razoável — resolvem mídia recebida via URL já pronta no próprio payload do webhook
+    (mecanismo diferente do "download por descritor" do izapia/Evolution GO). WPPConnect
+    descartado — busca no código-fonte do controller não achou rota HTTP de download (mesmo padrão
+    já visto em outras capabilities deste provider: a lib subjacente pode ter o mecanismo, o
+    servidor não expõe). **uazapi fica incerto** (zero pesquisa dedicada até hoje, mas é
+    whatsmeow-based como o Evolution GO que já confirmou — candidato mais plausível para uma
+    pesquisa nova, ainda não feita).
+  - `channels.*` mensageria (feed/viewed/react a post): **critério de 2+ NÃO atingido, por
+    pouco**. Z-API (índice completo das 9 rotas de newsletter vistas por nome, nenhuma é de
+    mensagens/posts), QuePasa (busca negativa exaustiva, 0/6 channels) e WPPConnect (só 4 rotas de
+    newsletter no total, nenhuma de posts) descartados com confiança razoável. **Whapi tem o lead
+    mais forte**: `getMessages` citado nominalmente na doc oficial como "histórico de posts do
+    canal", mas sem endpoint/operationId confirmado (mesmo nível de confiança que este repo já
+    considerou insuficiente para ADR no ADR-0017 original). **uazapi é o segundo lead**: das 24
+    rotas de `newsletter.*` já confirmadas existir no OpenAPI bundled, só 6 foram nomeadas em
+    detalhe — pode haver um `getMessages`/`markSeen` equivalente nas ~18 restantes, nunca abertas
+    individualmente.
+  - **Conclusão**: nenhuma ADR pode ser aberta hoje com o material já pesquisado (8 dossiês
+    revisados, nenhuma pesquisa nova ao vivo). Próximo passo, se o usuário quiser continuar, exige
+    pesquisa **nova** (não só reler dossiês existentes) em Whapi (`openapi.yaml` real) e/ou uazapi
+    (abrir as ~18 rotas de newsletter não nomeadas do OpenAPI bundled já confirmado disponível) —
+    maior esforço que as rodadas 1/2, que só recombinaram pesquisa já feita.
+
+- **Rodada 3 (a pedido do usuário — pesquisa NOVA de verdade, specs OpenAPI reais baixados ao
+  vivo)**: `https://docs.uazapi.com/openapi-bundled.json` e
+  `https://raw.githubusercontent.com/Whapi-Cloud/whatsapp-api-docs/main/openapi.yaml` baixados e
+  inspecionados diretamente (não releitura de dossiê). **Reverte por completo a conclusão da
+  rodada 2** — as ~18 rotas de `newsletter.*` do uazapi nunca abertas individualmente, e o
+  `getMessages` do Whapi que só tinha citação por nome, ambos tinham endpoint real, e não foram
+  achados antes simplesmente porque nenhuma pesquisa dedicada tinha ido atrás deles ao vivo.
+  - **`messages.download` — critério de 2+ ATINGIDO, com folga**: confirmado em **Evolution GO**
+    (rodada 1), **uazapi** (`POST /message/download`, body `{id, return_base64?, generate_mp3?,
+    return_link?, transcribe?, openai_apikey?, download_quoted?}` → `{fileURL?, mimetype,
+    base64Data?, transcription?}` — schema rico, com opções de transcrição de áudio via Whisper) e
+    **Whapi** (`GET /media/{MediaID}`, `operationId: getMedia` — todo `MediaFile` recebido em
+    mensagem de mídia tem um campo `id` **obrigatório** do tipo `MediaID`, diferente do campo
+    `link` opcional/best-effort já mapeado antes — ou seja, é um mecanismo de download por
+    descritor genuíno e sempre disponível, não o "link já pronto" que a rodada 2 tinha descartado
+    como mecanismo diferente). **izapia também já suporta** (adapter próprio, fora do contrato
+    ainda). 4 candidatos reais: Evolution GO, uazapi, Whapi, izapia.
+  - **`channels.getMessages` (ler feed de posts) — critério de 2+ ATINGIDO, com folga**:
+    confirmado em **Evolution GO** (rodada 1), **uazapi** (`POST /newsletter/messages`, body
+    `{id?, jid?, count?, beforeid?}` → array de posts `{serverid, messageid, type, timestamp,
+    viewsCount, reactionCounts, message}` — busca direto no WhatsApp, com paginação por
+    `beforeid`) e **Whapi** (`GET /newsletters/{NewsletterID}/messages`, `operationId:
+    getMessagesNewsletter`, params `count`/`before`/`after`). **izapia também já suporta**
+    (`GET .../channels/{channelId}/messages`, fora do contrato). 4 candidatos reais.
+  - **`channels.markViewed`/`channels.reactToPost` — critério de 2+ ATINGIDO no piso mínimo**
+    (mesmo padrão de `calls.make`, que foi promovido com só 2/8 providers): confirmado em
+    **uazapi** (`POST /newsletter/viewed` body `{id?, jid?, serverids: integer[]}` → `{response:
+    boolean}`; `POST /newsletter/reaction` body `{id?, jid?, serverid, reaction?,
+    reactionmessageid?}` → `{response: boolean}`, reaction vazia remove — mesma convenção
+    canônica já usada em `messages.sendReaction`) e **izapia** (`POST .../messages/viewed`,
+    `POST .../messages/{serverId}/react`, ambos já no adapter mas fora do contrato). Evolution
+    GO/Whapi não confirmam essas duas operações especificamente (só a leitura do feed).
+  - **Conclusão**: os 3 candidatos atingem o critério histórico de convergência com pesquisa real,
+    ao vivo, contra os specs OpenAPI oficiais — diferente das rodadas 1/2, que só recombinaram
+    dossiês já escritos. Pendente de decisão do usuário: escrever as ADRs (novo namespace
+    `channels.getMessages`/`markViewed`/`reactToPost` além dos 6 já existentes; nova capability
+    `messages.download`) e implementar nos adapters confirmados (Evolution GO, uazapi, Whapi,
+    izapia para os 3; mais QuePasa/WAHA/Z-API/WPPConnect/Wuzapi só se pesquisa adicional confirmar).
+
+## Epic 12 — capabilities novas: `messages.download` + namespace `channels.*` mensageria (achado da Epic 11)
+
+Estado: **done**. [Issue #60](https://github.com/alltomatos/waconector/issues/60) (Epic) + 7
+sub-issues [#61](https://github.com/alltomatos/waconector/issues/61)-[#67](https://github.com/alltomatos/waconector/issues/67),
+todas fechadas — fatiadas via skill `to-issues`, executadas em fila sequencial (sem `Workflow`/
+`Agent` em paralelo, uma por vez, commit próprio na branch `feat/channels-messaging-download`).
+
+- [#61](https://github.com/alltomatos/waconector/issues/61): core (types/adapter/capabilities +
+  ADR-0020/0021).
+- [#62](https://github.com/alltomatos/waconector/issues/62): adapter uazapi (68/72).
+- [#63](https://github.com/alltomatos/waconector/issues/63): adapter Evolution GO (53/72) — achado
+  que corrigiu a ADR-0020: `messages.download` exige o descritor bruto via `raw`, não só
+  `messageId` (mesmo grupo do izapia, não de uazapi/Whapi).
+- [#64](https://github.com/alltomatos/waconector/issues/64): adapter Whapi (68/72) — sem
+  `channels.markViewed`/`reactToPost`, sem endpoint dedicado de "marcar visto"/"reagir a post" no
+  namespace `newsletter.*` confirmado no OpenAPI oficial.
+- [#65](https://github.com/alltomatos/waconector/issues/65): adapter izapia (68/72, empatado com
+  uazapi/Whapi na maior cobertura do pacote) — achado notável: o webhook `message.received` carrega
+  `data.raw = evt.RawMessage`, o mesmo `*waE2E.Message` bruto do whatsmeow já usado pelo Evolution
+  GO, permitindo reaproveitar por analogia a mesma extração de descritor de mídia por sub-objeto.
+- [#66](https://github.com/alltomatos/waconector/issues/66): consolidação — QA gate completo verde
+  (994 testes, cobertura 92.28%/67.44%/99.62%/93.53%, acima dos thresholds 77/60/90/80),
+  `docs/capabilities.md` regenerado (68→72 capabilities × 9 providers), changeset `minor` criado.
+- [#67](https://github.com/alltomatos/waconector/issues/67): docs finais — dossiês dos 4 providers
+  e `docs/CONTEXT.md` atualizados, Epic marcada como concluída.
+
+Também estendeu o `HttpClient` (core) com `responseType: 'base64'` (`src/core/http.ts`) para
+suportar respostas binárias cruas — necessário para o `GET /media/{MediaID}` do Whapi, que devolve
+o arquivo bruto em vez de um envelope JSON.
+
+Decisões de design (antes de fatiar, mesmo critério usado no `sid`/`connect()` do izapia):
+
+- **`messages.download`**: uazapi/Evolution GO/Whapi resolvem só com `messageId` (histórico
+  server-side); izapia é stateless e precisa do descritor bruto original do webhook.
+  `DownloadMediaInput{messageId: string, raw?: unknown}` — `raw` (o `WaMessage.raw` da mensagem
+  original) só é consumido pelos providers stateless; os demais ignoram. Resposta
+  `DownloadedMedia{base64: string, mimeType?, filename?, raw: unknown}`.
+  `MediaRef` ganha um campo novo `id?: string` (identificador opaco do arquivo no provider,
+  presente em `WaMessage.media` quando o provider NÃO entrega `url`/`base64` prontos no webhook —
+  nunca usado como entrada de `sendMedia`).
+- **`channels.*` mensageria**: `ChannelPost{id, timestamp, text?, viewsCount?, reactionCounts?,
+  raw}`. `getMessages?(input: {channelId, count?, before?}): Promise<ChannelPost[]>`,
+  `markViewed?(input: {channelId, messageIds: string[]}): Promise<void>`,
+  `reactToPost?(input: {channelId, messageId, emoji}): Promise<void>` (emoji vazio remove, mesma
+  convenção de `messages.sendReaction`).
+- 2 ADRs novas: `0020-capability-messages-download.md`, `0021-capabilities-channels-mensageria.md`.
+
+DAG de tarefas (fila sequencial, a pedido do usuário — sem `Workflow`/`Agent` em paralelo):
+
+1. Core: `src/core/types.ts` (`DownloadMediaInput`/`DownloadedMedia`/`MediaRef.id`/`ChannelPost`/
+   inputs de `channels.*`), `src/core/adapter.ts` (`MessagesApi.download?`/`ChannelsApi.getMessages?`/
+   `markViewed?`/`reactToPost?`), `src/core/capabilities.ts` (+4: `messages.download`,
+   `channels.getMessages`, `channels.markViewed`, `channels.reactToPost`) + ADR-0020/0021 — sem deps.
+2. Adapter **uazapi** (`messages.download`, `channels.getMessages`/`markViewed`/`reactToPost`) —
+   depende de (1).
+3. Adapter **Evolution GO** (`messages.download`, `channels.getMessages`) — depende de (1).
+4. Adapter **Whapi** (`messages.download`, `channels.getMessages`) — depende de (1).
+5. Adapter **izapia** (`messages.download`, `channels.getMessages`/`markViewed`/`reactToPost`) —
+   depende de (1).
+6. Consolidação: suite de contrato 100% + `docs/capabilities.md` regenerado + `npx changeset` —
+   depende de (2, 3, 4, 5).
+7. Docs: dossiês dos 4 providers atualizados (nova seção implementada, sai de "extras fora do
+   contrato") + `docs/CONTEXT.md` — depende de (6).
+
+- Tier de risco: T2 (batch) — mesmo perfil das Epics 6/7/9; muda `MediaRef` (campo novo opcional,
+  aditivo) e adiciona 2 namespaces/capabilities novas — sem breaking change (tudo opcional).
 
 ---
 

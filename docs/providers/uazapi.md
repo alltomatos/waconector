@@ -449,6 +449,14 @@ Cobertura 3/3, confiança Alta para as 3.
 | `messages.sendContactCard` | `POST /send/contact` | Request mínimo `{number, fullName, phoneNumber}` (obrigatórios) — campos soltos, o provider monta um vCard completo clicável no servidor (diferente de outros providers pesquisados que exigem um vCard já montado pelo chamador). `phoneNumber` aceita múltiplos números separados por vírgula na doc, mas `SendContactCardInput` só modela um telefone; `organization`/`email`/`url` (opcionais) não têm de onde vir no contrato canônico e são omitidos. |
 | `messages.sendPoll` | `POST /send/menu` (`type: "poll"`) | Interface UNIFICADA para botões/lista/enquete/carrossel, discriminada pelo campo `type`. Para enquete: `{number, type: "poll", text, choices: string[], selectableCount?}` — `question`/`options` mapeiam para `text`/`choices`; `selectableCount` só se aplica a enquetes (permite múltipla escolha) — este adapter envia `1` (escolha única) quando `allowMultipleAnswers` é falso/ausente, `options.length` quando verdadeiro. `choices` usa convenção textual compacta só para os tipos `list`/`carousel` (`"[Título]"` demarca seção, `"Título|id|descrição"` demarca opção) — para `type: "poll"` os itens de `choices` são strings simples (os próprios textos das opções), sem essa sintaxe. |
 
+## Download de mídia (`messages.download`, ADR-0020)
+
+Confiança Alta — confirmado ao vivo no OpenAPI bundled (2026-07-17).
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.download` | `POST /message/download` | Body `{id, return_base64: true, generate_mp3?, return_link?, transcribe?, openai_apikey?, download_quoted?}` — `return_base64: true` é forçado por este adapter (sem essa flag, o provider devolveria só `fileURL`, e `DownloadedMedia.base64` do contrato canônico é obrigatório). Resposta: `{fileURL?, mimetype, base64Data?, transcription?}`. `DownloadMediaInput.raw` não é usado — a uazapi mantém histórico server-side, resolve o download só com `messageId`. Schema rico não totalmente explorado por este adapter: `transcribe`/`openai_apikey` permitem transcrição de áudio via Whisper (fora do escopo do contrato canônico atual). |
+
 ## Presença (`presence.setTyping`/`set`, ADR-0015)
 
 Cobertura 2/3 — confiança Alta para as 2. **Sem `presence.subscribe`**: nenhum endpoint equivalente
@@ -510,11 +518,23 @@ assume o mesmo shape rico `types.NewsletterMetadata` já confirmado no Evolution
 defensivo para campos soltos (`name`/`description`/`subscribersCount` diretos no objeto) caso a
 resposta real da uazapi divirja desse formato.
 
-**Fora de escopo desta ADR** (candidatas para rodada futura — a própria pesquisa original recomenda
-tratar `newsletters.*` "como fase própria" dada a extensão): `updateName`/`updateDescription`/
+### Mensageria de canal (`channels.getMessages`/`markViewed`/`reactToPost`, ADR-0021)
+
+Cobertura 3/3, confiança Alta — endpoints confirmados ao vivo no OpenAPI bundled
+(`https://docs.uazapi.com/openapi-bundled.json`, 2026-07-17), diferente do resto de `channels.*`
+(que só tinha confirmação de EXISTÊNCIA das rotas, sem schema detalhado).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `channels.getMessages` | `POST /newsletter/messages` | Body `{jid, count?, beforeid?}` — busca direto no WhatsApp (não depende de posts salvos localmente); `beforeid` é o `serverid` do post mais antigo já visto (paginação por cursor). Resposta: array de `{serverid, messageid, type, timestamp (ISO 8601), viewsCount, reactionCounts, message}`. `message` não tem schema documentado (`additionalProperties: true`) — texto extraído assumindo o mesmo shape whatsmeow (`conversation`/`extendedTextMessage.text`) usado para mensagens de chat comum; não confirmado contra uma instância real. |
+| `channels.markViewed` | `POST /newsletter/viewed` | Body `{jid, serverids: integer[]}` — aceita lote (múltiplos posts numa única chamada). Resposta `{response: boolean}`. |
+| `channels.reactToPost` | `POST /newsletter/reaction` | Body `{jid, serverid, reaction}` — `reaction` vazia remove a reação (mesma convenção de `messages.sendReaction`, ADR-0008). Campo opcional `reactionmessageid` (o WhatsApp gera se omitido) não exposto pelo contrato canônico. Resposta `{response: boolean}`. |
+
+**Fora de escopo desta ADR** (candidatas para rodada futura): `updateName`/`updateDescription`/
 `updatePicture`, `mute`/`unmute`, `getInviteLink`, `sendMessage`/`deleteMessage`/`editMessage`
-(mensagens DENTRO do canal), `admin.*` (gestão de administradores), `transferOwnership`, `search`
-(descoberta de canais públicos), `getUpdates`/`getViewed` (métricas), `getSettings`.
+(publicar/editar/apagar posts — distinto de LER o feed, já coberto por `getMessages`), `admin.*`
+(gestão de administradores), `transferOwnership`, `search` (descoberta de canais públicos),
+`getSettings`.
 
 ## Perfil comercial (`business.*`, ADR-0018)
 

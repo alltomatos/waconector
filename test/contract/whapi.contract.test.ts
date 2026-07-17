@@ -462,6 +462,34 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { sent: true });
     }
 
+    // messages.download (ADR-0020): GET /media/{MediaID} — resposta binária, não JSON.
+    if (method === 'GET' && /^\/media\/[^/]+$/.test(pathname)) {
+      return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0x00]), {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      });
+    }
+
+    // channels.getMessages (ADR-0021): GET /newsletters/{id}/messages.
+    if (method === 'GET' && /^\/newsletters\/[^/]+\/messages$/.test(pathname)) {
+      return jsonResponse(200, {
+        messages: [
+          {
+            id: 'post-1',
+            type: 'text',
+            chat_id: '111111111111111111@newsletter',
+            from_me: true,
+            timestamp: 1700000000,
+            text: { body: 'Post de teste' },
+            reactions: [{ emoji: '👍', count: 3 }],
+          },
+        ],
+        count: 1,
+        total: 1,
+        offset: 0,
+      });
+    }
+
     throw new Error(`fetchStub (whapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1752,6 +1780,93 @@ describe('whapi adapter: comportamento específico do provider', () => {
     ]);
   });
 
+  it('messages.download extrai o id de mídia de "raw" (fixture de documento) e chama GET /media/{MediaID}', async () => {
+    const calls: string[] = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (/^\/media\/[^/]+$/.test(url.pathname)) {
+            calls.push(url.pathname);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const events = adapter.parseWebhook({ body: messageDocumentFixture });
+    const [event] = events;
+    if (event?.type !== 'message.received') {
+      throw new Error('esperava evento message.received');
+    }
+
+    const downloaded = await wa.messages.download({
+      messageId: event.message.id,
+      raw: event.message.raw,
+    });
+
+    expect(calls).toEqual([
+      `/media/${encodeURIComponent('pdf-b487668896662779cbdb29a3c29c0a9a-804713c25d2b57')}`,
+    ]);
+    expect(downloaded.base64.length).toBeGreaterThan(0);
+  });
+
+  it('messages.download cai para usar "messageId" como MediaID quando "raw" não permite resolver o id de mídia', async () => {
+    const calls: string[] = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (/^\/media\/[^/]+$/.test(url.pathname)) {
+            calls.push(url.pathname);
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    await wa.messages.download({ messageId: 'sem-raw-123' });
+
+    expect(calls).toEqual(['/media/sem-raw-123']);
+  });
+
+  it('channels.getMessages chama GET /newsletters/{id}/messages e mapeia "reactions" para reactionCounts', async () => {
+    const calls: Array<{ path: string; query: string }> = [];
+    const adapter = whapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (/^\/newsletters\/[^/]+\/messages$/.test(url.pathname)) {
+            calls.push({ path: url.pathname, query: url.search });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+
+    const posts = await wa.channels.getMessages({
+      channelId: '111111111111111111@newsletter',
+      count: 5,
+      before: '3',
+    });
+
+    expect(calls).toEqual([
+      { path: '/newsletters/111111111111111111%40newsletter/messages', query: '?count=5&before=3' },
+    ]);
+    expect(posts).toEqual([
+      {
+        id: 'post-1',
+        timestamp: 1700000000 * 1000,
+        text: 'Post de teste',
+        reactionCounts: { '👍': 3 },
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
   it('business.getProfile chama GET /business e mapeia campos flat (sem categories)', async () => {
     const adapter = whapi(buildAdapterOptions());
     const wa = createConnector(adapter);
@@ -2006,6 +2121,7 @@ describe('whapi adapter: comportamento específico do provider', () => {
       );
       expect(event.message.media?.mimeType).toBe('application/pdf');
       expect(event.message.media?.filename).toBe('File_example.pdf');
+      expect(event.message.media?.id).toBe('pdf-b487668896662779cbdb29a3c29c0a9a-804713c25d2b57');
     }
   });
 

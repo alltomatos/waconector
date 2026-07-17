@@ -165,6 +165,7 @@ implementação + `npm run docs:capabilities` (ver `docs/capabilities.md`, gerad
 | `messages.sendLocation` | `POST .../messages/location` | Body `{to, latitude?, longitude?, name?, address?}` → `{message_id}`. |
 | `messages.sendContactCard` | `POST .../messages/contact` | Body `{to, display_name, phone?, vcard?}` → `{message_id}`. |
 | `messages.sendPoll` | `POST .../messages/poll` | Body `{to, name, options: string[], selectable_count?}` → `{message_id}`. |
+| `messages.download` | `POST .../messages/download` (ADR-0020) | Ver seção dedicada "Download de mídia" abaixo. |
 
 Sujeita a `429 QUOTA_EXCEEDED` (`max_msgs_day`) em `sendText` (confirmado; os demais endpoints de
 envio "ainda não estão" instrumentados com a mesma checagem segundo a própria doc — revisitar na
@@ -172,7 +173,40 @@ implementação).
 
 **Extras além do contrato atual** (não implementar nesta fase, documentados para o futuro):
 `messages/carousel` (carrossel interativo, EXPERIMENTAL, exige opt-in explícito no body),
-`messages/interactive` (botões/lista), `messages/download` (baixa mídia de um descritor, stateless).
+`messages/interactive` (botões/lista).
+
+## Download de mídia (`messages.download`, ADR-0020)
+
+Confiança Alta quanto ao endpoint (`POST .../messages/download`, body `{kind, direct_path?,
+file_enc_sha256?, file_length?, file_sha256?, media_key?, mimetype?, url?}` → envelope
+`data: {mimetype, data_base64}`, confirmado no OpenAPI oficial) — izapia é **stateless** (não guarda
+histórico de mensagens recebidas do lado do servidor), então este endpoint sempre exige o descritor
+bruto completo, nunca só um `messageId` (é o caso de uso real do campo `DownloadMediaInput.raw`, ver
+ADR-0020).
+
+### De onde vem o descritor: `data.raw` no webhook `message.received`
+
+Confirmado em `internal/session/message.go` (`receivedEvent`): o payload de `message.received`
+inclui `data.raw`, que é literalmente `evt.RawMessage` — o `*waE2E.Message` BRUTO do whatsmeow (a
+mesma dependência `go.mau.fi/whatsmeow` usada pelo Evolution GO). Isso significa que `data.raw` tem
+o MESMO formato dos sub-objetos de mídia já confirmados ao vivo para o Evolution GO
+(`imageMessage`/`videoMessage`/`audioMessage`/`documentMessage`/`stickerMessage`, campo `URL`
+maiúsculo + resto lowerCamelCase, `fileLength` como STRING) — **confiança Média**: a origem do
+campo é confirmada no código-fonte real do izapia, mas o casing exato do JSON de SAÍDA deste
+provider especificamente não foi capturado ao vivo (só herdado por analogia da mesma dependência
+whatsmeow, mesmo critério de risco já registrado para o Evolution GO na correção da ADR-0020).
+
+`WaMessage.raw` deste adapter é o ENVELOPE INTEIRO do webhook (`{event_id, type, session_id,
+tenant_id, data, published_at}`) — o adapter lê `raw.data.raw` para achar o sub-objeto de mídia e
+monta o corpo `{kind, url, mimetype, direct_path, media_key, file_enc_sha256, file_sha256,
+file_length}` esperado pelo endpoint (`kind` derivado de QUAL sub-objeto foi encontrado). Sem
+sub-objeto reconhecido, a chamada segue com corpo `{}` mesmo assim — mesma postura de degradação
+suave já adotada no Evolution GO (deixa o provider real reportar erro em vez de bloquear
+preventivamente aqui).
+
+Fixture `fixtures/webhook-message-image.json` (**reconstruída por analogia**, não capturada ao
+vivo — mesmo status de risco das fixtures de mídia do Evolution GO) usada para testar essa
+extração.
 
 ### `groups.*`
 
@@ -279,13 +313,24 @@ name, description, subscriber_count}` — `channel_id` sempre o JID (`...@newsle
 | `channels.delete` | `POST .../channels/{channelId}/delete` | ⚠️ **Hoje devolve `501 NOT_IMPLEMENTED`** — o `whatsmeow` não expõe "apagar canal" publicamente. **Não declarar esta capability.** |
 | `channels.follow` | `POST .../channels/{channelId}/follow` | → confirmação vazia. |
 | `channels.unfollow` | `POST .../channels/{channelId}/unfollow` | → confirmação vazia. |
+| `channels.getMessages` | `GET .../channels/{channelId}/messages` (ADR-0021) | Ver seção dedicada "Mensageria de canal" abaixo. |
+| `channels.markViewed` | `POST .../channels/{channelId}/messages/viewed` (ADR-0021) | Idem. |
+| `channels.reactToPost` | `POST .../channels/{channelId}/messages/{serverId}/react` (ADR-0021) | Idem. |
 
-**Extras além do contrato atual — mensageria de canal completa** (namespace sem equivalente no
-contrato canônico atual, que só tem `list`/`create`/`getInfo`/`delete`/`follow`/`unfollow`):
-`GET .../messages` (feed de posts, paginado por cursor), `GET .../message-updates` (views/reactions
-sem o corpo), `POST .../messages/viewed` (marcar visto), `POST .../messages/{serverId}/react`
-(reagir a um post — método dedicado, diferente de `messages.react`), `POST .../mute` (silenciar
-notificações sem cancelar a inscrição).
+**Extras além do contrato atual**: `GET .../message-updates` (views/reactions sem o corpo do post —
+redundante com `getMessages`, que já traz `views_count`/`reaction_counts`), `POST .../mute`
+(silenciar notificações sem cancelar a inscrição).
+
+### Mensageria de canal (`channels.getMessages`/`markViewed`/`reactToPost`, ADR-0021)
+
+Confiança Alta — os 3 endpoints e seus schemas de request/response estão documentados
+explicitamente no OpenAPI oficial (`internal/session/channels.go`, `newsletterMessageToCanonical`).
+
+| Operação canônica | Endpoint | Observações |
+| --- | --- | --- |
+| `channels.getMessages` | `GET .../channels/{channelId}/messages?count&before` | Resposta `data`: array já no modelo canônico `{server_id, message_id, type, timestamp, views_count, reaction_counts, text}` — `reaction_counts` já é um mapa `emoji -> contagem` (`null` quando o post não tem reação nenhuma), sem precisar de nenhuma conversão de formato (diferente de uazapi/Whapi). `before` é um CURSOR numérico (`server_id` do post mais antigo já visto, exclusive), convertido via `Number(...)`. |
+| `channels.markViewed` | `POST .../channels/{channelId}/messages/viewed` | Body `{server_ids: integer[]}` — `MarkChannelMessagesViewedInput.messageIds` convertidos via `Number(...)`. Resposta: só `{ok:true}`, sem dado adicional. |
+| `channels.reactToPost` | `POST .../channels/{channelId}/messages/{serverId}/react` | `serverId` no PATH é `input.messageId` (id opaco do POST-ALVO). Body `{reaction}` — `reaction` vazia remove a reação anterior (mesma convenção de `messages.sendReaction`, ADR-0008). O campo `message_id` do body (id da MENSAGEM-REAÇÃO em si, distinto do post-alvo) é opcional — "o worker gera um" quando omitido — e não é enviado por este adapter. Resposta: `{message_id}` (o id da reação efetivamente usada), ignorada — contrato retorna `Promise<void>`. |
 
 ### `business.*`
 

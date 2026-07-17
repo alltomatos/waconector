@@ -106,6 +106,18 @@ export function describeAdapterContract(harness: AdapterContractHarness): void {
       expect(sent).toHaveProperty('raw');
     });
 
+    it('se declarar messages.download, baixa o anexo e retorna base64 normalizado', async (ctxTest) => {
+      if (!ctx.adapter.capabilities.includes('messages.download')) {
+        ctxTest.skip();
+        return;
+      }
+      await ctx.ready();
+      const wa = createConnector(ctx.adapter);
+      const downloaded = await wa.messages.download({ messageId: 'contrato-msg-1' });
+      expect(downloaded.base64.length).toBeGreaterThan(0);
+      expect(downloaded).toHaveProperty('raw');
+    });
+
     it('não explode com webhook não reconhecido (vira evento unknown)', () => {
       const wa = createConnector(ctx.adapter);
       const events = wa.webhooks.parse({ body: { formato: 'totalmente-desconhecido' } });

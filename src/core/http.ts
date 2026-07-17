@@ -46,6 +46,15 @@ export interface HttpRequestOptions {
    * um `sendText`/`sendMedia` que o provider já processou antes da conexão cair (ver ADR-0007).
    */
   idempotent?: boolean;
+  /**
+   * Quando `'base64'`, a resposta de SUCESSO é lida como binário (`arrayBuffer`) e devolvida como
+   * uma string base64 — necessário para providers que devolvem o arquivo bruto (ex.:
+   * `Content-Type: image/jpeg`) em vez de um envelope JSON com o conteúdo já codificado (ver
+   * ADR-0020, `messages.download`). Respostas de ERRO continuam lidas como texto (para a
+   * mensagem de erro), independente deste campo. Padrão (`undefined`/`'json'`): comportamento
+   * atual (JSON quando o content-type/corpo indicar, senão texto puro).
+   */
+  responseType?: 'json' | 'base64';
 }
 
 const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
@@ -151,6 +160,10 @@ export class HttpClient {
 
       if (response.status === 204) {
         return undefined as T;
+      }
+      if (options.responseType === 'base64') {
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer).toString('base64') as T;
       }
       const text = await safeText(response);
       if (text.length === 0) {

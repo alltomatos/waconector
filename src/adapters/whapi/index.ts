@@ -20,6 +20,7 @@ import { HttpClient } from '../../core/http';
 import type {
   BusinessProfile,
   ChannelInfo,
+  ChannelPost,
   CheckExistsResult,
   ConnectResult,
   Contact,
@@ -29,8 +30,11 @@ import type {
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
+  DownloadedMedia,
+  DownloadMediaInput,
   EditMessageInput,
   ForwardMessageInput,
+  GetChannelMessagesInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -105,6 +109,10 @@ const DEFAULT_BASE_URL = 'https://gate.whapi.cloud';
  * `messages.edit`/`messages.delete` e as 8 operações de `chats.*` (ADR-0012) foram confirmadas
  * numa auditoria de gaps dedicada — ver docs/providers/whapi.md, seções "Edição e exclusão de
  * mensagem" e "Conversas (chats.*)", para o endpoint/confiança de cada uma.
+ *
+ * `messages.download`/`channels.getMessages` (ADR-0020/ADR-0021, Epic 12) confirmadas ao vivo no
+ * `openapi.yaml` oficial — ver `downloadMedia`/`getChannelMessages` abaixo para o endpoint/confiança
+ * de cada uma.
  */
 const WHAPI_CAPABILITIES: CapabilitySet = [
   'instance.connect',
@@ -124,6 +132,7 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendLocation',
   'messages.sendContactCard',
   'messages.sendPoll',
+  'messages.download',
   'groups.create',
   'groups.getInfo',
   'groups.list',
@@ -169,6 +178,7 @@ const WHAPI_CAPABILITIES: CapabilitySet = [
   'channels.delete',
   'channels.follow',
   'channels.unfollow',
+  'channels.getMessages',
   'business.getProfile',
   'business.updateProfile',
   'calls.reject',
@@ -208,6 +218,7 @@ export function whapi(options: WhapiOptions): WaAdapter {
     sendLocation: (input) => sendLocation(http, input),
     sendContactCard: (input) => sendContactCard(http, input),
     sendPoll: (input) => sendPoll(http, input),
+    download: (input) => downloadMedia(http, input),
   };
 
   const groups: GroupsApi = {
@@ -265,9 +276,9 @@ export function whapi(options: WhapiOptions): WaAdapter {
   };
 
   /**
-   * Namespace `channels.*` (ADR-0017). Cobertura 6/6, confiança Alta — schema completo
-   * (`Newsletter`/`CreateNewsletterRequest`) confirmado no `openapi.yaml` oficial, a MELHOR
-   * cobertura desta ADR junto com WAHA/uazapi.
+   * Namespace `channels.*` (ADR-0017 + `getMessages` via ADR-0021). Cobertura 7/7, confiança Alta —
+   * schema completo (`Newsletter`/`CreateNewsletterRequest`) confirmado no `openapi.yaml` oficial, a
+   * MELHOR cobertura desta ADR junto com WAHA/uazapi.
    */
   const channels: ChannelsApi = {
     list: () => listChannels(http),
@@ -276,6 +287,7 @@ export function whapi(options: WhapiOptions): WaAdapter {
     delete: (channelId) => deleteChannel(http, channelId),
     follow: (channelId) => setChannelSubscribed(http, channelId, true),
     unfollow: (channelId) => setChannelSubscribed(http, channelId, false),
+    getMessages: (input) => getChannelMessages(http, input),
   };
 
   /**
@@ -755,6 +767,56 @@ async function sendPoll(http: HttpClient, input: SendPollInput): Promise<SentMes
     },
   });
   return mapSentMessage(response, to);
+}
+
+/**
+ * `messages.download` (ADR-0020): `GET /media/{MediaID}` (`operationId: getMedia`, confiança Alta)
+ * — devolve o ARQUIVO BRUTO (não JSON), `Content-Type` variável por tipo de mídia (schema
+ * `format: binary`) — por isso `responseType: 'base64'` no `HttpClient` (`core/http.ts`).
+ *
+ * Diferente de uazapi/Evolution GO (que resolvem via `messageId`, mantendo histórico server-side),
+ * o Whapi identifica mídia por um id PRÓPRIO (`MediaFile.id`, sempre obrigatório no schema —
+ * diferente de `link`, opcional/best-effort), distinto do id da MENSAGEM. Como `WaMessage.raw` é o
+ * envelope INTEIRO do webhook (`{messages: [...], ...}` — várias mensagens podem chegar numa única
+ * entrega, ver `mapMessageItem`), este adapter busca em `raw.messages[]` o item cujo `id` bate com
+ * `input.messageId`, então lê o `id` do sub-objeto de mídia (`item[item.type]`, mesmo
+ * discriminador de `mapMessageContent`) — é ESSE id, não o `messageId`, que `GET /media/{MediaID}`
+ * espera. Por isso `input.raw` (o `WaMessage.raw` da mensagem original) é, na prática,
+ * **necessário** para este provider (mesma nuance já registrada para Evolution GO/izapia na
+ * correção da ADR-0020) para resolver o id CORRETO — mas, quando ausente ou sem correspondência
+ * (`raw.messages[]` não tem o item, ou o item não tem sub-objeto de mídia), este adapter cai para
+ * usar `input.messageId` diretamente como `MediaID`, mesma postura de degradação suave do Evolution
+ * GO (`extractMediaDescriptor`): melhor deixar o provider real reportar erro (id inexistente,
+ * `404`) do que bloquear a chamada preventivamente aqui com uma suposição que pode estar errada.
+ */
+async function downloadMedia(
+  http: HttpClient,
+  input: DownloadMediaInput,
+): Promise<DownloadedMedia> {
+  const mediaId = extractWhapiMediaId(input) ?? input.messageId;
+  const base64 = await http.request<string>({
+    method: 'GET',
+    path: `/media/${encodeURIComponent(mediaId)}`,
+    responseType: 'base64',
+  });
+  return { base64, raw: { mediaId } };
+}
+
+/**
+ * Busca `raw.messages[]` (envelope bruto do webhook, ver `mapMessageItem`) pelo item cujo `id` bate
+ * com `input.messageId`, então lê o `id` do sub-objeto de mídia correspondente a `item.type` (mesmo
+ * discriminador de `mapMessageContent`) — é ESSE id (não o `messageId`) que `GET /media/{MediaID}`
+ * espera. Devolve `undefined` (sem lançar) quando `raw` está ausente ou não permite a resolução —
+ * ver fallback em `downloadMedia`.
+ */
+function extractWhapiMediaId(input: DownloadMediaInput): string | undefined {
+  const rawRecord = asRecord(input.raw);
+  const items = rawRecord ? asRecordArray(rawRecord.messages) : [];
+  const item = items.find((candidate) => asString(candidate.id) === input.messageId);
+  if (!item) return undefined;
+  const type = asString(item.type);
+  const mediaObject = type ? asRecord(item[type]) : undefined;
+  return mediaObject ? asString(mediaObject.id) : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -1474,6 +1536,61 @@ function mapWhapiChannel(
   };
 }
 
+/**
+ * `channels.getMessages` (ADR-0021): `GET /newsletters/{NewsletterID}/messages`
+ * (`operationId: getMessagesNewsletter`, confiança Alta quanto ao endpoint/paginação). Resposta
+ * `MessagesList {messages: Message[], count, total, offset, first, last}` — os itens reaproveitam o
+ * MESMO schema `Message` dos webhooks de mensagem comum (sem um schema dedicado de "post de
+ * canal"), por isso `mapWhapiChannelPost` reaproveita `mapMessageContent` para extrair `text`.
+ * `count`/`before` mapeiam para os params `count`/`before` do provider — **`before` é um ÍNDICE
+ * numérico** ("Request messages before the specified one, see first and last" na doc), não um id
+ * de mensagem, ao contrário do `GetChannelMessagesInput.before` canônico (string, pensado como
+ * cursor opaco); convertido via `Number(...)`.
+ */
+async function getChannelMessages(
+  http: HttpClient,
+  input: GetChannelMessagesInput,
+): Promise<ChannelPost[]> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/newsletters/${encodeURIComponent(input.channelId)}/messages`,
+    query: {
+      count: input.count,
+      before: input.before !== undefined ? Number(input.before) : undefined,
+    },
+  });
+  const record = asRecord(body);
+  const items = record ? asRecordArray(record.messages) : [];
+  return items.map((item) => mapWhapiChannelPost(item));
+}
+
+/**
+ * `reactionCounts`: o schema `MessageReaction {emoji, count}` já vem AGREGADO por emoji (um item
+ * por emoji distinto, não uma reação por usuário) — convertido direto para o `Record<emoji, count>`
+ * canônico, sem precisar somar nada. Sem campo de "quantidade de visualizações" confirmado no
+ * OpenAPI (diferente de uazapi, que confirma `viewsCount`) — `viewsCount` fica sempre `undefined`
+ * neste adapter.
+ */
+function mapWhapiChannelPost(item: Record<string, unknown>): ChannelPost {
+  const content = mapMessageContent(item);
+  const reactions = asRecordArray(item.reactions);
+  const reactionCounts = reactions.reduce<Record<string, number>>((acc, reaction) => {
+    const emoji = asString(reaction.emoji);
+    const count = asNumber(reaction.count);
+    if (emoji !== undefined && count !== undefined) {
+      acc[emoji] = count;
+    }
+    return acc;
+  }, {});
+  return {
+    id: asString(item.id) ?? '',
+    timestamp: toEpochMs(item.timestamp) ?? 0,
+    text: content.text,
+    reactionCounts: Object.keys(reactionCounts).length > 0 ? reactionCounts : undefined,
+    raw: item,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // business.* (ver ADR-0018)
 // ---------------------------------------------------------------------------
@@ -1739,19 +1856,24 @@ function mapMessageContent(record: Record<string, unknown>): MessageContent {
 
 /**
  * `link` é o campo confirmado com exemplo literal para `image` e `document` — "quando
- * auto-download habilitado". Para os tipos sem exemplo literal dedicado (`video`/`audio`/
- * `sticker`) o mesmo nome de campo é assumido por analogia (ver confiança por tipo em
- * `mapMessageContent`); quando ausente, `media` fica `undefined` (kind ainda é reportado
- * corretamente) em vez de inventar uma URL.
+ * auto-download habilitado". `id` (schema `MediaFile.id`, SEMPRE obrigatório, ver ADR-0020) é o
+ * identificador de mídia consumido por `messages.download` (`GET /media/{MediaID}`, ver
+ * `downloadMedia`) — populado mesmo quando `link` está ausente (canal sem auto-download
+ * habilitado), caso em que ele é o ÚNICO sinal de mídia disponível. Para os tipos sem exemplo
+ * literal dedicado (`video`/`audio`/`sticker`) o mesmo nome de campo é assumido por analogia (ver
+ * confiança por tipo em `mapMessageContent`); quando nem `link` nem `id` vêm, `media` fica
+ * `undefined` (kind ainda é reportado corretamente) em vez de inventar uma referência vazia.
  */
 function buildMediaRef(kind: MediaKind, record: Record<string, unknown>): MediaRef | undefined {
   const url = asString(record.link);
-  if (!url) return undefined;
+  const id = asString(record.id);
+  if (!url && !id) return undefined;
   return {
     kind,
     url,
     mimeType: asString(record.mime_type),
     filename: asString(record.file_name),
+    id,
   };
 }
 

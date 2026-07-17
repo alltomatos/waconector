@@ -78,9 +78,10 @@ endpoint deprecado `GET /all-groups`).
   releases seguintes foram 100% aditivas). A partir daqui, breaking changes exigem bump major.
 - **Adapter izapia** ✅ (2026-07-16): 9º provider suportado — SaaS multi-tenant próprio do usuário
   (`github.com/alltomatos/izapia`, repo privado), construído sobre `tulir/whatsmeow` (`v0.2.0`,
-  ~100 endpoints, confirmado ao vivo + código-fonte). **Maior cobertura entre todos os adapters do
-  pacote: 64/68 capabilities** (ver `docs/capabilities.md`) — `instance.connect/status/logout`
-  (fluxo de duas etapas: sessão criada fora do contrato `WaAdapter`, `connect()` só pareia),
+  ~100 endpoints, confirmado ao vivo + código-fonte). Na época, segunda maior cobertura entre todos
+  os adapters do pacote (64/68 capabilities, atrás só do Whapi, 66/68 — ver nota da Epic 12 abaixo
+  para os números atuais, pós-expansão do contrato) — `instance.connect/status/logout` (fluxo de
+  duas etapas: sessão criada fora do contrato `WaAdapter`, `connect()` só pareia),
   `messages.*` completo exceto `forward` (endpoint real só aceita texto pronto, e o izapia não
   guarda histórico para resolvê-lo a partir de um `messageId` — descasamento real de forma),
   `groups.*`/`contacts.*`/`chats.*`/`presence.*`/`labels.*` completos, `channels.*` exceto `delete`
@@ -89,6 +90,30 @@ endpoint deprecado `GET /all-groups`).
   bridge WebRTC), diferente da "chamada vazia" dos demais 8 adapters, ainda que o contrato canônico
   atual não modele áudio. Dossiê em `docs/providers/izapia.md`. Fatiado e implementado via
   Epic 10/issues #44-#57 (`ORCHESTRATOR-ROADMAP.md`).
+- **Expansão do contrato: `messages.download` + `channels.*` mensageria** ✅ (2026-07-17): motivada
+  por uma pergunta direta do usuário durante a Epic 10 (por que o izapia, com ~100 endpoints, só
+  declarava 64/68 capabilities do contrato central) — a resposta é o design pretendido (ADR-0005: o
+  contrato é o vocabulário COMUM entre providers, não o teto de nenhum um deles), mas isso motivou
+  uma pesquisa dedicada (Epic 11) sobre se algum "extra" do izapia convergia o suficiente com outros
+  providers já implementados para virar capability nova. Duas rodadas recombinando dossiês
+  existentes não confirmaram convergência; uma terceira rodada — baixando e inspecionando ao vivo os
+  specs OpenAPI reais de uazapi/Whapi, em vez de só reler dossiê — reverteu a conclusão por completo
+  e confirmou 4 providers para `messages.download` (Evolution GO, uazapi, Whapi, izapia) e 2-4 para
+  o namespace `channels.*` mensageria (`getMessages` nos mesmos 4; `markViewed`/`reactToPost` em
+  uazapi/izapia) — bem acima do piso histórico de 2+ (ver ADR-0019, `calls.make` promovido com só
+  2/8). Lição registrada: recombinar pesquisa antiga tem valor limitado quando a pergunta é
+  genuinamente nova. **`messages.download`** (ADR-0020) baixa o anexo de uma mensagem recebida —
+  `DownloadMediaInput.raw` (o `WaMessage.raw` original) é necessário para os providers STATELESS
+  (Evolution GO, Whapi, izapia — nenhum guarda histórico server-side), enquanto uazapi resolve só
+  com `messageId`; `MediaRef` ganha um campo novo `id?: string`. **`channels.getMessages`/
+  `markViewed`/`reactToPost`** (ADR-0021, `ChannelPost` novo) cobrem o CONTEÚDO dos posts de um
+  canal — lacuna real do namespace `channels.*` (ADR-0017), que até aqui só cobria metadados. Enum
+  de capabilities cresce de 68 para 72; cobertura pós-implementação: uazapi e izapia empatados na
+  maior cobertura do pacote (68/72 cada), Whapi também em 68/72, Evolution GO em 53/72 — ver
+  `docs/capabilities.md` (gerado do código, sempre a fonte da verdade para os números atuais).
+  Também estendeu o `HttpClient` (core) com `responseType: 'base64'` para suportar respostas
+  binárias cruas (necessário para o `GET /media/{MediaID}` do Whapi). Fatiado e implementado via
+  Epic 12/issues #60-#67 (`ORCHESTRATOR-ROADMAP.md`).
 
 ## Riscos mapeados
 

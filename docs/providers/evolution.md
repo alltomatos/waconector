@@ -285,6 +285,17 @@ adapter garante um JID totalmente qualificado antes de enviar, reaproveitando a 
   do servidor, ou se um label apagado continua aparecendo na listagem (o repositório que persiste
   `label_model.Label` não foi encontrado/lido nesta pesquisa).
 
+## Download de mídia (`messages.download`, ADR-0020)
+
+Confiança MÉDIA — endpoint confirmado ao vivo (`https://docs.evolutionfoundation.com.br/api-reference/openapi/Evolution-Go/evo-go-message.yaml`,
+2026-07-17), mapeamento do descritor a partir de `raw` com a mesma confiança MÉDIA já registrada
+para `webhook-message-image.json`/`webhook-message-document.json` (RECONSTRUÍDOS, não capturados
+ao vivo).
+
+| Capability | Endpoint | Observações |
+| --- | --- | --- |
+| `messages.download` | `POST /message/downloadimage` | Apesar do nome sugerir só imagens, os campos aceitos (`directPath`/`fileEncSHA256`/`fileLength`/`fileSHA256`/`mediaKey`/`mimetype`/`url`) são os campos genéricos de mídia do whatsmeow — o mesmo endpoint deve servir qualquer `MediaKind`. **Achado que corrige a suposição original da ADR-0020**: este endpoint exige o DESCRITOR BRUTO da mídia, não um `messageId` — o Evolution GO não confirma manter histórico server-side para esta operação (mesmo grupo do izapia, não de uazapi/Whapi). `DownloadMediaInput.raw` (o `WaMessage.raw` da mensagem original) é, na prática, obrigatório aqui. Resposta: `{success, image: <base64>}`. |
+
 ## Canais (`channels.*`, ADR-0017)
 
 Cobertura 4/6 (`list`/`create`/`getInfo`/`follow`) — sem `delete` nem `unfollow`, busca no
@@ -338,9 +349,19 @@ Go `NewsletterThreadMetadata`), convertida para número por `mapEvolutionChannel
 
 **Fora de escopo desta ADR** (candidatas para rodada futura): `channels.getInviteLink`
 (`POST /newsletter/link`, schema `{key: string}` — não fica claro se `key` é o JID, o código de
-convite, ou outro identificador; ambiguidade não resolvida pela doc disponível) e
-`channels.getMessages` (`POST /newsletter/messages`, histórico de posts do canal — capability de
-conteúdo, não de gestão do canal em si).
+convite, ou outro identificador; ambiguidade não resolvida pela doc disponível).
+
+### Mensageria de canal (`channels.getMessages`, ADR-0021)
+
+Confiança BAIXA-MÉDIA — endpoint confirmado ao vivo (`POST /newsletter/messages`, spec
+`newsletter.yaml`), mas o schema de resposta não documenta o shape do item (`messages: object[]`,
+sem tipo declarado). `jid` enviado como string simples (mesmo achado de `toEvolutionChannelId` já
+confirmado para os demais endpoints de `channels.*` — o OpenAPI documenta um objeto `types.JID`
+decomposto, mas a API aceita string simples na prática). `mapEvolutionChannelPost` assume o mesmo
+shape `types.NewsletterMessage` do whatsmeow (`MessageServerID`/`Timestamp`/`ViewsCount`/
+`ReactionCounts`/`Message`, casing PascalCase — mesmo padrão de `Info`/`Message` no evento de
+mensagem recebida), com fallback defensivo para camelCase. **Não confirmado contra uma instância
+real.**
 
 ## Perfil comercial (`business.*`, ADR-0018) — NÃO implementado
 
@@ -850,8 +871,9 @@ Todas marcadas como **RECONSTRUÍDAS** (mesmo aviso de confiança acima):
 - Outras capabilities candidatas confirmadas na mesma pesquisa dedicada de 2026-07-12 mas
   **deliberadamente fora do escopo** desta rodada (ADR-0012 cobre só `messages.edit`/`delete` e o
   núcleo de `chats.*`): `messages.markRead` (nível de mensagem, batch de IDs), `messages.getStatus`,
-  `messages.downloadMedia` (bug de rate-limit 429 autodocumentado pelo próprio provider),
   `chats.setPresence`, `messages.sendLocation`/`sendContact`/`sendPoll`/`sendLink`/`sendSticker`,
   os namespaces `labels.*`/`newsletters.*`/`community.*` inteiros, `contacts.getPrivacySettings`,
   `instance.setProfilePicture` e `instance.disconnect` — candidatos a ADRs/fases futuras, não
-  perdidos, apenas não fazem parte desta mudança.
+  perdidos, apenas não fazem parte desta mudança. (`messages.downloadMedia`, citado aqui na pesquisa
+  original com o bug de rate-limit 429 autodocumentado, foi promovido e implementado como
+  `messages.download` na Epic 12 — ver seção "Download de mídia" acima.)

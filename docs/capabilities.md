@@ -13,15 +13,15 @@ Nenhuma linha aqui é escrita à mão.
 
 ## Resumo por provider
 
-- **waha**: 57/68
-- **evolution**: 51/68
-- **uazapi**: 62/68
-- **zapi**: 48/68
-- **wuzapi**: 42/68
-- **whapi**: 66/68
-- **quepasa**: 24/68
-- **wppconnect**: 57/68
-- **izapia**: 64/68
+- **waha**: 57/72
+- **evolution**: 53/72
+- **uazapi**: 66/72
+- **zapi**: 48/72
+- **wuzapi**: 42/72
+- **whapi**: 68/72
+- **quepasa**: 24/72
+- **wppconnect**: 57/72
+- **izapia**: 68/72
 
 ## Detalhe por namespace
 
@@ -52,6 +52,7 @@ Nenhuma linha aqui é escrita à mão.
 | `messages.sendLocation` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `messages.sendContactCard` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `messages.sendPoll` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `messages.download` | — | ✅ | ✅ | — | — | ✅ | — | — | ✅ |
 
 ### `groups.*`
 
@@ -127,6 +128,9 @@ Nenhuma linha aqui é escrita à mão.
 | `channels.delete` | ✅ | — | ✅ | — | — | ✅ | — | ✅ | — |
 | `channels.follow` | ✅ | ✅ | ✅ | — | — | ✅ | — | — | ✅ |
 | `channels.unfollow` | ✅ | — | ✅ | — | — | ✅ | — | — | ✅ |
+| `channels.getMessages` | — | ✅ | ✅ | — | — | ✅ | — | — | ✅ |
+| `channels.markViewed` | — | — | ✅ | — | — | — | — | — | ✅ |
+| `channels.reactToPost` | — | — | ✅ | — | — | — | — | — | ✅ |
 
 ### `business.*`
 

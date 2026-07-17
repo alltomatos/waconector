@@ -1,0 +1,28 @@
+{
+  "event_id": "evt_3c4d5e6f7081929a3b4c",
+  "type": "message.received",
+  "session_id": "8f14e45f-ceea-467e-a5c9-5f0d3a4c1b2e",
+  "tenant_id": "c1a2b3c4-d5e6-4f70-8192-93a4b5c6d7e8",
+  "data": {
+    "from": "5511988887777@s.whatsapp.net",
+    "chat": "5511988887777@s.whatsapp.net",
+    "message_id": "3EB0C05FF2D3A0068B2A2E",
+    "from_me": false,
+    "push_name": "Fulano de Tal",
+    "timestamp": 1784289650,
+    "text": "",
+    "raw": {
+      "imageMessage": {
+        "URL": "https://mmg.whatsapp.net/v/t62.7118-24/10000000_123456789_n.enc",
+        "mimetype": "image/jpeg",
+        "caption": "Olha essa foto",
+        "fileSHA256": "ZmFrZS1zaGEyNTY=",
+        "fileLength": "48219",
+        "mediaKey": "ZmFrZS1tZWRpYS1rZXk=",
+        "fileEncSHA256": "ZmFrZS1lbmMtc2hhMjU2",
+        "directPath": "/v/t62.7118-24/10000000_123456789_n.enc"
+      }
+    }
+  },
+  "published_at": "2026-07-16T12:00:55Z"
+}

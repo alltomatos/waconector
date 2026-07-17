@@ -75,6 +75,18 @@ describe('HttpClient: requisições', () => {
     const result = await client.request<{ solto: boolean }>({ path: '/x' });
     expect(result).toEqual({ solto: true });
   });
+
+  it('responseType: "base64" lê o corpo como binário e devolve base64 (ADR-0020)', async () => {
+    const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0x00]);
+    const client = new HttpClient({
+      baseUrl: 'https://api.exemplo.com',
+      fetch: fetchStub([
+        () => new Response(bytes, { status: 200, headers: { 'content-type': 'image/jpeg' } }),
+      ]),
+    });
+    const result = await client.request<string>({ path: '/media/abc', responseType: 'base64' });
+    expect(result).toBe(Buffer.from(bytes).toString('base64'));
+  });
 });
 
 describe('HttpClient: erros e retry', () => {

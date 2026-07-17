@@ -10,17 +10,18 @@
 [![Docs](https://img.shields.io/badge/docs-site-blue)](https://alltomatos.github.io/waconector/)
 
 **Status: v1.0 — API pública estável.** Core de contratos, conector, eventos canônicos,
-`MockAdapter` e suite de contrato prontos; 8 adapters (**WAHA**, **Evolution GO**, **uazapi**,
-**Z-API**, **Wuzapi**, **Whapi**, **QuePasa**, **WPPConnect**) implementados e verificados,
-passando 100% da suite de contrato compartilhada. Mudanças que quebram compatibilidade agora
-exigem um bump major (semver de verdade), não mais "aceitáveis em minors" como na fase 0.x.
+`MockAdapter` e suite de contrato prontos; 9 adapters (**WAHA**, **Evolution GO**, **uazapi**,
+**Z-API**, **Wuzapi**, **Whapi**, **QuePasa**, **WPPConnect**, **izapia**) implementados e
+verificados, passando 100% da suite de contrato compartilhada. Mudanças que quebram
+compatibilidade agora exigem um bump major (semver de verdade), não mais "aceitáveis em minors"
+como na fase 0.x.
 
 ## O problema
 
-uazapi, WAHA, Evolution GO, Wuzapi, Whapi, Z-API, WPPConnect, QuePasa... todas fazem as mesmas
-operações — conectar instância, enviar texto/mídia, receber mensagens via webhook — mas cada uma
-com auth, endpoints, payloads e eventos diferentes. Integrar com uma é fácil; ficar refém dela,
-também.
+uazapi, WAHA, Evolution GO, Wuzapi, Whapi, Z-API, WPPConnect, QuePasa, izapia... todas fazem as
+mesmas operações — conectar instância, enviar texto/mídia, receber mensagens via webhook — mas
+cada uma com auth, endpoints, payloads e eventos diferentes. Integrar com uma é fácil; ficar refém
+dela, também.
 
 ## A solução
 
@@ -95,7 +96,7 @@ WACONECTOR_BASE_URL=http://localhost:3000 WACONECTOR_API_KEY=sua-chave \
 ```
 
 `--provider` (ou `-p`) escolhe o adapter (`waha`, `evolution`, `uazapi`, `zapi`, `wuzapi`, `whapi`,
-`quepasa`, `wppconnect`); as demais opções vêm de variáveis `WACONECTOR_*` específicas do provider
+`quepasa`, `wppconnect`, `izapia`); as demais opções vêm de variáveis `WACONECTOR_*` específicas do provider
 — rode sem elas definidas para ver exatamente quais são exigidas. `doctor` só chama
 `instance.status()` (checagem de leitura) — nunca `connect()`, então é seguro rodar quantas vezes
 quiser sem alterar o estado da instância no provider. Sai com código `0` em caso de sucesso, `1`
@@ -105,10 +106,11 @@ em qualquer falha (útil em scripts/CI).
 
 | Provider | Status | | Provider | Status |
 | --- | --- | --- | --- | --- |
-| WAHA | ✅ F1 | | Z-API | ✅ F2 |
-| Evolution GO | ✅ F1 | | Whapi | ✅ F3 |
-| uazapi | ✅ F2 | | WPPConnect | ✅ F3 |
-| Wuzapi | ✅ F2 | | QuePasa | ✅ F3 |
+| WAHA | ✅ F1 | | Whapi | ✅ F3 |
+| Evolution GO | ✅ F1 | | WPPConnect | ✅ F3 |
+| uazapi | ✅ F2 | | QuePasa | ✅ F3 |
+| Wuzapi | ✅ F2 | | izapia | ✅ F1+ |
+| Z-API | ✅ F2 | | | |
 
 Roadmap completo e arquitetura em [docs/CONTEXT.md](docs/CONTEXT.md); decisões registradas em
 [docs/adr/](docs/adr/). Quer contribuir com um adapter? Veja
