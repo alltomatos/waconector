@@ -418,6 +418,27 @@ function createFetchStub(): typeof globalThis.fetch {
       return jsonResponse(200, { message: 'success' });
     }
 
+    // messages.download (ADR-0020): POST /message/downloadimage.
+    if (method === 'POST' && url.pathname === '/message/downloadimage') {
+      return jsonResponse(200, { success: true, image: 'ZmFrZS1kb3dubG9hZA==' });
+    }
+
+    // channels.getMessages (ADR-0021): POST /newsletter/messages.
+    if (method === 'POST' && url.pathname === '/newsletter/messages') {
+      return jsonResponse(200, {
+        success: true,
+        messages: [
+          {
+            MessageServerID: 42,
+            Timestamp: '2026-07-17T12:00:00.000Z',
+            ViewsCount: 10,
+            ReactionCounts: { '👍': 3 },
+            Message: { conversation: 'Post de teste' },
+          },
+        ],
+      });
+    }
+
     throw new Error(`fetchStub (evolution): rota não configurada ${method} ${url.pathname}`);
   };
 }
@@ -1944,6 +1965,79 @@ describe('Evolution GO: comportamentos específicos do adapter', () => {
       expect(event.message.media?.mimeType).toBe('image/jpeg');
       expect(event.message.text).toBe('Olha essa foto');
     }
+  });
+
+  it('messages.download extrai o descritor de mídia de "raw" (fixture de imagem) e envia para POST /message/downloadimage', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/message/downloadimage') {
+          capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        }
+        return createFetchStub()(input, init);
+      },
+    });
+    const wa = createConnector(adapter);
+    const events = adapter.parseWebhook({ body: imageMessageFixture });
+    const [event] = events;
+    if (event?.type !== 'message.received') throw new Error('esperava message.received');
+
+    const downloaded = await wa.messages.download({
+      messageId: event.message.id,
+      raw: event.message.raw,
+    });
+
+    expect(capturedBody).toEqual({
+      url: 'https://mmg.whatsapp.net/v/t62.7118-24/10000000_123456789_n.enc',
+      mimetype: 'image/jpeg',
+      directPath: '/v/t62.7118-24/10000000_123456789_n.enc',
+      mediaKey: 'ZmFrZS1tZWRpYS1rZXk=',
+      fileEncSHA256: 'ZmFrZS1lbmMtc2hhMjU2',
+      fileSHA256: 'ZmFrZS1zaGEyNTY=',
+      fileLength: 48219,
+    });
+    expect(downloaded.base64).toBe('ZmFrZS1kb3dubG9hZA==');
+    expect(downloaded).toHaveProperty('raw');
+  });
+
+  it('channels.getMessages chama POST /newsletter/messages e mapeia ChannelPost[]', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = evolution({
+      baseUrl: FAKE_BASE_URL,
+      apiKey: FAKE_INSTANCE_TOKEN,
+      fetch: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/newsletter/messages') {
+          capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        }
+        return createFetchStub()(input, init);
+      },
+    });
+    const wa = createConnector(adapter);
+    const posts = await wa.channels.getMessages({
+      channelId: '111111111111111111@newsletter',
+      count: 20,
+      before: '99',
+    });
+
+    expect(capturedBody).toEqual({
+      jid: '111111111111111111@newsletter',
+      count: 20,
+      before_id: 99,
+    });
+    expect(posts).toEqual([
+      {
+        id: '42',
+        timestamp: new Date('2026-07-17T12:00:00.000Z').getTime(),
+        text: 'Post de teste',
+        viewsCount: 10,
+        reactionCounts: { '👍': 3 },
+        raw: expect.anything(),
+      },
+    ]);
   });
 
   it('parseWebhook normaliza evento "Message" de documento e popula media.filename', () => {

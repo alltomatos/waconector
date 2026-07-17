@@ -695,7 +695,33 @@ ADR-0019: só promover ao enum central o que convergir em 2+ providers já imple
 
 ## Epic 12 — capabilities novas: `messages.download` + namespace `channels.*` mensageria (achado da Epic 11)
 
-Estado: **planejado** — decisão de design tomada, fatiado em issues via skill `to-issues`.
+Estado: **done**. [Issue #60](https://github.com/alltomatos/waconector/issues/60) (Epic) + 7
+sub-issues [#61](https://github.com/alltomatos/waconector/issues/61)-[#67](https://github.com/alltomatos/waconector/issues/67),
+todas fechadas — fatiadas via skill `to-issues`, executadas em fila sequencial (sem `Workflow`/
+`Agent` em paralelo, uma por vez, commit próprio na branch `feat/channels-messaging-download`).
+
+- [#61](https://github.com/alltomatos/waconector/issues/61): core (types/adapter/capabilities +
+  ADR-0020/0021).
+- [#62](https://github.com/alltomatos/waconector/issues/62): adapter uazapi (68/72).
+- [#63](https://github.com/alltomatos/waconector/issues/63): adapter Evolution GO (53/72) — achado
+  que corrigiu a ADR-0020: `messages.download` exige o descritor bruto via `raw`, não só
+  `messageId` (mesmo grupo do izapia, não de uazapi/Whapi).
+- [#64](https://github.com/alltomatos/waconector/issues/64): adapter Whapi (68/72) — sem
+  `channels.markViewed`/`reactToPost`, sem endpoint dedicado de "marcar visto"/"reagir a post" no
+  namespace `newsletter.*` confirmado no OpenAPI oficial.
+- [#65](https://github.com/alltomatos/waconector/issues/65): adapter izapia (68/72, empatado com
+  uazapi/Whapi na maior cobertura do pacote) — achado notável: o webhook `message.received` carrega
+  `data.raw = evt.RawMessage`, o mesmo `*waE2E.Message` bruto do whatsmeow já usado pelo Evolution
+  GO, permitindo reaproveitar por analogia a mesma extração de descritor de mídia por sub-objeto.
+- [#66](https://github.com/alltomatos/waconector/issues/66): consolidação — QA gate completo verde
+  (994 testes, cobertura 92.28%/67.44%/99.62%/93.53%, acima dos thresholds 77/60/90/80),
+  `docs/capabilities.md` regenerado (68→72 capabilities × 9 providers), changeset `minor` criado.
+- [#67](https://github.com/alltomatos/waconector/issues/67): docs finais — dossiês dos 4 providers
+  e `docs/CONTEXT.md` atualizados, Epic marcada como concluída.
+
+Também estendeu o `HttpClient` (core) com `responseType: 'base64'` (`src/core/http.ts`) para
+suportar respostas binárias cruas — necessário para o `GET /media/{MediaID}` do Whapi, que devolve
+o arquivo bruto em vez de um envelope JSON.
 
 Decisões de design (antes de fatiar, mesmo critério usado no `sid`/`connect()` do izapia):
 

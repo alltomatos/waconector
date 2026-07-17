@@ -415,6 +415,23 @@ describe('MockAdapter: labels', () => {
   });
 });
 
+describe('MockAdapter: messages.download', () => {
+  it('devolve base64 não vazio e raw, exigindo instância conectada', async () => {
+    const adapter = new MockAdapter();
+    const wa = createConnector(adapter);
+
+    const disconnected = await reject(wa.messages.download({ messageId: 'msg-1' }));
+    expect(isWaConnectorError(disconnected) && disconnected.code === 'INSTANCE_DISCONNECTED').toBe(
+      true,
+    );
+
+    adapter.simulateConnected();
+    const downloaded = await wa.messages.download({ messageId: 'msg-1' });
+    expect(downloaded.base64.length).toBeGreaterThan(0);
+    expect(downloaded).toHaveProperty('raw');
+  });
+});
+
 describe('MockAdapter: channels', () => {
   it('create gera um id novo (JID @newsletter) e list reflete o canal criado', async () => {
     const adapter = new MockAdapter();
@@ -487,6 +504,36 @@ describe('MockAdapter: channels', () => {
 
     const failure = await reject(wa.channels.create({ name: 'Meu Canal' }));
     expect(isWaConnectorError(failure) && failure.code === 'INSTANCE_DISCONNECTED').toBe(true);
+  });
+
+  it('getMessages devolve [] (sem capability de publicar posts); markViewed/reactToPost não lançam', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+    const channel = await wa.channels.create({ name: 'Meu Canal' });
+
+    expect(await wa.channels.getMessages({ channelId: channel.id })).toEqual([]);
+    await expect(
+      wa.channels.markViewed({ channelId: channel.id, messageIds: ['post-1'] }),
+    ).resolves.toBeUndefined();
+    await expect(
+      wa.channels.reactToPost({ channelId: channel.id, messageId: 'post-1', emoji: '👍' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('getMessages/markViewed/reactToPost falham com PROVIDER_ERROR para um channelId inexistente', async () => {
+    const adapter = new MockAdapter();
+    adapter.simulateConnected();
+    const wa = createConnector(adapter);
+
+    for (const call of [
+      () => wa.channels.getMessages({ channelId: 'inexistente' }),
+      () => wa.channels.markViewed({ channelId: 'inexistente', messageIds: ['post-1'] }),
+      () => wa.channels.reactToPost({ channelId: 'inexistente', messageId: 'post-1', emoji: '👍' }),
+    ]) {
+      const failure = await reject(call());
+      expect(isWaConnectorError(failure) && failure.code === 'PROVIDER_ERROR').toBe(true);
+    }
   });
 });
 

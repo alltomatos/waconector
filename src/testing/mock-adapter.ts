@@ -19,7 +19,9 @@ import type { CanonicalEvent } from '../core/events';
 import {
   type BusinessProfile,
   type ChannelInfo,
+  type ChannelPost,
   type Contact,
+  type DownloadedMedia,
   type GroupInfo,
   type GroupParticipant,
   INSTANCE_STATES,
@@ -179,6 +181,14 @@ export class MockAdapter implements WaAdapter {
           id: `mock-${++this.seq}`,
           chatId: input.to,
           timestamp: Date.now(),
+          raw: { mock: true, input },
+        };
+      },
+      download: async (input): Promise<DownloadedMedia> => {
+        this.assertConnected();
+        return {
+          base64: 'bW9jay1kb3dubG9hZA==',
+          mimeType: 'application/octet-stream',
           raw: { mock: true, input },
         };
       },
@@ -451,6 +461,20 @@ export class MockAdapter implements WaAdapter {
         this.assertConnected();
         this.requireChannel(channelId);
         this.followedChannelIds.delete(channelId);
+      },
+      getMessages: async ({ channelId }): Promise<ChannelPost[]> => {
+        this.assertConnected();
+        this.requireChannel(channelId);
+        return [];
+      },
+      markViewed: async ({ channelId }) => {
+        this.assertConnected();
+        this.requireChannel(channelId);
+      },
+      reactToPost: async ({ channelId, messageId }) => {
+        this.assertConnected();
+        this.requireChannel(channelId);
+        void messageId;
       },
     };
 

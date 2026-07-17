@@ -49,13 +49,21 @@ export type MessageKind =
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'document' | 'sticker';
 
-/** Referência de mídia: pelo menos um entre `url` e `base64` deve estar presente. */
+/**
+ * Referência de mídia. Como entrada de `sendMedia`, pelo menos um entre `url` e `base64` deve
+ * estar presente. Como saída em `WaMessage.media` (mensagem recebida), pode trazer só `id` quando
+ * o provider não entrega `url`/`base64` prontos no webhook — nesse caso, `messages.download`
+ * (ADR-0020) resolve o conteúdo real a partir do `messageId` (e de `WaMessage.raw`, para os
+ * poucos providers stateless que precisam do descritor bruto original).
+ */
 export interface MediaRef {
   kind: MediaKind;
   url?: string;
   base64?: string;
   mimeType?: string;
   filename?: string;
+  /** Identificador opaco do arquivo no provider — nunca usado como entrada de `sendMedia`. */
+  id?: string;
 }
 
 /** Detalhe de uma reação (presente em `WaMessage` quando `kind === 'reaction'`). */
@@ -89,6 +97,26 @@ export interface SentMessage {
   chatId: string;
   /** Epoch em milissegundos, quando o provider informa. */
   timestamp?: number;
+  raw: unknown;
+}
+
+/**
+ * Ver ADR-0020. Baixa o arquivo de uma mensagem de mídia já recebida (`WaMessage.media.id`, sem
+ * `url`/`base64` prontos). `messageId` é suficiente para providers com histórico server-side
+ * (uazapi, Evolution GO, Whapi); `raw` (o `WaMessage.raw` da mensagem original) só é consumido por
+ * providers stateless que não guardam histórico (ex.: izapia) e precisam do descritor bruto
+ * original do webhook para resolver o download — os demais o ignoram.
+ */
+export interface DownloadMediaInput {
+  messageId: string;
+  raw?: unknown;
+}
+
+export interface DownloadedMedia {
+  /** Conteúdo do arquivo, já em base64. */
+  base64: string;
+  mimeType?: string;
+  filename?: string;
   raw: unknown;
 }
 
@@ -293,6 +321,48 @@ export interface ChannelInfo {
 export interface CreateChannelInput {
   name: string;
   description?: string;
+}
+
+/**
+ * Post do feed de um canal (`channels.getMessages`, ver ADR-0021). `id` é o identificador opaco do
+ * post no provider (ex.: `serverId`/`serverid`) — usado por `channels.markViewed`/`reactToPost`,
+ * não é o `messageId` de uma mensagem de chat comum.
+ */
+export interface ChannelPost {
+  id: string;
+  /** Epoch em milissegundos. */
+  timestamp: number;
+  text?: string;
+  viewsCount?: number;
+  /** Mapa emoji -> contagem, quando o provider expõe. */
+  reactionCounts?: Record<string, number>;
+  raw: unknown;
+}
+
+/** Ver ADR-0021. */
+export interface GetChannelMessagesInput {
+  /** ID opaco do canal — ver `ChannelInfo.id`. */
+  channelId: string;
+  count?: number;
+  /** Cursor de paginação (ID do post mais antigo já visto) — pede posts anteriores a ele. */
+  before?: string;
+}
+
+/** Ver ADR-0021. */
+export interface MarkChannelMessagesViewedInput {
+  /** ID opaco do canal — ver `ChannelInfo.id`. */
+  channelId: string;
+  /** IDs opacos dos posts — ver `ChannelPost.id`. */
+  messageIds: string[];
+}
+
+/** Ver ADR-0021. Emoji vazio remove uma reação já enviada (mesma convenção de `SendReactionInput`). */
+export interface ReactToChannelMessageInput {
+  /** ID opaco do canal — ver `ChannelInfo.id`. */
+  channelId: string;
+  /** ID opaco do post — ver `ChannelPost.id`. */
+  messageId: string;
+  emoji: string;
 }
 
 /**

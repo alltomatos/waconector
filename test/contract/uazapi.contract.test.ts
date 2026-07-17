@@ -450,6 +450,42 @@ function createFetchStub(): typeof globalThis.fetch {
       });
     }
 
+    // messages.download (ADR-0020): POST /message/download.
+    if (method === 'POST' && pathname === '/message/download') {
+      return jsonResponse(200, {
+        fileURL: 'https://cdn.uazapi-fake.test/arquivo.jpg',
+        mimetype: 'image/jpeg',
+        base64Data: 'ZmFrZS1kb3dubG9hZA==',
+      });
+    }
+
+    // channels.getMessages (ADR-0021): POST /newsletter/messages.
+    if (method === 'POST' && pathname === '/newsletter/messages') {
+      return jsonResponse(200, {
+        response: [
+          {
+            serverid: 42,
+            messageid: '3EB0FAKE0000000000POST',
+            type: 'text',
+            timestamp: '2026-07-17T12:00:00.000Z',
+            viewsCount: 10,
+            reactionCounts: { '👍': 3, '❤️': 1 },
+            message: { conversation: 'Post de teste' },
+          },
+        ],
+      });
+    }
+
+    // channels.markViewed (ADR-0021): POST /newsletter/viewed.
+    if (method === 'POST' && pathname === '/newsletter/viewed') {
+      return jsonResponse(200, { response: true });
+    }
+
+    // channels.reactToPost (ADR-0021): POST /newsletter/reaction.
+    if (method === 'POST' && pathname === '/newsletter/reaction') {
+      return jsonResponse(200, { response: true });
+    }
+
     throw new Error(`fetchStub (uazapi): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -2236,6 +2272,121 @@ describe('uazapi adapter: comportamento específico do provider', () => {
       { path: '/newsletter/follow', body: { jid: '111111111111111111@newsletter' } },
       { path: '/newsletter/unfollow', body: { jid: '111111111111111111@newsletter' } },
     ]);
+  });
+
+  it('messages.download chama POST /message/download com { id, return_base64: true } e mapeia base64Data/mimetype', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/message/download') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const downloaded = await wa.messages.download({ messageId: '3EB0538DA65A59F6D8A251' });
+
+    expect(capturedBody).toEqual({ id: '3EB0538DA65A59F6D8A251', return_base64: true });
+    expect(downloaded.base64).toBe('ZmFrZS1kb3dubG9hZA==');
+    expect(downloaded.mimeType).toBe('image/jpeg');
+    expect(downloaded).toHaveProperty('raw');
+  });
+
+  it('channels.getMessages chama POST /newsletter/messages com {jid, count, beforeid} e mapeia ChannelPost[]', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/newsletter/messages') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const posts = await wa.channels.getMessages({
+      channelId: '111111111111111111@newsletter',
+      count: 20,
+      before: '99',
+    });
+
+    expect(capturedBody).toEqual({
+      jid: '111111111111111111@newsletter',
+      count: 20,
+      beforeid: 99,
+    });
+    expect(posts).toEqual([
+      {
+        id: '42',
+        timestamp: new Date('2026-07-17T12:00:00.000Z').getTime(),
+        text: 'Post de teste',
+        viewsCount: 10,
+        reactionCounts: { '👍': 3, '❤️': 1 },
+        raw: expect.anything(),
+      },
+    ]);
+  });
+
+  it('channels.markViewed chama POST /newsletter/viewed com {jid, serverids} (inteiros)', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/newsletter/viewed') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.channels.markViewed({
+        channelId: '111111111111111111@newsletter',
+        messageIds: ['42', '43'],
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({
+      jid: '111111111111111111@newsletter',
+      serverids: [42, 43],
+    });
+  });
+
+  it('channels.reactToPost chama POST /newsletter/reaction com {jid, serverid, reaction}', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = uazapi(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === '/newsletter/reaction') {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(
+      wa.channels.reactToPost({
+        channelId: '111111111111111111@newsletter',
+        messageId: '42',
+        emoji: '👍',
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(capturedBody).toEqual({
+      jid: '111111111111111111@newsletter',
+      serverid: 42,
+      reaction: '👍',
+    });
   });
 
   it('business.getProfile chama POST /business/get/profile e normaliza categories/websites', async () => {

@@ -19,6 +19,7 @@ import type { CanonicalEvent, CanonicalEventType, EventOf, UnknownEvent } from '
 import type {
   BusinessProfile,
   ChannelInfo,
+  ChannelPost,
   CheckExistsResult,
   Contact,
   ContactAbout,
@@ -27,8 +28,11 @@ import type {
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
+  DownloadedMedia,
+  DownloadMediaInput,
   EditMessageInput,
   ForwardMessageInput,
+  GetChannelMessagesInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipantsInput,
@@ -36,10 +40,12 @@ import type {
   LabelChatInput,
   LabelInfo,
   MakeCallInput,
+  MarkChannelMessagesViewedInput,
   MarkMessageReadInput,
   MediaRef,
   PinMessageInput,
   PresenceState,
+  ReactToChannelMessageInput,
   RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
@@ -95,6 +101,7 @@ export interface ConnectorMessagesApi {
   sendLocation(input: SendLocationInput): Promise<SentMessage>;
   sendContactCard(input: SendContactCardInput): Promise<SentMessage>;
   sendPoll(input: SendPollInput): Promise<SentMessage>;
+  download(input: DownloadMediaInput): Promise<DownloadedMedia>;
 }
 
 /**
@@ -188,6 +195,9 @@ export interface ConnectorChannelsApi {
   delete(channelId: string): Promise<void>;
   follow(channelId: string): Promise<void>;
   unfollow(channelId: string): Promise<void>;
+  getMessages(input: GetChannelMessagesInput): Promise<ChannelPost[]>;
+  markViewed(input: MarkChannelMessagesViewedInput): Promise<void>;
+  reactToPost(input: ReactToChannelMessageInput): Promise<void>;
 }
 
 /**
@@ -306,6 +316,10 @@ export class WaConnector {
       sendPoll: (input) =>
         this.callMessagesMethod('sendPoll', 'messages.sendPoll', (fn) =>
           fn(this.prepareSendPoll(input)),
+        ),
+      download: (input) =>
+        this.callMessagesMethod('download', 'messages.download', (fn) =>
+          fn(this.prepareDownloadMedia(input)),
         ),
     };
 
@@ -469,6 +483,18 @@ export class WaConnector {
       unfollow: (channelId) =>
         this.callChannelsMethod('unfollow', 'channels.unfollow', (fn) =>
           fn(this.requireChannelId(channelId)),
+        ),
+      getMessages: (input) =>
+        this.callChannelsMethod('getMessages', 'channels.getMessages', (fn) =>
+          fn(this.prepareGetChannelMessages(input)),
+        ),
+      markViewed: (input) =>
+        this.callChannelsMethod('markViewed', 'channels.markViewed', (fn) =>
+          fn(this.prepareMarkChannelMessagesViewed(input)),
+        ),
+      reactToPost: (input) =>
+        this.callChannelsMethod('reactToPost', 'channels.reactToPost', (fn) =>
+          fn(this.prepareReactToChannelMessage(input)),
         ),
     };
 
@@ -764,6 +790,59 @@ export class WaConnector {
       });
     }
     return channelId;
+  }
+
+  /** Ver ADR-0021. `channelId` é opaco (mesmo critério de `requireChannelId`). */
+  private prepareGetChannelMessages(input: GetChannelMessagesInput): GetChannelMessagesInput {
+    return { ...input, channelId: this.requireChannelId(input.channelId) };
+  }
+
+  private prepareMarkChannelMessagesViewed(
+    input: MarkChannelMessagesViewedInput,
+  ): MarkChannelMessagesViewedInput {
+    if (!Array.isArray(input.messageIds) || input.messageIds.length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'channels.markViewed exige "messageIds" com ao menos 1 item.',
+        { provider: this.provider },
+      );
+    }
+    return { channelId: this.requireChannelId(input.channelId), messageIds: input.messageIds };
+  }
+
+  /** Emoji vazio remove uma reação já enviada — mesma convenção de `prepareSendReaction` (ADR-0008). */
+  private prepareReactToChannelMessage(
+    input: ReactToChannelMessageInput,
+  ): ReactToChannelMessageInput {
+    if (typeof input.messageId !== 'string' || input.messageId.length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'channels.reactToPost exige "messageId" não vazio.',
+        { provider: this.provider },
+      );
+    }
+    if (typeof input.emoji !== 'string') {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'channels.reactToPost exige "emoji" (string vazia remove uma reação anterior).',
+        { provider: this.provider },
+      );
+    }
+    return { ...input, channelId: this.requireChannelId(input.channelId) };
+  }
+
+  /** Ver ADR-0020. `raw` é opaco — repassado como o consumidor forneceu, sem validação. */
+  private prepareDownloadMedia(input: DownloadMediaInput): DownloadMediaInput {
+    if (typeof input.messageId !== 'string' || input.messageId.length === 0) {
+      throw new WaConnectorError(
+        'INVALID_INPUT',
+        'messages.download exige "messageId" não vazio.',
+        {
+          provider: this.provider,
+        },
+      );
+    }
+    return input;
   }
 
   /** Ao menos 1 campo é obrigatório (ver `UpdateBusinessProfileInput`/ADR-0018) — nenhum provider confirmado aceita update vazio. */
