@@ -552,7 +552,7 @@ canônico atual não modela áudio, então isso não aparece na assinatura, só 
 QA gate completo verde em cada issue: lint, typecheck, suite de contrato (81 testes específicos +
 contrato compartilhado), cobertura 92.1%/67.93%/99.54%/93.41% (acima dos thresholds 77/60/90/80),
 build e smoke (incluindo o subpath `waconector/izapia`) passando. Changeset `minor` criado.
-Pendente: abrir o PR de `feat/izapia-adapter` para `develop`.
+[PR #58](https://github.com/alltomatos/waconector/pull/58) aberto (`feat/izapia-adapter` → `develop`).
 
 - Contexto: izapia (`github.com/alltomatos/izapia`, repo **privado** do próprio usuário) é uma API
   SaaS multi-tenant de WhatsApp sobre `whatsmeow` — o candidato mais completo já avaliado para um
