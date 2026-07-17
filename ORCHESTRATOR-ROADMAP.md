@@ -540,11 +540,12 @@ tentar `issue_write` — integração sem permissão de escrita em Issues neste 
 normalmente nesta sessão, inclusive para ler o código-fonte do repo privado `alltomatos/izapia`,
 contradizendo uma memória de sessão anterior sobre isolamento do keyring).
 
-**Resultado final**: **64/68 capabilities — a maior cobertura entre os 9 adapters do pacote**
-(ver `docs/capabilities.md`). Gaps documentados (todos limitações reais do provider, não da
-pesquisa): `instance.pairingCode` (mesmo motivo estrutural dos outros 8 adapters — o contrato não
-recebe telefone), `messages.forward` (endpoint só aceita texto pronto; izapia é stateless, sem
-histórico para resolver o texto original a partir de um `messageId`), `channels.delete` e
+**Resultado final**: **64/68 capabilities — segunda maior cobertura entre os 9 adapters do pacote**
+(atrás só do Whapi, 66/68 — ver `docs/capabilities.md`). Gaps documentados (todos limitações reais
+do provider, não da pesquisa): `instance.pairingCode` (mesmo motivo estrutural dos outros 8
+adapters — o contrato não recebe telefone), `messages.forward` (endpoint só aceita texto pronto;
+izapia é stateless, sem histórico para resolver o texto original a partir de um `messageId`),
+`channels.delete` e
 `business.updateProfile` (ambos `501 NOT_IMPLEMENTED` hoje — o `whatsmeow` não expõe essas
 operações publicamente). Achado notável: `calls.*` roda sobre um `CallManager` de voz genuíno
 (sinalização + bridge WebRTC), diferente da "chamada vazia" dos demais 8 adapters — o contrato

@@ -78,9 +78,10 @@ endpoint deprecado `GET /all-groups`).
   releases seguintes foram 100% aditivas). A partir daqui, breaking changes exigem bump major.
 - **Adapter izapia** ✅ (2026-07-16): 9º provider suportado — SaaS multi-tenant próprio do usuário
   (`github.com/alltomatos/izapia`, repo privado), construído sobre `tulir/whatsmeow` (`v0.2.0`,
-  ~100 endpoints, confirmado ao vivo + código-fonte). **Maior cobertura entre todos os adapters do
-  pacote: 64/68 capabilities** (ver `docs/capabilities.md`) — `instance.connect/status/logout`
-  (fluxo de duas etapas: sessão criada fora do contrato `WaAdapter`, `connect()` só pareia),
+  ~100 endpoints, confirmado ao vivo + código-fonte). **Segunda maior cobertura entre todos os
+  adapters do pacote: 64/68 capabilities** (atrás só do Whapi, 66/68 — ver `docs/capabilities.md`)
+  — `instance.connect/status/logout` (fluxo de duas etapas: sessão criada fora do contrato
+  `WaAdapter`, `connect()` só pareia),
   `messages.*` completo exceto `forward` (endpoint real só aceita texto pronto, e o izapia não
   guarda histórico para resolvê-lo a partir de um `messageId` — descasamento real de forma),
   `groups.*`/`contacts.*`/`chats.*`/`presence.*`/`labels.*` completos, `channels.*` exceto `delete`
