@@ -552,7 +552,11 @@ canônico atual não modela áudio, então isso não aparece na assinatura, só 
 QA gate completo verde em cada issue: lint, typecheck, suite de contrato (81 testes específicos +
 contrato compartilhado), cobertura 92.1%/67.93%/99.54%/93.41% (acima dos thresholds 77/60/90/80),
 build e smoke (incluindo o subpath `waconector/izapia`) passando. Changeset `minor` criado.
-[PR #58](https://github.com/alltomatos/waconector/pull/58) aberto (`feat/izapia-adapter` → `develop`).
+[PR #58](https://github.com/alltomatos/waconector/pull/58) mergeado em `develop`.
+[PR #59](https://github.com/alltomatos/waconector/pull/59) ("chore: release v1.2.0") mergeado em
+`main`, publicando a **v1.2.0 no npm** (com provenance). Reconciliado o mesmo padrão recorrente de
+divergência de squash-merge já documentado nos PRs #38-#42 (`develop`↔`main`, resolvido tomando o
+lado que já era superset estrito em ambas as pontas).
 
 - Contexto: izapia (`github.com/alltomatos/izapia`, repo **privado** do próprio usuário) é uma API
   SaaS multi-tenant de WhatsApp sobre `whatsmeow` — o candidato mais completo já avaliado para um
