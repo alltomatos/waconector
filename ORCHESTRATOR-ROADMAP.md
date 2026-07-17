@@ -590,6 +590,46 @@ lado que já era superset estrito em ambas as pontas).
 - Tier de risco: T2 (batch) — mesmo perfil dos adapters uazapi/Z-API/Wuzapi da Epic 3; não mexe em
   schema, autenticação existente ou API pública já publicada.
 
+## Epic 11 — expandir o contrato central com "extras" do izapia (pesquisa, rodada 1)
+
+Estado: **pesquisa concluída, sem promoção nesta rodada**.
+
+Motivada por uma pergunta direta do usuário após a Epic 10: izapia declara 64/68 capabilities do
+contrato central, mas tem ~100 endpoints reais — a diferença é o design pretendido (ADR-0005,
+contrato é o vocabulário COMUM entre providers, não o teto de nenhum um deles), mas os "extras"
+documentados no dossiê (`docs/providers/izapia.md`, seções "Extras além do contrato atual") são
+candidatos honestos a uma futura expansão, seguindo o mesmo processo histórico das ADR-0008 a
+ADR-0019: só promover ao enum central o que convergir em 2+ providers já implementados.
+
+- 12 candidatos pesquisados contra os dossiês/código-fonte de **WAHA**, **Evolution GO** e
+  **Wuzapi** (os 3 outros adapters já implementados mais próximos tecnicamente do izapia — Evolution
+  GO e Wuzapi confirmadamente sobre a mesma lib `tulir/whatsmeow`): `calls.accept`, `calls.end`,
+  `groups.announce`/`locked`/`memberAddMode`/`joinApprovalMode`+`joinRequests`/`preview`,
+  `chats.delete`/`disappearing`, `channels.*` mensageria de canal (feed/viewed/react a post),
+  `messages.download` (mídia por descritor), mensagens interativas (botões/lista).
+- **Resultado: nenhum dos 12 atinge confirmação positiva em 2+ dos 3 providers pesquisados** dentro
+  do que já está documentado nos dossiês existentes — a maioria (`calls.accept`/`end`,
+  `groups.*` avançado, `chats.delete`/`disappearing`, mensagens interativas) nunca foi alvo de
+  busca dedicada nas rodadas anteriores (ADR-0009/0012 escoparam um conjunto fixo de operações,
+  sem incluir esses), então o veredito real é "incerto/não pesquisado", não "confirmado ausente".
+  `calls.accept`/`calls.end` são exceção: busca exaustiva já feita nos 3 providers (mesma pesquisa
+  que confirmou `calls.reject`) não encontrou nada — negativa genuína, provável exclusividade do
+  `CallManager` próprio do izapia.
+- **2 candidatos com sinal mais forte** para uma rodada dedicada futura (Evolution GO já tem
+  endpoint real confirmado para os dois, faltando estender a busca aos outros 5 adapters já
+  implementados — uazapi, Z-API, Whapi, QuePasa, WPPConnect — para fechar o critério de 2+):
+  `messages.download` (`Evolution GO` confirmado com bug de rate-limit autodocumentado; Wuzapi só
+  push de mídia, sem download por descritor; WAHA tem mecanismo funcionalmente parecido mas
+  semanticamente diferente — não stateless) e `channels.*` mensageria de canal (`Evolution GO`
+  confirmado — `POST /newsletter/messages`; WAHA tem `previewMessages` de canais NÃO inscritos,
+  semântica diferente; Wuzapi busca negativa confirmada).
+- Decisão: **não promover nada ao contrato central nesta rodada** — critério histórico de
+  convergência (2+ providers) não satisfeito para nenhum candidato dentro do escopo pesquisado.
+  Os 12 continuam documentados como features exclusivas do izapia no próprio dossiê, sem virar
+  trabalho de implementação agora. Pendente de decisão do usuário: estender a pesquisa aos outros 5
+  adapters para os 2 candidatos promissores (`messages.download`, `channels.*` mensageria), ou
+  encerrar esta Epic aqui.
+
 ---
 
 Atualize este arquivo ao concluir cada milestone; o detalhe de *por quê* de cada fase do produto
