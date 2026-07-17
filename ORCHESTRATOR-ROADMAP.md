@@ -693,6 +693,47 @@ ADR-0019: só promover ao enum central o que convergir em 2+ providers já imple
     `messages.download`) e implementar nos adapters confirmados (Evolution GO, uazapi, Whapi,
     izapia para os 3; mais QuePasa/WAHA/Z-API/WPPConnect/Wuzapi só se pesquisa adicional confirmar).
 
+## Epic 12 — capabilities novas: `messages.download` + namespace `channels.*` mensageria (achado da Epic 11)
+
+Estado: **planejado** — decisão de design tomada, fatiado em issues via skill `to-issues`.
+
+Decisões de design (antes de fatiar, mesmo critério usado no `sid`/`connect()` do izapia):
+
+- **`messages.download`**: uazapi/Evolution GO/Whapi resolvem só com `messageId` (histórico
+  server-side); izapia é stateless e precisa do descritor bruto original do webhook.
+  `DownloadMediaInput{messageId: string, raw?: unknown}` — `raw` (o `WaMessage.raw` da mensagem
+  original) só é consumido pelos providers stateless; os demais ignoram. Resposta
+  `DownloadedMedia{base64: string, mimeType?, filename?, raw: unknown}`.
+  `MediaRef` ganha um campo novo `id?: string` (identificador opaco do arquivo no provider,
+  presente em `WaMessage.media` quando o provider NÃO entrega `url`/`base64` prontos no webhook —
+  nunca usado como entrada de `sendMedia`).
+- **`channels.*` mensageria**: `ChannelPost{id, timestamp, text?, viewsCount?, reactionCounts?,
+  raw}`. `getMessages?(input: {channelId, count?, before?}): Promise<ChannelPost[]>`,
+  `markViewed?(input: {channelId, messageIds: string[]}): Promise<void>`,
+  `reactToPost?(input: {channelId, messageId, emoji}): Promise<void>` (emoji vazio remove, mesma
+  convenção de `messages.sendReaction`).
+- 2 ADRs novas: `0020-capability-messages-download.md`, `0021-capabilities-channels-mensageria.md`.
+
+DAG de tarefas (fila sequencial, a pedido do usuário — sem `Workflow`/`Agent` em paralelo):
+
+1. Core: `src/core/types.ts` (`DownloadMediaInput`/`DownloadedMedia`/`MediaRef.id`/`ChannelPost`/
+   inputs de `channels.*`), `src/core/adapter.ts` (`MessagesApi.download?`/`ChannelsApi.getMessages?`/
+   `markViewed?`/`reactToPost?`), `src/core/capabilities.ts` (+4: `messages.download`,
+   `channels.getMessages`, `channels.markViewed`, `channels.reactToPost`) + ADR-0020/0021 — sem deps.
+2. Adapter **uazapi** (`messages.download`, `channels.getMessages`/`markViewed`/`reactToPost`) —
+   depende de (1).
+3. Adapter **Evolution GO** (`messages.download`, `channels.getMessages`) — depende de (1).
+4. Adapter **Whapi** (`messages.download`, `channels.getMessages`) — depende de (1).
+5. Adapter **izapia** (`messages.download`, `channels.getMessages`/`markViewed`/`reactToPost`) —
+   depende de (1).
+6. Consolidação: suite de contrato 100% + `docs/capabilities.md` regenerado + `npx changeset` —
+   depende de (2, 3, 4, 5).
+7. Docs: dossiês dos 4 providers atualizados (nova seção implementada, sai de "extras fora do
+   contrato") + `docs/CONTEXT.md` — depende de (6).
+
+- Tier de risco: T2 (batch) — mesmo perfil das Epics 6/7/9; muda `MediaRef` (campo novo opcional,
+  aditivo) e adiciona 2 namespaces/capabilities novas — sem breaking change (tudo opcional).
+
 ---
 
 Atualize este arquivo ao concluir cada milestone; o detalhe de *por quê* de cada fase do produto
