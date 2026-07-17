@@ -20,6 +20,7 @@ import { HttpClient } from '../../core/http';
 import type {
   BusinessProfile,
   ChannelInfo,
+  ChannelPost,
   CheckExistsResult,
   ConnectResult,
   Contact,
@@ -28,7 +29,10 @@ import type {
   CreateGroupInput,
   CreateLabelInput,
   DeleteMessageInput,
+  DownloadedMedia,
+  DownloadMediaInput,
   EditMessageInput,
+  GetChannelMessagesInput,
   GroupInfo,
   GroupInviteLink,
   GroupParticipant,
@@ -39,6 +43,7 @@ import type {
   LabelChatInput,
   LabelInfo,
   MakeCallInput,
+  MarkChannelMessagesViewedInput,
   MarkMessageReadInput,
   MediaKind,
   MediaRef,
@@ -46,6 +51,7 @@ import type {
   MessageKind,
   PinMessageInput,
   PresenceState,
+  ReactToChannelMessageInput,
   RejectCallInput,
   SendContactCardInput,
   SendLocationInput,
@@ -114,6 +120,7 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'messages.sendLocation',
   'messages.sendContactCard',
   'messages.sendPoll',
+  'messages.download',
   'chats.archive',
   'chats.unarchive',
   'chats.mute',
@@ -157,6 +164,9 @@ const UAZAPI_CAPABILITIES: CapabilitySet = [
   'channels.delete',
   'channels.follow',
   'channels.unfollow',
+  'channels.getMessages',
+  'channels.markViewed',
+  'channels.reactToPost',
   'business.getProfile',
   'business.updateProfile',
   'calls.make',
@@ -195,6 +205,7 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     sendLocation: (input) => sendLocation(http, input),
     sendContactCard: (input) => sendContactCard(http, input),
     sendPoll: (input) => sendPoll(http, input),
+    download: (input) => downloadMedia(http, input),
   };
 
   const chats: ChatsApi = {
@@ -268,6 +279,9 @@ export function uazapi(options: UazapiOptions): WaAdapter {
     delete: (channelId) => deleteChannel(http, channelId),
     follow: (channelId) => setChannelFollowed(http, channelId, true),
     unfollow: (channelId) => setChannelFollowed(http, channelId, false),
+    getMessages: (input) => getChannelMessages(http, input),
+    markViewed: (input) => markChannelMessagesViewed(http, input),
+    reactToPost: (input) => reactToChannelPost(http, input),
   };
 
   /** Namespace `business.*` (ADR-0018). Cobertura 2/2 — confiança Alta para os 2 endpoints. */
@@ -655,6 +669,31 @@ async function sendPoll(http: HttpClient, input: SendPollInput): Promise<SentMes
     },
   });
   return mapSentMessage(response, number);
+}
+
+/**
+ * `messages.download` (ADR-0020): `POST /message/download`, body `{id, return_base64: true}` —
+ * força `return_base64: true` para garantir `base64Data` na resposta (o contrato canônico
+ * `DownloadedMedia.base64` é obrigatório; sem essa flag, o provider devolveria só `fileURL`).
+ * Confirmado ao vivo no OpenAPI bundled (`https://docs.uazapi.com/openapi-bundled.json`):
+ * `{fileURL?, mimetype, base64Data?, transcription?}`. `input.raw` não é usado — a uazapi mantém
+ * histórico server-side, resolve o download só com `messageId`.
+ */
+async function downloadMedia(
+  http: HttpClient,
+  input: DownloadMediaInput,
+): Promise<DownloadedMedia> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/message/download',
+    body: { id: input.messageId, return_base64: true },
+  });
+  const record = asRecord(body);
+  return {
+    base64: (record ? asString(record.base64Data) : undefined) ?? '',
+    mimeType: record ? asString(record.mimetype) : undefined,
+    raw: body,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1393,6 +1432,97 @@ function mapUazapiChannel(
         ? asNumber(record.subscribersCount)
         : undefined;
   return { id, name, description, subscribersCount, raw: body };
+}
+
+/**
+ * `channels.getMessages` (ADR-0021): `POST /newsletter/messages` — busca direto no WhatsApp
+ * (não depende de posts salvos localmente), body `{jid, count?, beforeid?}` (`beforeid` é o
+ * `serverid` do post mais antigo já visto — paginação por cursor). Resposta confirmada ao vivo no
+ * OpenAPI bundled: array de `{serverid, messageid, type, timestamp (ISO), viewsCount,
+ * reactionCounts, message}`. `GetChannelMessagesInput.before` (string canônica) é convertido para
+ * `beforeid` (inteiro) via `Number(...)`.
+ */
+async function getChannelMessages(
+  http: HttpClient,
+  input: GetChannelMessagesInput,
+): Promise<ChannelPost[]> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: '/newsletter/messages',
+    body: {
+      jid: input.channelId,
+      count: input.count,
+      ...(input.before !== undefined ? { beforeid: Number(input.before) } : {}),
+    },
+  });
+  const record = asRecord(body);
+  const items = record && Array.isArray(record.response) ? record.response : [];
+  return items.map((item: unknown) => mapUazapiChannelPost(item));
+}
+
+function mapUazapiChannelPost(body: unknown): ChannelPost {
+  const record = asRecord(body);
+  const serverId = record ? asNumber(record.serverid) : undefined;
+  const timestampRaw = record ? asString(record.timestamp) : undefined;
+  const timestamp = timestampRaw !== undefined ? new Date(timestampRaw).getTime() : 0;
+  const reactionCountsRaw = record ? asRecord(record.reactionCounts) : undefined;
+  const reactionCounts = reactionCountsRaw
+    ? Object.fromEntries(
+        Object.entries(reactionCountsRaw)
+          .map(([emoji, count]) => [emoji, asNumber(count)] as const)
+          .filter((entry): entry is [string, number] => entry[1] !== undefined),
+      )
+    : undefined;
+  return {
+    id: serverId !== undefined ? String(serverId) : '',
+    timestamp,
+    text: extractUazapiChannelPostText(record?.message),
+    viewsCount: record ? asNumber(record.viewsCount) : undefined,
+    reactionCounts,
+    raw: body,
+  };
+}
+
+/**
+ * `message` no post de canal não tem schema documentado (`additionalProperties: true`) — assumido
+ * como o mesmo shape whatsmeow (`conversation`/`extendedTextMessage.text`) já usado em outros
+ * pontos deste pacote para mensagens de chat comum. Não confirmado contra uma instância real.
+ */
+function extractUazapiChannelPostText(message: unknown): string | undefined {
+  const record = asRecord(message);
+  if (!record) return undefined;
+  const conversation = asString(record.conversation);
+  if (conversation !== undefined) return conversation;
+  const extendedText = asRecord(record.extendedTextMessage);
+  return extendedText ? asString(extendedText.text) : undefined;
+}
+
+/** `channels.markViewed` (ADR-0021): `POST /newsletter/viewed`, body `{jid, serverids}` — `serverids` são inteiros; `MarkChannelMessagesViewedInput.messageIds` (strings canônicas) são convertidos via `Number(...)`. */
+async function markChannelMessagesViewed(
+  http: HttpClient,
+  input: MarkChannelMessagesViewedInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/newsletter/viewed',
+    body: { jid: input.channelId, serverids: input.messageIds.map(Number) },
+  });
+}
+
+/**
+ * `channels.reactToPost` (ADR-0021): `POST /newsletter/reaction`, body `{jid, serverid, reaction}`
+ * — `reaction` vazia remove a reação (mesma convenção de `messages.sendReaction`, ADR-0008).
+ * `reactionmessageid` (opcional, o WhatsApp gera se omitido) não é exposto pelo contrato canônico.
+ */
+async function reactToChannelPost(
+  http: HttpClient,
+  input: ReactToChannelMessageInput,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: '/newsletter/reaction',
+    body: { jid: input.channelId, serverid: Number(input.messageId), reaction: input.emoji },
+  });
 }
 
 // ---------------------------------------------------------------------------
