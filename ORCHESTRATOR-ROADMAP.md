@@ -695,7 +695,21 @@ ADR-0019: só promover ao enum central o que convergir em 2+ providers já imple
 
 ## Epic 12 — capabilities novas: `messages.download` + namespace `channels.*` mensageria (achado da Epic 11)
 
-Estado: **planejado** — decisão de design tomada, fatiado em issues via skill `to-issues`.
+Estado: **em execução** — [issue #60](https://github.com/alltomatos/waconector/issues/60) (Epic) +
+7 sub-issues [#61](https://github.com/alltomatos/waconector/issues/61)-[#67](https://github.com/alltomatos/waconector/issues/67),
+fatiadas via skill `to-issues`, executadas em fila sequencial (sem `Workflow`/`Agent` em paralelo,
+uma por vez, commit próprio na branch `feat/channels-messaging-download`).
+
+Concluídas: [#61](https://github.com/alltomatos/waconector/issues/61) (core — types/adapter/
+capabilities + ADR-0020/0021), [#62](https://github.com/alltomatos/waconector/issues/62) (adapter
+uazapi), [#63](https://github.com/alltomatos/waconector/issues/63) (adapter Evolution GO),
+[#64](https://github.com/alltomatos/waconector/issues/64) (adapter Whapi — cobertura 68/72;
+sem `channels.markViewed`/`reactToPost`, sem endpoint dedicado de "marcar visto"/"reagir a post" no
+namespace `newsletter.*` confirmado no OpenAPI oficial).
+Pendentes: [#65](https://github.com/alltomatos/waconector/issues/65) (adapter izapia),
+[#66](https://github.com/alltomatos/waconector/issues/66) (consolidação — suite 100% +
+`docs/capabilities.md` + changeset), [#67](https://github.com/alltomatos/waconector/issues/67)
+(docs finais).
 
 Decisões de design (antes de fatiar, mesmo critério usado no `sid`/`connect()` do izapia):
 
