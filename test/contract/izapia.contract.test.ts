@@ -317,6 +317,21 @@ function createFetchStub(): typeof globalThis.fetch {
       return envelope({});
     }
 
+    if (
+      method === 'GET' &&
+      pathname === `/api/v1/sessions/${SID}/business/profile/5511999999999@s.whatsapp.net`
+    ) {
+      return envelope({
+        jid: '5511999999999@s.whatsapp.net',
+        address: 'Rua Contrato, 1',
+        email: 'contrato@exemplo.com',
+        categories: [{ id: '1', name: 'Comércio' }],
+        profile_options: {},
+        business_hours_timezone: 'America/Fortaleza',
+        business_hours: [],
+      });
+    }
+
     throw new Error(`fetchStub (izapia): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1196,6 +1211,55 @@ describe('izapia adapter: comportamento específico do provider', () => {
     const adapter = izapia(buildAdapterOptions());
     expect(adapter.capabilities).not.toContain('channels.delete');
     expect(adapter.channels?.delete).toBeUndefined();
+  });
+
+  it('business.getProfile resolve o jid da própria sessão via GET /sessions/{sid} e consulta o perfil', async () => {
+    const calls: string[] = [];
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          calls.push(`${(init?.method ?? 'GET').toUpperCase()} ${url.pathname}`);
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const profile = await wa.business?.getProfile?.();
+
+    expect(calls).toEqual([
+      `GET /api/v1/sessions/${SID}`,
+      `GET /api/v1/sessions/${SID}/business/profile/5511999999999@s.whatsapp.net`,
+    ]);
+    expect(profile?.address).toBe('Rua Contrato, 1');
+    expect(profile?.email).toBe('contrato@exemplo.com');
+    expect(profile?.categories).toEqual(['Comércio']);
+  });
+
+  it('business.getProfile lança INSTANCE_DISCONNECTED quando a sessão ainda não tem jid', async () => {
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname === `/api/v1/sessions/${SID}`) {
+            return envelope({ id: SID, name: 'contrato', status: 'created' });
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const failure = await wa.business?.getProfile?.().catch((error: unknown) => error);
+    expect(isWaConnectorError(failure)).toBe(true);
+    if (isWaConnectorError(failure)) {
+      expect(failure.code).toBe('INSTANCE_DISCONNECTED');
+    }
+  });
+
+  it('business.updateProfile não é declarado (endpoint real devolve 501 NOT_IMPLEMENTED hoje)', () => {
+    const adapter = izapia(buildAdapterOptions());
+    expect(adapter.capabilities).not.toContain('business.updateProfile');
+    expect(adapter.business?.updateProfile).toBeUndefined();
   });
 
   it('parseWebhook normaliza "session.connected" para connection.update', () => {

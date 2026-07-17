@@ -1,4 +1,5 @@
 import type {
+  BusinessApi,
   ChannelsApi,
   ChatsApi,
   ContactsApi,
@@ -21,6 +22,7 @@ import type {
 } from '../../core/events';
 import { HttpClient } from '../../core/http';
 import type {
+  BusinessProfile,
   ChannelInfo,
   CheckExistsResult,
   ConnectResult,
@@ -152,6 +154,7 @@ const IZAPIA_CAPABILITIES: CapabilitySet = [
   'channels.getInfo',
   'channels.follow',
   'channels.unfollow',
+  'business.getProfile',
   'webhooks.parse',
 ];
 
@@ -258,6 +261,15 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     // 501 NOT_IMPLEMENTED — o whatsmeow não expõe "apagar canal" publicamente (ver dossiê).
   };
 
+  /**
+   * `business.updateProfile` NÃO implementado: `POST .../business/profile` hoje devolve 501
+   * NOT_IMPLEMENTED — o whatsmeow não expõe nenhum "set" de perfil de negócio público (namespace
+   * `w:biz`, ver dossiê).
+   */
+  const business: BusinessApi = {
+    getProfile: () => getBusinessProfile(http, sid),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: IZAPIA_CAPABILITIES,
@@ -269,6 +281,7 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     presence,
     labels,
     channels,
+    business,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -1070,6 +1083,49 @@ async function setChannelFollowed(
     method: 'POST',
     path: `/api/v1/sessions/${sid}/channels/${channelId}/${follow ? 'follow' : 'unfollow'}`,
   });
+}
+
+// ---------------------------------------------------------------------------
+// business.*
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET .../business/profile/{jid}` exige um JID explícito no path — não há atalho "meu perfil"
+ * (`internal/session/business.go`'s `GetBusinessProfile` sempre resolve um `jid` real via
+ * `parseRecipient`, nunca aceita vazio). Como `BusinessApi.getProfile()` do contrato canônico não
+ * recebe parâmetro (assume "perfil da própria sessão"), este adapter faz uma composição de 2
+ * chamadas — exceção deliberada à regra de "uma única chamada por operação", necessária aqui
+ * porque o endpoint do izapia é genuinamente parametrizado por alvo, diferente dos demais
+ * providers deste pacote: (1) `GET .../sessions/{sid}` para descobrir o JID da própria sessão, (2)
+ * `GET .../business/profile/{jid}` com esse JID.
+ */
+async function getBusinessProfile(http: HttpClient, sid: string): Promise<BusinessProfile> {
+  const status = await http.request<unknown>({ method: 'GET', path: `/api/v1/sessions/${sid}` });
+  const jid = asString(unwrapEnvelope(status).jid);
+  if (!jid) {
+    throw new WaConnectorError(
+      'INSTANCE_DISCONNECTED',
+      'izapia: business.getProfile exige uma sessão pareada (JID desconhecido).',
+      { provider: PROVIDER },
+    );
+  }
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/business/profile/${jid}`,
+  });
+  const data = unwrapEnvelope(body);
+  const categoriesRaw = data.categories;
+  const categories = Array.isArray(categoriesRaw)
+    ? categoriesRaw
+        .map((c: unknown) => asString(asRecord(c)?.name))
+        .filter((n): n is string => n !== undefined)
+    : undefined;
+  return {
+    address: asString(data.address),
+    email: asString(data.email),
+    categories,
+    raw: body,
+  };
 }
 
 // ---------------------------------------------------------------------------
