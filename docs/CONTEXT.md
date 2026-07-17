@@ -3,9 +3,9 @@
 ## Problema e visão
 
 Existem várias APIs não-oficiais de WhatsApp (uazapi, WAHA, Evolution GO, Wuzapi, Whapi, Z-API,
-WPPConnect, QuePasa), todas fazendo essencialmente as mesmas ~20 operações — conectar instância/QR,
-enviar texto e mídia, receber mensagens, acks, grupos, contatos — mas com auth, endpoints,
-payloads e webhooks diferentes.
+WPPConnect, QuePasa, izapia), todas fazendo essencialmente as mesmas ~20 operações — conectar
+instância/QR, enviar texto e mídia, receber mensagens, acks, grupos, contatos — mas com auth,
+endpoints, payloads e webhooks diferentes.
 
 O **waconector** é um pacote npm que fixa **um contrato único** e implementa **um adapter por
 provider**, no espírito do Vercel AI SDK (um SDK, N providers de LLM). Trocar de provider deve
@@ -76,6 +76,19 @@ endpoint deprecado `GET /all-groups`).
   acima do piso de "3+"); API pública estável desde o `v0.1.0` (1 única breaking change em toda a
   história, ocorrida antes de existir qualquer adapter além de WAHA/Evolution GO — todas as
   releases seguintes foram 100% aditivas). A partir daqui, breaking changes exigem bump major.
+- **Adapter izapia** ✅ (2026-07-16): 9º provider suportado — SaaS multi-tenant próprio do usuário
+  (`github.com/alltomatos/izapia`, repo privado), construído sobre `tulir/whatsmeow` (`v0.2.0`,
+  ~100 endpoints, confirmado ao vivo + código-fonte). **Maior cobertura entre todos os adapters do
+  pacote: 64/68 capabilities** (ver `docs/capabilities.md`) — `instance.connect/status/logout`
+  (fluxo de duas etapas: sessão criada fora do contrato `WaAdapter`, `connect()` só pareia),
+  `messages.*` completo exceto `forward` (endpoint real só aceita texto pronto, e o izapia não
+  guarda histórico para resolvê-lo a partir de um `messageId` — descasamento real de forma),
+  `groups.*`/`contacts.*`/`chats.*`/`presence.*`/`labels.*` completos, `channels.*` exceto `delete`
+  e `business.getProfile` sem `updateProfile` (ambos `501 NOT_IMPLEMENTED` hoje — o `whatsmeow` não
+  expõe essas operações), e `calls.*` — com um `CallManager` de voz genuíno por trás (sinalização +
+  bridge WebRTC), diferente da "chamada vazia" dos demais 8 adapters, ainda que o contrato canônico
+  atual não modele áudio. Dossiê em `docs/providers/izapia.md`. Fatiado e implementado via
+  Epic 10/issues #44-#57 (`ORCHESTRATOR-ROADMAP.md`).
 
 ## Riscos mapeados
 

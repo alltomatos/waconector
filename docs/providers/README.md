@@ -16,6 +16,7 @@ abaixo. O dossiê é a fonte de verdade do adapter; os payloads capturados viram
 | Whapi | <https://whapi.readme.io/> | SaaS | F3 — feito, ver [whapi.md](whapi.md) |
 | WPPConnect | <https://wppconnect.io/swagger/wppconnect-server/> | self-hosted (Docker) | F3 — feito, ver [wppconnect.md](wppconnect.md) |
 | QuePasa | <https://github.com/nocodeleaks/quepasa> (repo oficial bloqueado por DMCA; `docs.quepasa.ai` é um produto não relacionado — ver dossiê) | self-hosted | F3 — feito, ver [quepasa.md](quepasa.md) |
+| izapia | `https://api.izapia.com/openapi.json` (repo-fonte privado, produto próprio do usuário) | SaaS multi-tenant | F1+ — feito, ver [izapia.md](izapia.md) |
 
 ## Template do dossiê (`<nome>.md`)
 
