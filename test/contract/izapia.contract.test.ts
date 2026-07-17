@@ -253,6 +253,30 @@ function createFetchStub(): typeof globalThis.fetch {
       return envelope({});
     }
 
+    if (method === 'GET' && pathname === `/api/v1/sessions/${SID}/labels`) {
+      return envelope([{ id: 'label-1', name: 'Cliente', color: 2 }]);
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/labels`) {
+      return envelope({ id: 'label-2', name: 'Novo lead', color: 5 });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/labels/label-1`) {
+      return envelope({ ok: true });
+    }
+
+    if (method === 'POST' && pathname === `/api/v1/sessions/${SID}/labels/label-1/delete`) {
+      return envelope({ ok: true });
+    }
+
+    if (
+      method === 'POST' &&
+      (pathname === `/api/v1/sessions/${SID}/labels/label-1/chats/5511999999999` ||
+        pathname === `/api/v1/sessions/${SID}/labels/label-1/chats/5511999999999/remove`)
+    ) {
+      return envelope({ ok: true });
+    }
+
     throw new Error(`fetchStub (izapia): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -1045,6 +1069,50 @@ describe('izapia adapter: comportamento específico do provider', () => {
     const adapter = izapia(buildAdapterOptions());
     const wa = createConnector(adapter);
     await expect(wa.presence?.subscribe?.('5511999999999')).resolves.toBeUndefined();
+  });
+
+  it('labels.list mapeia o array direto de "data" para LabelInfo[] (color como string)', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    const list = await wa.labels?.list?.();
+    expect(list).toEqual([{ id: 'label-1', name: 'Cliente', color: '2', raw: expect.anything() }]);
+  });
+
+  it('labels.create envia { name, color } (color convertido para número) e mapeia a resposta', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (
+            url.pathname === `/api/v1/sessions/${SID}/labels` &&
+            (init?.method ?? 'GET') === 'POST'
+          ) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    const label = await wa.labels?.create?.({ name: 'Novo lead', color: '5' });
+    expect(capturedBody).toEqual({ name: 'Novo lead', color: 5 });
+    expect(label).toEqual({ id: 'label-2', name: 'Novo lead', color: '5', raw: expect.anything() });
+  });
+
+  it('labels.update/delete/addToChat/removeFromChat chamam os endpoints corretos sem lançar', async () => {
+    const adapter = izapia(buildAdapterOptions());
+    const wa = createConnector(adapter);
+    await expect(
+      wa.labels?.update?.({ labelId: 'label-1', name: 'Cliente VIP' }),
+    ).resolves.toBeUndefined();
+    await expect(wa.labels?.delete?.('label-1')).resolves.toBeUndefined();
+    await expect(
+      wa.labels?.addToChat?.({ labelId: 'label-1', chatId: '5511999999999' }),
+    ).resolves.toBeUndefined();
+    await expect(
+      wa.labels?.removeFromChat?.({ labelId: 'label-1', chatId: '5511999999999' }),
+    ).resolves.toBeUndefined();
   });
 
   it('parseWebhook normaliza "session.connected" para connection.update', () => {

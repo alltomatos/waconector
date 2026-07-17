@@ -3,6 +3,7 @@ import type {
   ContactsApi,
   GroupsApi,
   InstanceApi,
+  LabelsApi,
   MessagesApi,
   PresenceApi,
   WaAdapter,
@@ -25,6 +26,7 @@ import type {
   ContactAbout,
   ContactProfilePicture,
   CreateGroupInput,
+  CreateLabelInput,
   DeleteMessageInput,
   EditMessageInput,
   GroupInfo,
@@ -34,6 +36,8 @@ import type {
   InstanceState,
   InstanceStatus,
   JoinGroupInviteInput,
+  LabelChatInput,
+  LabelInfo,
   MarkMessageReadInput,
   MediaKind,
   MediaRef,
@@ -52,6 +56,7 @@ import type {
   UpdateGroupDescriptionInput,
   UpdateGroupPictureInput,
   UpdateGroupSubjectInput,
+  UpdateLabelInput,
   WaMessage,
 } from '../../core/types';
 
@@ -133,6 +138,12 @@ const IZAPIA_CAPABILITIES: CapabilitySet = [
   'presence.setTyping',
   'presence.set',
   'presence.subscribe',
+  'labels.list',
+  'labels.create',
+  'labels.update',
+  'labels.delete',
+  'labels.addToChat',
+  'labels.removeFromChat',
   'webhooks.parse',
 ];
 
@@ -220,6 +231,15 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     subscribe: (chatId) => subscribePresence(http, sid, chatId),
   };
 
+  const labels: LabelsApi = {
+    list: () => listLabels(http, sid),
+    create: (input) => createLabel(http, sid, input),
+    update: (input) => updateLabel(http, sid, input),
+    delete: (labelId) => deleteLabel(http, sid, labelId),
+    addToChat: (input) => setChatLabel(http, sid, input, true),
+    removeFromChat: (input) => setChatLabel(http, sid, input, false),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: IZAPIA_CAPABILITIES,
@@ -229,6 +249,7 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     contacts,
     chats,
     presence,
+    labels,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -888,6 +909,79 @@ async function subscribePresence(http: HttpClient, sid: string, chatId: string):
   await http.request({
     method: 'POST',
     path: `/api/v1/sessions/${sid}/presence/${chatId}/subscribe`,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// labels.*
+// ---------------------------------------------------------------------------
+
+/**
+ * Modelo canônico do izapia: `{id, name, color}` — `color` é o índice de paleta cru do wire
+ * (inteiro), sem tradução para nome/hex (`internal/session/labels.go`, `labelToCanonical`).
+ * `LabelInfo.color` do contrato é uma string opaca — convertido aqui via `String(...)`.
+ */
+function mapLabel(body: unknown): LabelInfo {
+  const data = unwrapEnvelope(body);
+  const color = asNumber(data.color);
+  return {
+    id: asString(data.id) ?? '',
+    name: asString(data.name) ?? '',
+    color: color === undefined ? undefined : String(color),
+    raw: body,
+  };
+}
+
+/** `GET .../labels`: `data` é um array direto (mesmo padrão de `GET .../groups`/`.../contacts`). */
+async function listLabels(http: HttpClient, sid: string): Promise<LabelInfo[]> {
+  const body = await http.request<unknown>({
+    method: 'GET',
+    path: `/api/v1/sessions/${sid}/labels`,
+  });
+  const record = asRecord(body);
+  const labels = record && Array.isArray(record.data) ? record.data : [];
+  return labels.map((label: unknown) => mapLabel({ ok: true, data: label }));
+}
+
+async function createLabel(
+  http: HttpClient,
+  sid: string,
+  input: CreateLabelInput,
+): Promise<LabelInfo> {
+  const body = await http.request<unknown>({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/labels`,
+    body: { name: input.name, ...(input.color ? { color: Number(input.color) } : {}) },
+  });
+  return mapLabel(body);
+}
+
+/** `POST .../labels/{labelId}`: devolve só `{ok:true}` — não ecoa a label atualizada. */
+async function updateLabel(http: HttpClient, sid: string, input: UpdateLabelInput): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/labels/${input.labelId}`,
+    body: { name: input.name, ...(input.color ? { color: Number(input.color) } : {}) },
+  });
+}
+
+async function deleteLabel(http: HttpClient, sid: string, labelId: string): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/labels/${labelId}/delete`,
+  });
+}
+
+async function setChatLabel(
+  http: HttpClient,
+  sid: string,
+  input: LabelChatInput,
+  add: boolean,
+): Promise<void> {
+  const suffix = add ? '' : '/remove';
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/labels/${input.labelId}/chats/${input.chatId}${suffix}`,
   });
 }
 
