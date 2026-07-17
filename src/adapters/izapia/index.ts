@@ -1,4 +1,5 @@
 import type {
+  ChatsApi,
   ContactsApi,
   GroupsApi,
   InstanceApi,
@@ -118,6 +119,14 @@ const IZAPIA_CAPABILITIES: CapabilitySet = [
   'contacts.block',
   'contacts.unblock',
   'contacts.listBlocked',
+  'chats.archive',
+  'chats.unarchive',
+  'chats.mute',
+  'chats.unmute',
+  'chats.pin',
+  'chats.unpin',
+  'chats.markRead',
+  'chats.markUnread',
   'webhooks.parse',
 ];
 
@@ -188,6 +197,17 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     listBlocked: () => listBlockedContacts(http, sid),
   };
 
+  const chats: ChatsApi = {
+    archive: (chatId) => setChatArchived(http, sid, chatId, true),
+    unarchive: (chatId) => setChatArchived(http, sid, chatId, false),
+    mute: (chatId) => setChatMuted(http, sid, chatId, true),
+    unmute: (chatId) => setChatMuted(http, sid, chatId, false),
+    pin: (chatId) => setChatPinned(http, sid, chatId, true),
+    unpin: (chatId) => setChatPinned(http, sid, chatId, false),
+    markRead: (chatId) => setChatRead(http, sid, chatId, true),
+    markUnread: (chatId) => setChatRead(http, sid, chatId, false),
+  };
+
   return {
     provider: PROVIDER,
     capabilities: IZAPIA_CAPABILITIES,
@@ -195,6 +215,7 @@ export function izapia(options: IzapiaOptions): WaAdapter {
     messages,
     groups,
     contacts,
+    chats,
     parseWebhook: (input) => parseWebhook(input),
   };
 }
@@ -759,6 +780,63 @@ async function listBlockedContacts(http: HttpClient, sid: string): Promise<strin
   return list
     .map((item: unknown) => asString(asRecord(item)?.jid))
     .filter((id): id is string => id !== undefined);
+}
+
+// ---------------------------------------------------------------------------
+// chats.* (todas as 8 operações são toggles via app-state, Promise<void>)
+// ---------------------------------------------------------------------------
+
+async function setChatArchived(
+  http: HttpClient,
+  sid: string,
+  chatId: string,
+  archived: boolean,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/chats/${chatId}/archive`,
+    body: { archived },
+  });
+}
+
+async function setChatMuted(
+  http: HttpClient,
+  sid: string,
+  chatId: string,
+  muted: boolean,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/chats/${chatId}/mute`,
+    body: { muted },
+  });
+}
+
+async function setChatPinned(
+  http: HttpClient,
+  sid: string,
+  chatId: string,
+  pinned: boolean,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/chats/${chatId}/pin`,
+    body: { pinned },
+  });
+}
+
+/** `read: false` marca como NÃO lido — reintroduz o indicador visual (ver docs/providers/izapia.md). */
+async function setChatRead(
+  http: HttpClient,
+  sid: string,
+  chatId: string,
+  read: boolean,
+): Promise<void> {
+  await http.request({
+    method: 'POST',
+    path: `/api/v1/sessions/${sid}/chats/${chatId}/read`,
+    body: { read },
+  });
 }
 
 // ---------------------------------------------------------------------------

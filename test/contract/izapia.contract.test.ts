@@ -231,6 +231,13 @@ function createFetchStub(): typeof globalThis.fetch {
       return envelope([{ jid: '5511988887777@s.whatsapp.net' }]);
     }
 
+    if (
+      method === 'POST' &&
+      /^\/api\/v1\/sessions\/[^/]+\/chats\/[^/]+\/(archive|mute|pin|read)$/.test(pathname)
+    ) {
+      return envelope({});
+    }
+
     throw new Error(`fetchStub (izapia): rota não configurada ${method} ${pathname}`);
   };
 }
@@ -925,6 +932,39 @@ describe('izapia adapter: comportamento específico do provider', () => {
     const wa = createConnector(adapter);
     const blocked = await wa.contacts.listBlocked?.();
     expect(blocked).toEqual(['5511988887777@s.whatsapp.net']);
+  });
+
+  it.each([
+    ['archive', true, 'archived'],
+    ['unarchive', false, 'archived'],
+    ['mute', true, 'muted'],
+    ['unmute', false, 'muted'],
+    ['pin', true, 'pinned'],
+    ['unpin', false, 'pinned'],
+    ['markRead', true, 'read'],
+    ['markUnread', false, 'read'],
+  ] as const)('chats.%s envia { %s: %s } para o endpoint correto', async (method, expected, field) => {
+    let capturedBody: Record<string, unknown> | undefined;
+    const endpointByField: Record<string, string> = {
+      archived: 'archive',
+      muted: 'mute',
+      pinned: 'pin',
+      read: 'read',
+    };
+    const adapter = izapia(
+      buildAdapterOptions({
+        fetch: async (input, init) => {
+          const url = new URL(String(input));
+          if (url.pathname.endsWith(`/chats/5511999999999/${endpointByField[field]}`)) {
+            capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          }
+          return createFetchStub()(input, init);
+        },
+      }),
+    );
+    const wa = createConnector(adapter);
+    await expect(wa.chats?.[method]?.('5511999999999')).resolves.toBeUndefined();
+    expect(capturedBody?.[field]).toBe(expected);
   });
 
   it('parseWebhook normaliza "session.connected" para connection.update', () => {
