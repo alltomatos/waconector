@@ -12,7 +12,6 @@ export const ADAPTER_SUBPATHS = [
     factory: 'izapia',
     options: { baseUrl: 'http://localhost:1', apiKey: 'x', sid: 'x' },
   },
-  { name: 'waha', factory: 'waha', options: { baseUrl: 'http://localhost:1', apiKey: 'x' } },
   {
     name: 'evolution',
     factory: 'evolution',
@@ -32,4 +31,5 @@ export const ADAPTER_SUBPATHS = [
     factory: 'wppconnect',
     options: { baseUrl: 'http://localhost:1', session: 'x', token: 'x' },
   },
+  { name: 'waha', factory: 'waha', options: { baseUrl: 'http://localhost:1', apiKey: 'x' } },
 ];
