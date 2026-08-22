@@ -22,7 +22,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Criar PR de versão ou publicar no npm
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           publish: npm run release
           title: 'chore: release'
