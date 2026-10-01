@@ -1433,19 +1433,51 @@ function connectionUpdate(
   return { type: 'connection.update', provider: PROVIDER, instanceId: sessionId, state, raw };
 }
 
+function extractIncomingMedia(data: Record<string, unknown>): { kind: WaMessage['kind']; media?: WaMessage['media']; text?: string } {
+  const msgRaw = asRecord(data.raw);
+  if (!msgRaw) {
+    return { kind: asString(data.text) ? 'text' : 'unknown' };
+  }
+
+  for (const [kind, field] of MEDIA_KIND_FIELDS) {
+    const mediaObject = asRecord(msgRaw[field]);
+    if (mediaObject) {
+      const mimeType = asString(mediaObject.mimetype) ?? asString(mediaObject.mimeType);
+      const url = asString(mediaObject.URL) ?? asString(mediaObject.url);
+      const filename = asString(mediaObject.fileName) ?? asString(mediaObject.filename);
+      const caption = asString(mediaObject.caption);
+      const mediaKind = kind === 'audio' || kind === 'image' || kind === 'video' || kind === 'document' || kind === 'sticker' ? kind : 'document';
+      return {
+        kind: kind as WaMessage['kind'],
+        text: caption || asString(data.text),
+        media: {
+          kind: mediaKind,
+          mimeType,
+          url,
+          filename,
+        },
+      };
+    }
+  }
+
+  return { kind: asString(data.text) ? 'text' : 'unknown' };
+}
+
 function messageReceived(
   raw: unknown,
   sessionId: string | undefined,
   data: Record<string, unknown>,
 ): MessageReceivedEvent {
+  const mediaInfo = extractIncomingMedia(data);
   const message: WaMessage = {
     id: asString(data.message_id) ?? `izapia-unknown-${Date.now()}`,
     chatId: asString(data.chat) ?? 'unknown',
     from: asString(data.from),
     fromMe: asBoolean(data.from_me) ?? false,
     timestamp: (asNumber(data.timestamp) ?? 0) * 1000,
-    kind: asString(data.text) ? 'text' : 'unknown',
-    text: asString(data.text),
+    kind: mediaInfo.kind,
+    text: mediaInfo.text ?? asString(data.text),
+    media: mediaInfo.media,
     raw,
   };
   return { type: 'message.received', provider: PROVIDER, instanceId: sessionId, message, raw };
